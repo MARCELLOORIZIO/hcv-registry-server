@@ -309,7 +309,7 @@ const server = http.createServer(async (req, res) => {
           </div>
 
           <div class="footer">
-            HCV verifies provenance and integrity. It does not claim that synthetic generation is impossible.
+            SIGILLUM verifies provenance and integrity. Powered by HCV Protocol.
           </div>
         </section>
       </main>
