@@ -3,6 +3,7 @@ const path = require('path');
 const Database = require('better-sqlite3');
 
 const PORT = process.env.PORT || 8080;
+const OPENAI_MODEL = process.env.SIGILLUM_AI_MODEL || 'gpt-4o-mini';
 
 const dbPath = process.env.DB_PATH || path.join(__dirname, 'registry.db');
 
@@ -36,7 +37,7 @@ function readBody(req) {
     req.on('data', chunk => {
       data += chunk;
 
-      if (data.length > 10_000_000) {
+      if (data.length > 35_000_000) {
         reject(new Error('Payload troppo grande'));
         req.destroy();
       }
@@ -77,6 +78,159 @@ function validateCertificateRaw(raw, hcvId) {
   return cert;
 }
 
+function normalizeEnum(value, allowed, fallback) {
+  const normalized = String(value || '').toUpperCase();
+  return allowed.includes(normalized) ? normalized : fallback;
+}
+
+function normalizeAiTrainerResponse(value, classes) {
+  const suggestedLabel = classes.includes(value?.suggestedLabel)
+    ? value.suggestedLabel
+    : classes[0];
+
+  const confidence = Number.isFinite(Number(value?.confidence))
+    ? Math.max(0, Math.min(1, Number(value.confidence)))
+    : 0;
+
+  return {
+    suggestedLabel,
+    confidence,
+    screenReplayRisk: normalizeEnum(
+      value?.screenReplayRisk,
+      ['LOW', 'MEDIUM', 'HIGH', 'UNKNOWN'],
+      'UNKNOWN'
+    ),
+    quality: normalizeEnum(
+      value?.quality,
+      ['GOOD_FOR_TRAINING', 'REVIEW', 'REJECT'],
+      'REVIEW'
+    ),
+    reason:
+      typeof value?.reason === 'string'
+        ? value.reason.slice(0, 600)
+        : 'Valutazione AI disponibile.',
+    nextInstruction:
+      typeof value?.nextInstruction === 'string'
+        ? value.nextInstruction.slice(0, 600)
+        : 'Raccogli altri campioni bilanciati tra schermo e realta.',
+  };
+}
+
+function buildAiTrainerPrompt({ classes, userSelectedLabel, localProposal }) {
+  return [
+    'Analyze these SIGILLUM training sample images.',
+    '',
+    'Choose exactly one label from this list:',
+    classes.join(', '),
+    '',
+    `User selected initial label: ${userSelectedLabel || 'UNKNOWN'}`,
+    `Local TFLite proposal: ${JSON.stringify(localProposal || {})}`,
+    '',
+    'Definitions:',
+    '- SCREEN_MONITOR: desktop/laptop/TV monitor showing content.',
+    '- SCREEN_PHONE: phone screen showing content.',
+    '- SCREEN_TABLET: tablet screen showing content.',
+    '- REALITY_PAPER: real paper/document, not displayed on a screen.',
+    '- REALITY_ROOM: real room/environment, not a screen.',
+    '- REALITY_OBJECT: physical object, not a screen.',
+    '- REALITY_OUTDOOR: outdoor real scene, not a screen.',
+    '',
+    'Return only strict JSON with exactly these keys:',
+    '{',
+    '  "suggestedLabel": "one class from the list",',
+    '  "confidence": 0.0,',
+    '  "screenReplayRisk": "LOW|MEDIUM|HIGH|UNKNOWN",',
+    '  "quality": "GOOD_FOR_TRAINING|REVIEW|REJECT",',
+    '  "reason": "short Italian explanation",',
+    '  "nextInstruction": "short Italian instruction for what to collect next"',
+    '}',
+    '',
+    'Prefer REVIEW when uncertain. Use REJECT for blurry, dark, duplicate, or ambiguous samples.',
+  ].join('\n');
+}
+
+async function analyzeTrainingSample(payload) {
+  if (!process.env.OPENAI_API_KEY) {
+    const error = new Error('OPENAI_API_KEY_MISSING');
+    error.statusCode = 500;
+    throw error;
+  }
+
+  const classes = Array.isArray(payload.classes) ? payload.classes : [];
+  const images = Array.isArray(payload.images) ? payload.images.slice(0, 5) : [];
+
+  if (classes.length === 0) {
+    const error = new Error('CLASSES_REQUIRED');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (images.length === 0) {
+    const error = new Error('IMAGES_REQUIRED');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const content = [
+    {
+      type: 'text',
+      text: buildAiTrainerPrompt({
+        classes,
+        userSelectedLabel: payload.userSelectedLabel,
+        localProposal: payload.localProposal,
+      }),
+    },
+    ...images.map((image) => ({
+      type: 'image_url',
+      image_url: {
+        url: `data:${image.mimeType || 'image/jpeg'};base64,${image.base64}`,
+        detail: 'low',
+      },
+    })),
+  ];
+
+  const openAiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: OPENAI_MODEL,
+      temperature: 0.1,
+      response_format: { type: 'json_object' },
+      messages: [
+        {
+          role: 'system',
+          content:
+            'You are SIGILLUM AI Trainer. Return only strict JSON. You classify training images for screen replay detection.',
+        },
+        {
+          role: 'user',
+          content,
+        },
+      ],
+    }),
+  });
+
+  const text = await openAiResponse.text();
+  if (!openAiResponse.ok) {
+    const error = new Error(`OPENAI_HTTP_${openAiResponse.status}: ${text}`);
+    error.statusCode = 502;
+    throw error;
+  }
+
+  const decoded = JSON.parse(text);
+  const contentText = decoded?.choices?.[0]?.message?.content;
+  if (!contentText) {
+    const error = new Error('EMPTY_OPENAI_RESPONSE');
+    error.statusCode = 502;
+    throw error;
+  }
+
+  return normalizeAiTrainerResponse(JSON.parse(contentText), classes);
+}
+
 const insertCertificate = db.prepare(`
 INSERT OR REPLACE INTO certificates (
     hcv_id,
@@ -104,7 +258,25 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, {
         ok: true,
         service: 'hcv-registry-sqlite',
+        aiTrainer: true,
+        aiModel: OPENAI_MODEL,
       });
+    }
+
+    // AI TRAINER
+    if (req.method === 'POST' && url.pathname === '/sigillum/ai-trainer/analyze') {
+      const body = await readBody(req);
+      const payload = JSON.parse(body || '{}');
+
+      try {
+        const analysis = await analyzeTrainingSample(payload);
+        return sendJson(res, 200, analysis);
+      } catch (err) {
+        return sendJson(res, err.statusCode || 500, {
+          ok: false,
+          error: err.message || String(err),
+        });
+      }
     }
 
     // POST CERTIFICATE
