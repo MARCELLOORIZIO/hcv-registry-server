@@ -348,6 +348,13 @@ async function getKycSessionStatus(sessionId) {
     throw error;
   }
 
+  const verifiedOutputs = decoded.verified_outputs || {};
+  const verifiedLegalName = [verifiedOutputs.first_name, verifiedOutputs.last_name]
+    .filter((part) => part)
+    .join(' ')
+    .trim();
+  const verifiedCountry = verifiedOutputs.address?.country || '';
+
   return {
     ok: true,
     provider: 'stripe_identity',
@@ -355,6 +362,12 @@ async function getKycSessionStatus(sessionId) {
     status: decoded.status,
     url: decoded.url || '',
     lastError: decoded.last_error || null,
+    verifiedOutputs: {
+      legalName: verifiedLegalName,
+      firstName: verifiedOutputs.first_name || '',
+      lastName: verifiedOutputs.last_name || '',
+      country: verifiedCountry,
+    },
     verified: decoded.status === 'verified',
   };
 }
