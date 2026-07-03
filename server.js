@@ -30,6 +30,36 @@ function sendJson(res, status, obj) {
   res.end(body);
 }
 
+function sendHtml(res, status, html) {
+  res.writeHead(status, {
+    'Content-Type': 'text/html; charset=utf-8',
+    'Access-Control-Allow-Origin': '*',
+  });
+  res.end(html);
+}
+
+function pageShell(title, body) {
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${title} - SIGILLUM HCV</title><style>body{margin:0;background:#071511;color:#f4f1e8;font-family:Arial,Helvetica,sans-serif;line-height:1.55}a{color:#76ded3}.page{max-width:920px;margin:0 auto;padding:32px 20px 56px}.top{display:flex;justify-content:space-between;gap:18px;align-items:center;border-bottom:1px solid rgba(244,241,232,.16);padding-bottom:18px;margin-bottom:28px}.brand{font-size:24px;font-weight:800;letter-spacing:.08em}.nav{display:flex;flex-wrap:wrap;gap:12px;font-size:14px}.nav a{text-decoration:none}.hero{background:#10201b;border:1px solid rgba(118,222,211,.22);border-radius:8px;padding:24px;margin-bottom:22px}h1{margin:0 0 12px;font-size:34px;line-height:1.1}h2{margin-top:30px;color:#76ded3}h3{margin-top:22px}.muted{color:#c8d2cc}.card{background:#0f1b18;border:1px solid rgba(244,241,232,.12);border-radius:8px;padding:18px;margin:16px 0}li{margin:8px 0}.footer{margin-top:42px;padding-top:18px;border-top:1px solid rgba(244,241,232,.16);color:#aeb9b3;font-size:14px}@media(max-width:640px){.top{display:block}.nav{margin-top:12px}h1{font-size:28px}}</style></head><body><main class="page"><header class="top"><div class="brand">SIGILLUM HCV</div><nav class="nav"><a href="/">Home</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="/support">Support</a><a href="/delete-data">Delete data</a></nav></header>${body}<footer class="footer">Temporary public pages for SIGILLUM HCV. Last updated: 3 July 2026.</footer></main></body></html>`;
+}
+
+function legalPage(pathname) {
+  if (pathname === '/' || pathname === '/index.html') {
+    return pageShell('SIGILLUM HCV', '<section class="hero"><h1>Technical proof for human-created content.</h1><p class="muted">SIGILLUM links photos, videos and text to an HCV-ID, technical creator identity, file fingerprint, signed certificate and online Registry record.</p></section><div class="card"><h2>Provenance</h2><p>Check whether content is linked to a SIGILLUM certificate and Registry record.</p></div><div class="card"><h2>Integrity</h2><p>Compare the verified file with the certified fingerprint and certificate data.</p></div><div class="card"><h2>Social verification</h2><p>Use the share menu from Photos, Messenger, Facebook or other apps to send a file to SIGILLUM for verification.</p></div><p class="muted">SIGILLUM provides technical evidence. It does not replace a legal, notarial or forensic expert report.</p>');
+  }
+  if (pathname === '/privacy') {
+    return pageShell('Privacy Policy', '<section class="hero"><h1>Privacy Policy</h1><p class="muted">SIGILLUM minimizes server-side storage of original media and focuses on certificates, identifiers and verification data.</p></section><h2>Data processed</h2><ul><li>Content created or selected by the user, such as photos, videos, text, documents or HCVPACK files.</li><li>HCV-ID, cryptographic file hash, technical fingerprint, certificate data and verification status.</li><li>Technical metadata required to create or verify a certificate.</li><li>Technical creator identity data, such as device key fingerprint and user-declared creator name.</li><li>Future identity verification status if KYC is enabled through an external provider.</li></ul><h2>Original media</h2><p>In the intended production model, original photos, videos and text are stored on the user device and may be saved in the Photos library. The online Registry stores certificate and verification data such as HCV-ID, hashes, fingerprints, metadata and identity status.</p><h2>KYC and identity</h2><p>If identity verification is introduced, SIGILLUM should use a specialized provider. Identity documents and selfies should be processed by that provider where possible. SIGILLUM should store only verification status, provider reference and minimum technical data.</p><h2>Italiano</h2><p>SIGILLUM tratta contenuti creati o selezionati dall utente, HCV-ID, hash, fingerprint, certificati, metadati e identita tecnica. Foto e video originali restano sul dispositivo o nella libreria Foto, salvo funzioni esplicitamente richieste dall utente.</p>');
+  }
+  if (pathname === '/terms') {
+    return pageShell('Terms of Service', '<section class="hero"><h1>Terms of Service</h1><p class="muted">SIGILLUM provides technical tools to create, sign and verify digital content.</p></section><h2>Scope</h2><p>SIGILLUM may help users create verifiable technical evidence for photos, videos, text and related packages.</p><h2>No absolute truth guarantee</h2><p>SIGILLUM does not prove the absolute truth of a scene and does not replace a legal, notarial or forensic expert report.</p><h2>User responsibility</h2><p>Users are responsible for the content they create, import, verify, publish or share. SIGILLUM must not be used for fraud, impersonation, unlawful content or misleading claims.</p><h2>Identity</h2><p>Until a formal KYC process is enabled, creator identity may include technical device identity and a user-declared name. A declared name is not the same as a legally verified identity.</p><h2>Italiano</h2><p>SIGILLUM fornisce strumenti tecnici di verifica, non una perizia legale. L utente resta responsabile dei contenuti creati, importati, verificati o condivisi.</p>');
+  }
+  if (pathname === '/support') {
+    return pageShell('Support', '<section class="hero"><h1>Support</h1><p class="muted">Help for certification, verification and social sharing.</p></section><h2>Verify content from social apps</h2><ol><li>Open the photo or video in Photos, Facebook, Messenger, WhatsApp or another app.</li><li>Tap Share.</li><li>Choose SIGILLUM from the app list.</li><li>Open SIGILLUM manually if iOS does not open it automatically.</li></ol><h2>Contact</h2><p>Temporary support contact: <a href="mailto:marcelloorizio@yahoo.it">marcelloorizio@yahoo.it</a></p><h2>Italiano</h2><p>Per verificare un contenuto da social: apri il contenuto, tocca Condividi, scegli SIGILLUM e poi apri SIGILLUM se iOS non lo apre automaticamente.</p>');
+  }
+  if (pathname === '/delete-data') {
+    return pageShell('Data Deletion', '<section class="hero"><h1>Data Deletion</h1><p class="muted">How to request deletion or correction of SIGILLUM data.</p></section><h2>How to request deletion</h2><p>Send a request to <a href="mailto:marcelloorizio@yahoo.it">marcelloorizio@yahoo.it</a> with your HCV-ID, contact email and a description of the data concerned.</p><h2>Registry integrity</h2><p>Some Registry records may need to remain available to preserve certificate integrity, anti-fraud evidence and auditability. SIGILLUM may remove or minimize personal data while retaining technical certificate records needed for verification.</p><h2>KYC provider data</h2><p>If KYC is enabled, identity documents and biometric checks should be handled by the selected KYC provider. Deletion requests may need to be processed by SIGILLUM and by that provider.</p><h2>Italiano</h2><p>Per chiedere cancellazione o correzione dati, invia una richiesta con HCV-ID, email di contatto e descrizione dei dati interessati.</p>');
+  }
+  return null;
+}
 function readBody(req) {
   return new Promise((resolve, reject) => {
     let data = '';
@@ -231,6 +261,54 @@ async function analyzeTrainingSample(payload) {
   return normalizeAiTrainerResponse(JSON.parse(contentText), classes);
 }
 
+async function createKycSession(payload, origin) {
+  if (!process.env.STRIPE_SECRET_KEY) {
+    const error = new Error('KYC_NOT_CONFIGURED');
+    error.statusCode = 501;
+    throw error;
+  }
+
+  const creatorId = String(payload.creatorId || '').slice(0, 120);
+  const creatorName = String(payload.creatorName || '').slice(0, 160);
+  const returnUrl = process.env.SIGILLUM_KYC_RETURN_URL || `${origin}/support`;
+
+  const params = new URLSearchParams();
+  params.append('type', 'document');
+  params.append('metadata[creatorId]', creatorId);
+  params.append('metadata[creatorName]', creatorName);
+  params.append('return_url', returnUrl);
+
+  const stripeResponse = await fetch('https://api.stripe.com/v1/identity/verification_sessions', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${process.env.STRIPE_SECRET_KEY}`,
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: params.toString(),
+  });
+
+  const text = await stripeResponse.text();
+  let decoded;
+  try {
+    decoded = JSON.parse(text);
+  } catch (_) {
+    decoded = { raw: text };
+  }
+
+  if (!stripeResponse.ok) {
+    const error = new Error(decoded?.error?.message || `STRIPE_HTTP_${stripeResponse.status}`);
+    error.statusCode = 502;
+    throw error;
+  }
+
+  return {
+    ok: true,
+    provider: 'stripe_identity',
+    sessionId: decoded.id,
+    url: decoded.url,
+    status: decoded.status,
+  };
+}
 const insertCertificate = db.prepare(`
 INSERT OR REPLACE INTO certificates (
     hcv_id,
@@ -253,6 +331,32 @@ const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, `http://${req.headers.host}`);
 
+    const staticLegalPage = legalPage(url.pathname);
+    if (req.method === 'GET' && staticLegalPage) {
+      return sendHtml(res, 200, staticLegalPage);
+    }
+
+    // KYC SESSION
+    if (req.method === 'POST' && url.pathname === '/api/identity/kyc/start') {
+      const body = await readBody(req);
+      const payload = JSON.parse(body || '{}');
+      const origin = `${url.protocol}//${req.headers.host}`;
+
+      try {
+        const session = await createKycSession(payload, origin);
+        return sendJson(res, 200, session);
+      } catch (err) {
+        return sendJson(res, err.statusCode || 500, {
+          ok: false,
+          error: err.message || String(err),
+          message:
+            err.message === 'KYC_NOT_CONFIGURED'
+              ? 'KYC non ancora configurato sul server. Configura STRIPE_SECRET_KEY per attivare Stripe Identity.'
+              : 'KYC non disponibile in questo momento.',
+          supportUrl: '/support',
+        });
+      }
+    }
     // HEALTH
     if (req.method === 'GET' && url.pathname === '/health') {
       return sendJson(res, 200, {
@@ -444,7 +548,7 @@ const server = http.createServer(async (req, res) => {
     <body>
       <main class="wrap">
         <section class="card">
-          <div class="badge">✓</div>
+          <div class="badge">OK</div>
           <h1>HUMAN VERIFIED</h1>
           <div class="sub">This media has an HCV registry certificate.</div>
 
