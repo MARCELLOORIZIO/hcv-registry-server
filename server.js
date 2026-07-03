@@ -309,6 +309,52 @@ async function createKycSession(payload, origin) {
     status: decoded.status,
   };
 }
+async function getKycSessionStatus(sessionId) {
+  if (!process.env.STRIPE_SECRET_KEY) {
+    const error = new Error('KYC_NOT_CONFIGURED');
+    error.statusCode = 501;
+    throw error;
+  }
+
+  const cleaned = String(sessionId || '').trim();
+  if (!cleaned || !cleaned.startsWith('vs_')) {
+    const error = new Error('INVALID_KYC_SESSION');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const stripeResponse = await fetch(
+    `https://api.stripe.com/v1/identity/verification_sessions/${encodeURIComponent(cleaned)}`,
+    {
+      headers: {
+        Authorization: `Bearer ${process.env.STRIPE_SECRET_KEY}`,
+      },
+    },
+  );
+
+  const text = await stripeResponse.text();
+  let decoded;
+  try {
+    decoded = JSON.parse(text);
+  } catch (_) {
+    decoded = { raw: text };
+  }
+
+  if (!stripeResponse.ok) {
+    const error = new Error(decoded?.error?.message || `STRIPE_HTTP_${stripeResponse.status}`);
+    error.statusCode = 502;
+    throw error;
+  }
+
+  return {
+    ok: true,
+    provider: 'stripe_identity',
+    sessionId: decoded.id,
+    status: decoded.status,
+    lastError: decoded.last_error || null,
+    verified: decoded.status === 'verified',
+  };
+}
 const insertCertificate = db.prepare(`
 INSERT OR REPLACE INTO certificates (
     hcv_id,
@@ -354,6 +400,21 @@ const server = http.createServer(async (req, res) => {
               ? 'KYC non ancora configurato sul server. Configura STRIPE_SECRET_KEY per attivare Stripe Identity.'
               : 'KYC non disponibile in questo momento.',
           supportUrl: '/support',
+        });
+      }
+    }
+    if (req.method === 'GET' && url.pathname === '/api/identity/kyc/status') {
+      try {
+        const session = await getKycSessionStatus(url.searchParams.get('sessionId'));
+        return sendJson(res, 200, session);
+      } catch (err) {
+        return sendJson(res, err.statusCode || 500, {
+          ok: false,
+          error: err.message || String(err),
+          message:
+            err.message === 'KYC_NOT_CONFIGURED'
+              ? 'KYC non ancora configurato sul server. Configura STRIPE_SECRET_KEY per attivare Stripe Identity.'
+              : 'Stato KYC non disponibile in questo momento.',
         });
       }
     }
