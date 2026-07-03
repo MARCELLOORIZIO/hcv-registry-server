@@ -353,6 +353,7 @@ async function getKycSessionStatus(sessionId) {
     provider: 'stripe_identity',
     sessionId: decoded.id,
     status: decoded.status,
+    url: decoded.url || '',
     lastError: decoded.last_error || null,
     verified: decoded.status === 'verified',
   };
