@@ -274,6 +274,8 @@ async function createKycSession(payload, origin) {
 
   const params = new URLSearchParams();
   params.append('type', 'document');
+  params.append('options[document][require_live_capture]', 'true');
+  params.append('options[document][require_matching_selfie]', 'true');
   params.append('metadata[creatorId]', creatorId);
   params.append('metadata[creatorName]', creatorName);
   params.append('return_url', returnUrl);
