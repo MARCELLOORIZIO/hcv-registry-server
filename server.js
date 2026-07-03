@@ -270,7 +270,7 @@ async function createKycSession(payload, origin) {
 
   const creatorId = String(payload.creatorId || '').slice(0, 120);
   const creatorName = String(payload.creatorName || '').slice(0, 160);
-  const returnUrl = process.env.SIGILLUM_KYC_RETURN_URL || `${origin}/support`;
+  const returnUrl = process.env.SIGILLUM_KYC_RETURN_URL || 'sigillum://kyc-return';
 
   const params = new URLSearchParams();
   params.append('type', 'document');
