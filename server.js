@@ -55,6 +55,12 @@ function legalPage(pathname) {
   if (pathname === '/support') {
     return pageShell('Support', '<section class="hero"><h1>Support</h1><p class="muted">Help for certification, verification and social sharing.</p></section><h2>Verify content from social apps</h2><ol><li>Open the photo or video in Photos, Facebook, Messenger, WhatsApp or another app.</li><li>Tap Share.</li><li>Choose SIGILLUM from the app list.</li><li>Open SIGILLUM manually if iOS does not open it automatically.</li></ol><h2>Contact</h2><p>Temporary support contact: <a href="mailto:marcelloorizio@yahoo.it">marcelloorizio@yahoo.it</a></p><h2>Italiano</h2><p>Per verificare un contenuto da social: apri il contenuto, tocca Condividi, scegli SIGILLUM e poi apri SIGILLUM se iOS non lo apre automaticamente.</p>');
   }
+  if (pathname === '/kyc-return') {
+    return pageShell(
+      'KYC Return',
+      '<section class="hero"><h1>Identity verification complete</h1><p class="muted">Returning to SIGILLUM.</p><p><a href="sigillum://kyc-return">Open SIGILLUM</a></p></section><script>setTimeout(function(){ window.location.href = "sigillum://kyc-return"; }, 300);</script><h2>Italiano</h2><p>La verifica identita e terminata. Se SIGILLUM non si apre automaticamente, tocca il link qui sopra.</p>'
+    );
+  }
   if (pathname === '/delete-data') {
     return pageShell('Data Deletion', '<section class="hero"><h1>Data Deletion</h1><p class="muted">How to request deletion or correction of SIGILLUM data.</p></section><h2>How to request deletion</h2><p>Send a request to <a href="mailto:marcelloorizio@yahoo.it">marcelloorizio@yahoo.it</a> with your HCV-ID, contact email and a description of the data concerned.</p><h2>Registry integrity</h2><p>Some Registry records may need to remain available to preserve certificate integrity, anti-fraud evidence and auditability. SIGILLUM may remove or minimize personal data while retaining technical certificate records needed for verification.</p><h2>KYC provider data</h2><p>If KYC is enabled, identity documents and biometric checks should be handled by the selected KYC provider. Deletion requests may need to be processed by SIGILLUM and by that provider.</p><h2>Italiano</h2><p>Per chiedere cancellazione o correzione dati, invia una richiesta con HCV-ID, email di contatto e descrizione dei dati interessati.</p>');
   }
@@ -270,7 +276,7 @@ async function createKycSession(payload, origin) {
 
   const creatorId = String(payload.creatorId || '').slice(0, 120);
   const creatorName = String(payload.creatorName || '').slice(0, 160);
-  const returnUrl = process.env.SIGILLUM_KYC_RETURN_URL || 'sigillum://kyc-return';
+  const returnUrl = process.env.SIGILLUM_KYC_RETURN_URL || `${origin}/kyc-return`;
 
   const params = new URLSearchParams();
   params.append('type', 'document');
@@ -348,12 +354,53 @@ async function getKycSessionStatus(sessionId) {
     throw error;
   }
 
-  const verifiedOutputs = decoded.verified_outputs || {};
-  const verifiedLegalName = [verifiedOutputs.first_name, verifiedOutputs.last_name]
+  let verificationReport = null;
+  if (decoded.last_verification_report) {
+    const reportId = typeof decoded.last_verification_report === 'string'
+      ? decoded.last_verification_report
+      : decoded.last_verification_report?.id;
+
+    if (reportId) {
+      try {
+        const reportResponse = await fetch(
+          `https://api.stripe.com/v1/identity/verification_reports/${encodeURIComponent(reportId)}`,
+          {
+            headers: {
+              Authorization: `Bearer ${process.env.STRIPE_SECRET_KEY}`,
+            },
+          },
+        );
+        const reportText = await reportResponse.text();
+        if (reportResponse.ok) {
+          verificationReport = JSON.parse(reportText);
+        }
+      } catch (_) {}
+    }
+  }
+
+  const reportDocument = verificationReport?.document || {};
+  const verifiedOutputs =
+    decoded.verified_outputs ||
+    reportDocument.verified_outputs ||
+    {};
+  const firstName =
+    verifiedOutputs.first_name ||
+    reportDocument.first_name ||
+    reportDocument.name?.first_name ||
+    '';
+  const lastName =
+    verifiedOutputs.last_name ||
+    reportDocument.last_name ||
+    reportDocument.name?.last_name ||
+    '';
+  const verifiedLegalName = [firstName, lastName]
     .filter((part) => part)
     .join(' ')
     .trim();
-  const verifiedCountry = verifiedOutputs.address?.country || '';
+  const verifiedCountry =
+    verifiedOutputs.address?.country ||
+    reportDocument.address?.country ||
+    '';
 
   return {
     ok: true,
@@ -364,8 +411,8 @@ async function getKycSessionStatus(sessionId) {
     lastError: decoded.last_error || null,
     verifiedOutputs: {
       legalName: verifiedLegalName,
-      firstName: verifiedOutputs.first_name || '',
-      lastName: verifiedOutputs.last_name || '',
+      firstName,
+      lastName,
       country: verifiedCountry,
     },
     verified: decoded.status === 'verified',
