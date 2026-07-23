@@ -1,6 +1,7 @@
 'use strict';
 
 const { Pool } = require('pg');
+const { assertAccountMatchesDevice } = require('./identity_policy');
 
 function createPool() {
   const connectionString = process.env.DATABASE_URL;
@@ -80,13 +81,14 @@ async function withTransaction(fn) {
 }
 
 async function upsertAccountAndDevice({ accountId, creatorName, deviceKeyFingerprint, publicKey }) {
+  const boundAccountId = assertAccountMatchesDevice(accountId, deviceKeyFingerprint);
   return withTransaction(async (client) => {
     await client.query(
       `INSERT INTO accounts (account_id, creator_name) VALUES ($1, $2)
        ON CONFLICT (account_id) DO UPDATE SET
          creator_name = CASE WHEN EXCLUDED.creator_name <> '' THEN EXCLUDED.creator_name ELSE accounts.creator_name END,
          updated_at = NOW()`,
-      [accountId, creatorName || ''],
+      [boundAccountId, creatorName || ''],
     );
     const existing = await client.query(
       'SELECT account_id, public_key_json FROM devices WHERE device_key_fingerprint = $1',
@@ -94,7 +96,7 @@ async function upsertAccountAndDevice({ accountId, creatorName, deviceKeyFingerp
     );
     if (existing.rowCount > 0) {
       const row = existing.rows[0];
-      if (row.account_id !== accountId) {
+      if (row.account_id !== boundAccountId) {
         const error = new Error('DEVICE_ALREADY_BOUND_TO_ANOTHER_ACCOUNT');
         error.statusCode = 409;
         throw error;
@@ -109,9 +111,9 @@ async function upsertAccountAndDevice({ accountId, creatorName, deviceKeyFingerp
       `INSERT INTO devices (device_key_fingerprint, account_id, public_key_json)
        VALUES ($1, $2, $3::jsonb)
        ON CONFLICT (device_key_fingerprint) DO UPDATE SET last_seen_at = NOW()`,
-      [deviceKeyFingerprint, accountId, JSON.stringify(publicKey)],
+      [deviceKeyFingerprint, boundAccountId, JSON.stringify(publicKey)],
     );
-    return { accountId, deviceKeyFingerprint };
+    return { accountId: boundAccountId, deviceKeyFingerprint };
   });
 }
 
