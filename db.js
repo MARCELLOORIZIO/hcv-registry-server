@@ -80,6 +80,11 @@ async function withTransaction(fn) {
   }
 }
 
+function publicKeysEqual(left, right) {
+  return String(left?.modulus || '') === String(right?.modulus || '')
+    && String(left?.exponent || '') === String(right?.exponent || '');
+}
+
 async function upsertAccountAndDevice({ accountId, creatorName, deviceKeyFingerprint, publicKey }) {
   const boundAccountId = assertAccountMatchesDevice(accountId, deviceKeyFingerprint);
   return withTransaction(async (client) => {
@@ -101,7 +106,7 @@ async function upsertAccountAndDevice({ accountId, creatorName, deviceKeyFingerp
         error.statusCode = 409;
         throw error;
       }
-      if (JSON.stringify(row.public_key_json) !== JSON.stringify(publicKey)) {
+      if (!publicKeysEqual(row.public_key_json, publicKey)) {
         const error = new Error('DEVICE_PUBLIC_KEY_MISMATCH');
         error.statusCode = 409;
         throw error;
@@ -202,6 +207,7 @@ async function healthCheck() {
 module.exports = {
   pool,
   initSchema,
+  publicKeysEqual,
   upsertAccountAndDevice,
   upsertKycSession,
   bindKycSession,
