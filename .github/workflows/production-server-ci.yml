@@ -1,0 +1,25 @@
+name: Production server CI
+
+on:
+  push:
+    branches:
+      - fix/production-postgres-kyc-20260723
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  node-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - name: Install dependencies
+        run: npm install
+      - name: Run tests
+        run: npm test
