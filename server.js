@@ -75,7 +75,7 @@ function parseJson(raw) {
 
 function safeHcvId(value) {
   const cleaned = String(value || '').trim().toUpperCase();
-  return /^HCV-[A-Z0-9_-]{8,64}$/.test(cleaned) ? cleaned : null;
+  return /^HCV-[A-F0-9]{8,32}$/.test(cleaned) ? cleaned : null;
 }
 
 function safeAccountId(value) {
@@ -244,6 +244,39 @@ async function handleKycBind(payload) {
   return { ...normalized, found: true, ok: true };
 }
 
+async function handleKycStatus(payload) {
+  const proof = verifyDeviceProof(payload);
+  const accountId = safeAccountId(payload.accountId || payload.creatorId);
+  const sessionId = safeSessionId(payload.sessionId);
+  if (!accountId || !sessionId) {
+    const error = new Error('KYC_STATUS_INPUT_INVALID');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  await upsertAccountAndDevice({
+    accountId,
+    creatorName: String(payload.creatorName || '').slice(0, 160),
+    deviceKeyFingerprint: proof.deviceKeyFingerprint,
+    publicKey: proof.publicKey,
+  });
+
+  const stripe = await retrieveVerificationSession(sessionId);
+  const normalized = await normalizeSession(stripe);
+  if (normalized.accountId && normalized.accountId !== accountId) {
+    const error = new Error('KYC_SESSION_ACCOUNT_MISMATCH');
+    error.statusCode = 409;
+    throw error;
+  }
+  await saveNormalizedKyc(normalized, accountId);
+  await writeAudit('KYC_STATUS_CHECKED', accountId, {
+    sessionId,
+    status: normalized.status,
+    deviceKeyFingerprint: proof.deviceKeyFingerprint,
+  });
+  return { ...normalized, found: true, ok: true };
+}
+
 function certificatePage(row) {
   const cert = parseStoredCertificate(row.certificate_raw);
   const hcvId = escapeHtml(row.hcv_id);
@@ -304,17 +337,15 @@ async function requestHandler(req, res) {
     const payload = parseJson(await readBody(req));
     return sendJson(res, 200, await handleKycBind(payload));
   }
+  if (req.method === 'POST' && url.pathname === '/api/identity/kyc/status') {
+    const payload = parseJson(await readBody(req));
+    return sendJson(res, 200, await handleKycStatus(payload));
+  }
   if (req.method === 'GET' && url.pathname === '/api/identity/kyc/status') {
-    const sessionId = safeSessionId(url.searchParams.get('sessionId'));
-    if (!sessionId) {
-      const error = new Error('INVALID_KYC_SESSION');
-      error.statusCode = 400;
-      throw error;
-    }
-    const stripe = await retrieveVerificationSession(sessionId);
-    const normalized = await normalizeSession(stripe);
-    await saveNormalizedKyc(normalized, normalized.accountId);
-    return sendJson(res, 200, { ...normalized, found: true, ok: true });
+    return sendJson(res, 405, {
+      ok: false,
+      error: 'SIGNED_POST_REQUIRED',
+    });
   }
   if (req.method === 'POST' && url.pathname === '/api/certificate') {
     const payload = parseJson(await readBody(req));
