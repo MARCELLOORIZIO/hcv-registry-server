@@ -2,6 +2,7 @@ services:
   - type: web
     name: hcv-registry-server
     runtime: node
+    region: frankfurt
     plan: starter
     buildCommand: npm install
     startCommand: npm start
@@ -29,6 +30,7 @@ services:
 
 databases:
   - name: hcv-registry-postgres
+    region: frankfurt
     plan: basic-256mb
     databaseName: hcv_registry
     user: hcv_registry
