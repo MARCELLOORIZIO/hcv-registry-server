@@ -7,6 +7,7 @@ const crypto = require('crypto');
 const {
   pool,
   initSchema,
+  publicKeysEqual,
   upsertAccountAndDevice,
   upsertKycSession,
   getLatestKycByDevice,
@@ -38,6 +39,20 @@ test.before(async () => {
 test.after(async () => {
   await resetRows();
   await pool.end();
+});
+
+test('compares RSA keys independently of JSON property order', () => {
+  assert.equal(
+    publicKeysEqual(
+      { exponent: publicKey.exponent, modulus: publicKey.modulus },
+      { modulus: publicKey.modulus, exponent: publicKey.exponent },
+    ),
+    true,
+  );
+  assert.equal(
+    publicKeysEqual(publicKey, { ...publicKey, modulus: 'DIFFERENT' }),
+    false,
+  );
 });
 
 test('persists an account, its signing device and KYC state', async () => {
