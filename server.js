@@ -97,8 +97,23 @@ function escapeHtml(value) {
     .replaceAll("'", '&#039;');
 }
 
+function parseStoredCertificate(raw) {
+  if (typeof raw !== 'string' || !raw) {
+    const error = new Error('STORED_CERTIFICATE_RAW_INVALID');
+    error.statusCode = 500;
+    throw error;
+  }
+  try {
+    return JSON.parse(raw);
+  } catch (_) {
+    const error = new Error('STORED_CERTIFICATE_JSON_INVALID');
+    error.statusCode = 500;
+    throw error;
+  }
+}
+
 function publicKycPayload(row) {
-  if (!row) return { found: false };
+  if (!row) return { found: false, ok: true };
   return {
     found: true,
     ok: true,
@@ -230,7 +245,7 @@ async function handleKycBind(payload) {
 }
 
 function certificatePage(row) {
-  const cert = row.certificate_raw;
+  const cert = parseStoredCertificate(row.certificate_raw);
   const hcvId = escapeHtml(row.hcv_id);
   const creator = escapeHtml(cert?.meta?.identity?.creatorName || 'Unknown creator');
   const createdAt = escapeHtml(cert?.createdAt || row.created_at);
@@ -309,11 +324,12 @@ async function requestHandler(req, res) {
       error.statusCode = 400;
       throw error;
     }
-    const verified = verifyCertificate(payload.certificateRaw, hcvId);
+    const certificateRaw = payload.certificateRaw;
+    const verified = verifyCertificate(certificateRaw, hcvId);
     const stored = await storeCertificateImmutable({
       hcvId,
       certificateSha256: verified.certificateSha256,
-      certificate: verified.certificate,
+      certificateRaw,
       signerFingerprint: verified.signerFingerprint,
       contentHash: verified.contentHash,
     });
@@ -342,7 +358,7 @@ async function requestHandler(req, res) {
       hcvId: row.hcv_id,
       createdAt: row.created_at,
       certificateSha256: row.certificate_sha256,
-      certificateRaw: JSON.stringify(row.certificate_raw),
+      certificateRaw: row.certificate_raw,
     });
   }
 
@@ -381,4 +397,10 @@ if (require.main === module) {
   });
 }
 
-module.exports = { safeHcvId, safeAccountId, safeSessionId, publicKycPayload };
+module.exports = {
+  safeHcvId,
+  safeAccountId,
+  safeSessionId,
+  parseStoredCertificate,
+  publicKycPayload,
+};
