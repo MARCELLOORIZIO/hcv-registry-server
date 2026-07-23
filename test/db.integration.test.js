@@ -22,6 +22,11 @@ const accountId = accountIdForDeviceFingerprint(fingerprint);
 const publicKey = { modulus: 'AQID', exponent: 'AQAB' };
 const sessionId = `vs_ci_${Date.now()}`;
 const hcvId = `HCV-CI${crypto.randomBytes(8).toString('hex').toUpperCase()}`;
+const certificateRaw = `{
+  "format": "HCV_CERTIFICATE",
+  "meta": {"hcvId": "${hcvId}"},
+  "content": {"hash": "${'b'.repeat(64)}"}
+}`;
 
 async function resetRows() {
   await pool.query('DELETE FROM audit_events');
@@ -82,11 +87,11 @@ test('persists an account, its signing device and KYC state', async () => {
   assert.equal(byAccount.session_id, sessionId);
 });
 
-test('certificate storage is idempotent and immutable by HCV-ID', async () => {
+test('certificate storage is byte-preserving, idempotent and immutable', async () => {
   const first = await storeCertificateImmutable({
     hcvId,
     certificateSha256: 'a'.repeat(64),
-    certificate: { meta: { hcvId }, content: { hash: 'b'.repeat(64) } },
+    certificateRaw,
     signerFingerprint: fingerprint,
     contentHash: 'b'.repeat(64),
   });
@@ -95,7 +100,7 @@ test('certificate storage is idempotent and immutable by HCV-ID', async () => {
   const retry = await storeCertificateImmutable({
     hcvId,
     certificateSha256: 'a'.repeat(64),
-    certificate: { meta: { hcvId }, content: { hash: 'b'.repeat(64) } },
+    certificateRaw,
     signerFingerprint: fingerprint,
     contentHash: 'b'.repeat(64),
   });
@@ -105,7 +110,7 @@ test('certificate storage is idempotent and immutable by HCV-ID', async () => {
     () => storeCertificateImmutable({
       hcvId,
       certificateSha256: 'c'.repeat(64),
-      certificate: { meta: { hcvId }, content: { hash: 'd'.repeat(64) } },
+      certificateRaw: certificateRaw.replace('HCV_CERTIFICATE', 'DIFFERENT'),
       signerFingerprint: fingerprint,
       contentHash: 'd'.repeat(64),
     }),
@@ -114,4 +119,5 @@ test('certificate storage is idempotent and immutable by HCV-ID', async () => {
 
   const stored = await getCertificate(hcvId);
   assert.equal(stored.certificate_sha256, 'a'.repeat(64));
+  assert.equal(stored.certificate_raw, certificateRaw);
 });
