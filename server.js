@@ -1,774 +1,384 @@
+'use strict';
+
 const http = require('http');
-const path = require('path');
-const Database = require('better-sqlite3');
+const {
+  initSchema,
+  upsertAccountAndDevice,
+  upsertKycSession,
+  bindKycSession,
+  getLatestKycByDevice,
+  getLatestKycByAccount,
+  storeCertificateImmutable,
+  getCertificate,
+  writeAudit,
+  healthCheck,
+} = require('./db');
+const { verifyDeviceProof, verifyCertificate } = require('./crypto_verifier');
+const {
+  createVerificationSession,
+  retrieveVerificationSession,
+  normalizeSession,
+  findLatestSessionForAccount,
+} = require('./stripe_identity');
+const { verifyStripeWebhook } = require('./webhook_verifier');
 
-const PORT = process.env.PORT || 8080;
-const OPENAI_MODEL = process.env.SIGILLUM_AI_MODEL || 'gpt-4o-mini';
-
-const dbPath = process.env.DB_PATH || path.join(__dirname, 'registry.db');
-
-const db = new Database(dbPath);
-
-db.exec(`
-CREATE TABLE IF NOT EXISTS certificates (
-    hcv_id TEXT PRIMARY KEY,
-    created_at TEXT NOT NULL,
-    certificate_raw TEXT NOT NULL
-);
-`);
+const PORT = Number(process.env.PORT || 8080);
+const MAX_BODY_BYTES = Number(process.env.MAX_BODY_BYTES || 35000000);
 
 function sendJson(res, status, obj) {
   const body = JSON.stringify(obj, null, 2);
-
   res.writeHead(status, {
     'Content-Type': 'application/json; charset=utf-8',
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Allow-Headers': 'Content-Type,Stripe-Signature',
+    'Cache-Control': 'no-store',
   });
-
   res.end(body);
 }
 
 function sendHtml(res, status, html) {
   res.writeHead(status, {
     'Content-Type': 'text/html; charset=utf-8',
-    'Access-Control-Allow-Origin': '*',
+    'Cache-Control': 'no-store',
   });
   res.end(html);
 }
 
-function pageShell(title, body) {
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${title} - SIGILLUM HCV</title><style>body{margin:0;background:#071511;color:#f4f1e8;font-family:Arial,Helvetica,sans-serif;line-height:1.55}a{color:#76ded3}.page{max-width:920px;margin:0 auto;padding:32px 20px 56px}.top{display:flex;justify-content:space-between;gap:18px;align-items:center;border-bottom:1px solid rgba(244,241,232,.16);padding-bottom:18px;margin-bottom:28px}.brand{font-size:24px;font-weight:800;letter-spacing:.08em}.nav{display:flex;flex-wrap:wrap;gap:12px;font-size:14px}.nav a{text-decoration:none}.hero{background:#10201b;border:1px solid rgba(118,222,211,.22);border-radius:8px;padding:24px;margin-bottom:22px}h1{margin:0 0 12px;font-size:34px;line-height:1.1}h2{margin-top:30px;color:#76ded3}h3{margin-top:22px}.muted{color:#c8d2cc}.card{background:#0f1b18;border:1px solid rgba(244,241,232,.12);border-radius:8px;padding:18px;margin:16px 0}li{margin:8px 0}.footer{margin-top:42px;padding-top:18px;border-top:1px solid rgba(244,241,232,.16);color:#aeb9b3;font-size:14px}@media(max-width:640px){.top{display:block}.nav{margin-top:12px}h1{font-size:28px}}</style></head><body><main class="page"><header class="top"><div class="brand">SIGILLUM HCV</div><nav class="nav"><a href="/">Home</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="/support">Support</a><a href="/delete-data">Delete data</a></nav></header>${body}<footer class="footer">Temporary public pages for SIGILLUM HCV. Last updated: 3 July 2026.</footer></main></body></html>`;
-}
-
-function legalPage(pathname) {
-  if (pathname === '/' || pathname === '/index.html') {
-    return pageShell('SIGILLUM HCV', '<section class="hero"><h1>Technical proof for human-created content.</h1><p class="muted">SIGILLUM links photos, videos and text to an HCV-ID, technical creator identity, file fingerprint, signed certificate and online Registry record.</p></section><div class="card"><h2>Provenance</h2><p>Check whether content is linked to a SIGILLUM certificate and Registry record.</p></div><div class="card"><h2>Integrity</h2><p>Compare the verified file with the certified fingerprint and certificate data.</p></div><div class="card"><h2>Social verification</h2><p>Use the share menu from Photos, Messenger, Facebook or other apps to send a file to SIGILLUM for verification.</p></div><p class="muted">SIGILLUM provides technical evidence. It does not replace a legal, notarial or forensic expert report.</p>');
-  }
-  if (pathname === '/privacy') {
-    return pageShell('Privacy Policy', '<section class="hero"><h1>Privacy Policy</h1><p class="muted">SIGILLUM minimizes server-side storage of original media and focuses on certificates, identifiers and verification data.</p></section><h2>Data processed</h2><ul><li>Content created or selected by the user, such as photos, videos, text, documents or HCVPACK files.</li><li>HCV-ID, cryptographic file hash, technical fingerprint, certificate data and verification status.</li><li>Technical metadata required to create or verify a certificate.</li><li>Technical creator identity data, such as device key fingerprint and user-declared creator name.</li><li>Future identity verification status if KYC is enabled through an external provider.</li></ul><h2>Original media</h2><p>In the intended production model, original photos, videos and text are stored on the user device and may be saved in the Photos library. The online Registry stores certificate and verification data such as HCV-ID, hashes, fingerprints, metadata and identity status.</p><h2>KYC and identity</h2><p>If identity verification is introduced, SIGILLUM should use a specialized provider. Identity documents and selfies should be processed by that provider where possible. SIGILLUM should store only verification status, provider reference and minimum technical data.</p><h2>Italiano</h2><p>SIGILLUM tratta contenuti creati o selezionati dall utente, HCV-ID, hash, fingerprint, certificati, metadati e identita tecnica. Foto e video originali restano sul dispositivo o nella libreria Foto, salvo funzioni esplicitamente richieste dall utente.</p>');
-  }
-  if (pathname === '/terms') {
-    return pageShell('Terms of Service', '<section class="hero"><h1>Terms of Service</h1><p class="muted">SIGILLUM provides technical tools to create, sign and verify digital content.</p></section><h2>Scope</h2><p>SIGILLUM may help users create verifiable technical evidence for photos, videos, text and related packages.</p><h2>No absolute truth guarantee</h2><p>SIGILLUM does not prove the absolute truth of a scene and does not replace a legal, notarial or forensic expert report.</p><h2>User responsibility</h2><p>Users are responsible for the content they create, import, verify, publish or share. SIGILLUM must not be used for fraud, impersonation, unlawful content or misleading claims.</p><h2>Identity</h2><p>Until a formal KYC process is enabled, creator identity may include technical device identity and a user-declared name. A declared name is not the same as a legally verified identity.</p><h2>Italiano</h2><p>SIGILLUM fornisce strumenti tecnici di verifica, non una perizia legale. L utente resta responsabile dei contenuti creati, importati, verificati o condivisi.</p>');
-  }
-  if (pathname === '/support') {
-    return pageShell('Support', '<section class="hero"><h1>Support</h1><p class="muted">Help for certification, verification and social sharing.</p></section><h2>Verify content from social apps</h2><ol><li>Open the photo or video in Photos, Facebook, Messenger, WhatsApp or another app.</li><li>Tap Share.</li><li>Choose SIGILLUM from the app list.</li><li>Open SIGILLUM manually if iOS does not open it automatically.</li></ol><h2>Contact</h2><p>Temporary support contact: <a href="mailto:marcelloorizio@yahoo.it">marcelloorizio@yahoo.it</a></p><h2>Italiano</h2><p>Per verificare un contenuto da social: apri il contenuto, tocca Condividi, scegli SIGILLUM e poi apri SIGILLUM se iOS non lo apre automaticamente.</p>');
-  }
-  if (pathname === '/kyc-return') {
-    return pageShell(
-      'KYC Return',
-      '<section class="hero"><h1>Identity verification complete</h1><p class="muted">Returning to SIGILLUM.</p><p><a href="sigillum://kyc-return">Open SIGILLUM</a></p></section><script>setTimeout(function(){ window.location.href = "sigillum://kyc-return"; }, 300);</script><h2>Italiano</h2><p>La verifica identita e terminata. Se SIGILLUM non si apre automaticamente, tocca il link qui sopra.</p>'
-    );
-  }
-  if (pathname === '/delete-data') {
-    return pageShell('Data Deletion', '<section class="hero"><h1>Data Deletion</h1><p class="muted">How to request deletion or correction of SIGILLUM data.</p></section><h2>How to request deletion</h2><p>Send a request to <a href="mailto:marcelloorizio@yahoo.it">marcelloorizio@yahoo.it</a> with your HCV-ID, contact email and a description of the data concerned.</p><h2>Registry integrity</h2><p>Some Registry records may need to remain available to preserve certificate integrity, anti-fraud evidence and auditability. SIGILLUM may remove or minimize personal data while retaining technical certificate records needed for verification.</p><h2>KYC provider data</h2><p>If KYC is enabled, identity documents and biometric checks should be handled by the selected KYC provider. Deletion requests may need to be processed by SIGILLUM and by that provider.</p><h2>Italiano</h2><p>Per chiedere cancellazione o correzione dati, invia una richiesta con HCV-ID, email di contatto e descrizione dei dati interessati.</p>');
-  }
-  return null;
-}
 function readBody(req) {
   return new Promise((resolve, reject) => {
     let data = '';
-
-    req.on('data', chunk => {
+    req.setEncoding('utf8');
+    req.on('data', (chunk) => {
       data += chunk;
-
-      if (data.length > 35_000_000) {
-        reject(new Error('Payload troppo grande'));
+      if (Buffer.byteLength(data, 'utf8') > MAX_BODY_BYTES) {
+        const error = new Error('PAYLOAD_TOO_LARGE');
+        error.statusCode = 413;
+        reject(error);
         req.destroy();
       }
     });
-
     req.on('end', () => resolve(data));
     req.on('error', reject);
   });
 }
 
-function safeHcvId(id) {
-  const cleaned = String(id || '').trim().toUpperCase();
-
-  if (!/^HCV-[A-Z0-9_-]{4,64}$/.test(cleaned)) {
-    return null;
+function parseJson(raw) {
+  try {
+    return JSON.parse(raw || '{}');
+  } catch (_) {
+    const error = new Error('INVALID_JSON');
+    error.statusCode = 400;
+    throw error;
   }
-
-  return cleaned;
 }
 
-function validateCertificateRaw(raw, hcvId) {
-  if (!raw || typeof raw !== 'string') {
-    throw new Error('certificateRaw mancante');
-  }
-
-  const cert = JSON.parse(raw);
-
-  if (!cert || typeof cert !== 'object') {
-    throw new Error('certificateRaw non valido');
-  }
-
-  const metaId = cert?.meta?.hcvId;
-
-  if (metaId && safeHcvId(metaId) !== hcvId) {
-    throw new Error('hcvId non coincide con certificate.meta.hcvId');
-  }
-
-  return cert;
+function safeHcvId(value) {
+  const cleaned = String(value || '').trim().toUpperCase();
+  return /^HCV-[A-Z0-9_-]{8,64}$/.test(cleaned) ? cleaned : null;
 }
 
-function normalizeEnum(value, allowed, fallback) {
-  const normalized = String(value || '').toUpperCase();
-  return allowed.includes(normalized) ? normalized : fallback;
+function safeAccountId(value) {
+  const cleaned = String(value || '').trim();
+  return /^[A-Za-z0-9._:-]{8,160}$/.test(cleaned) ? cleaned : null;
 }
 
-function normalizeAiTrainerResponse(value, classes) {
-  const suggestedLabel = classes.includes(value?.suggestedLabel)
-    ? value.suggestedLabel
-    : classes[0];
+function safeSessionId(value) {
+  const cleaned = String(value || '').trim();
+  return /^vs_[A-Za-z0-9_]{8,200}$/.test(cleaned) ? cleaned : null;
+}
 
-  const confidence = Number.isFinite(Number(value?.confidence))
-    ? Math.max(0, Math.min(1, Number(value.confidence)))
-    : 0;
+function escapeHtml(value) {
+  return String(value || '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#039;');
+}
 
+function publicKycPayload(row) {
+  if (!row) return { found: false };
   return {
-    suggestedLabel,
-    confidence,
-    screenReplayRisk: normalizeEnum(
-      value?.screenReplayRisk,
-      ['LOW', 'MEDIUM', 'HIGH', 'UNKNOWN'],
-      'UNKNOWN'
-    ),
-    quality: normalizeEnum(
-      value?.quality,
-      ['GOOD_FOR_TRAINING', 'REVIEW', 'REJECT'],
-      'REVIEW'
-    ),
-    reason:
-      typeof value?.reason === 'string'
-        ? value.reason.slice(0, 600)
-        : 'Valutazione AI disponibile.',
-    nextInstruction:
-      typeof value?.nextInstruction === 'string'
-        ? value.nextInstruction.slice(0, 600)
-        : 'Raccogli altri campioni bilanciati tra schermo e realta.',
+    found: true,
+    ok: true,
+    provider: row.provider || 'stripe_identity',
+    sessionId: row.session_id || row.sessionId,
+    accountId: row.account_id || row.accountId || '',
+    status: row.status || 'unknown',
+    url: row.url || '',
+    lastError: row.last_error || row.lastError || null,
+    verifiedOutputs: row.verified_outputs || row.verifiedOutputs || {},
+    verified: row.status === 'verified',
   };
 }
 
-function buildAiTrainerPrompt({ classes, userSelectedLabel, localProposal }) {
-  return [
-    'Analyze these SIGILLUM training sample images.',
-    '',
-    'Choose exactly one label from this list:',
-    classes.join(', '),
-    '',
-    `User selected initial label: ${userSelectedLabel || 'UNKNOWN'}`,
-    `Local TFLite proposal: ${JSON.stringify(localProposal || {})}`,
-    '',
-    'Definitions:',
-    '- SCREEN_MONITOR: desktop/laptop/TV monitor showing content.',
-    '- SCREEN_PHONE: phone screen showing content.',
-    '- SCREEN_TABLET: tablet screen showing content.',
-    '- REALITY_PAPER: real paper/document, not displayed on a screen.',
-    '- REALITY_ROOM: real room/environment, not a screen.',
-    '- REALITY_OBJECT: physical object, not a screen.',
-    '- REALITY_OUTDOOR: outdoor real scene, not a screen.',
-    '',
-    'Return only strict JSON with exactly these keys:',
-    '{',
-    '  "suggestedLabel": "one class from the list",',
-    '  "confidence": 0.0,',
-    '  "screenReplayRisk": "LOW|MEDIUM|HIGH|UNKNOWN",',
-    '  "quality": "GOOD_FOR_TRAINING|REVIEW|REJECT",',
-    '  "reason": "short Italian explanation",',
-    '  "nextInstruction": "short Italian instruction for what to collect next"',
-    '}',
-    '',
-    'Prefer REVIEW when uncertain. Use REJECT for blurry, dark, duplicate, or ambiguous samples.',
-  ].join('\n');
-}
-
-async function analyzeTrainingSample(payload) {
-  if (!process.env.OPENAI_API_KEY) {
-    const error = new Error('OPENAI_API_KEY_MISSING');
-    error.statusCode = 500;
-    throw error;
-  }
-
-  const classes = Array.isArray(payload.classes) ? payload.classes : [];
-  const images = Array.isArray(payload.images) ? payload.images.slice(0, 5) : [];
-
-  if (classes.length === 0) {
-    const error = new Error('CLASSES_REQUIRED');
-    error.statusCode = 400;
-    throw error;
-  }
-
-  if (images.length === 0) {
-    const error = new Error('IMAGES_REQUIRED');
-    error.statusCode = 400;
-    throw error;
-  }
-
-  const content = [
-    {
-      type: 'text',
-      text: buildAiTrainerPrompt({
-        classes,
-        userSelectedLabel: payload.userSelectedLabel,
-        localProposal: payload.localProposal,
-      }),
-    },
-    ...images.map((image) => ({
-      type: 'image_url',
-      image_url: {
-        url: `data:${image.mimeType || 'image/jpeg'};base64,${image.base64}`,
-        detail: 'low',
-      },
-    })),
-  ];
-
-  const openAiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: OPENAI_MODEL,
-      temperature: 0.1,
-      response_format: { type: 'json_object' },
-      messages: [
-        {
-          role: 'system',
-          content:
-            'You are SIGILLUM AI Trainer. Return only strict JSON. You classify training images for screen replay detection.',
-        },
-        {
-          role: 'user',
-          content,
-        },
-      ],
-    }),
+async function saveNormalizedKyc(normalized, fallbackAccountId = '') {
+  const accountId = safeAccountId(normalized.accountId || fallbackAccountId);
+  if (!accountId) return;
+  await upsertKycSession({
+    sessionId: normalized.sessionId,
+    accountId,
+    provider: normalized.provider,
+    status: normalized.status,
+    url: normalized.url,
+    verifiedOutputs: normalized.verifiedOutputs,
+    lastError: normalized.lastError,
   });
-
-  const text = await openAiResponse.text();
-  if (!openAiResponse.ok) {
-    const error = new Error(`OPENAI_HTTP_${openAiResponse.status}: ${text}`);
-    error.statusCode = 502;
-    throw error;
-  }
-
-  const decoded = JSON.parse(text);
-  const contentText = decoded?.choices?.[0]?.message?.content;
-  if (!contentText) {
-    const error = new Error('EMPTY_OPENAI_RESPONSE');
-    error.statusCode = 502;
-    throw error;
-  }
-
-  return normalizeAiTrainerResponse(JSON.parse(contentText), classes);
 }
 
-async function createKycSession(payload, origin) {
-  if (!process.env.STRIPE_SECRET_KEY) {
-    const error = new Error('KYC_NOT_CONFIGURED');
-    error.statusCode = 501;
+async function handleKycStart(payload, origin) {
+  const proof = verifyDeviceProof(payload);
+  const accountId = safeAccountId(payload.accountId || payload.creatorId);
+  if (!accountId) {
+    const error = new Error('ACCOUNT_ID_INVALID');
+    error.statusCode = 400;
     throw error;
   }
-
-  const creatorId = String(payload.creatorId || '').slice(0, 120);
   const creatorName = String(payload.creatorName || '').slice(0, 160);
-  const returnUrl = process.env.SIGILLUM_KYC_RETURN_URL || `${origin}/kyc-return`;
-
-  const params = new URLSearchParams();
-  params.append('type', 'document');
-  params.append('options[document][require_live_capture]', 'true');
-  params.append('options[document][require_matching_selfie]', 'true');
-  params.append('metadata[creatorId]', creatorId);
-  params.append('metadata[creatorName]', creatorName);
-  params.append('return_url', returnUrl);
-
-  const stripeResponse = await fetch('https://api.stripe.com/v1/identity/verification_sessions', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${process.env.STRIPE_SECRET_KEY}`,
-      'Content-Type': 'application/x-www-form-urlencoded',
-    },
-    body: params.toString(),
+  await upsertAccountAndDevice({
+    accountId,
+    creatorName,
+    deviceKeyFingerprint: proof.deviceKeyFingerprint,
+    publicKey: proof.publicKey,
   });
 
-  const text = await stripeResponse.text();
-  let decoded;
-  try {
-    decoded = JSON.parse(text);
-  } catch (_) {
-    decoded = { raw: text };
+  const local = await getLatestKycByAccount(accountId);
+  if (local && ['verified', 'processing', 'requires_input'].includes(local.status)) {
+    if (local.status !== 'requires_input' || local.url) return publicKycPayload(local);
   }
 
-  if (!stripeResponse.ok) {
-    const error = new Error(decoded?.error?.message || `STRIPE_HTTP_${stripeResponse.status}`);
-    error.statusCode = 502;
-    throw error;
+  const stripeExisting = await findLatestSessionForAccount(accountId);
+  if (stripeExisting && ['verified', 'processing', 'requires_input'].includes(stripeExisting.status)) {
+    await saveNormalizedKyc(stripeExisting, accountId);
+    return { ...stripeExisting, found: true, ok: true };
   }
 
-  return {
-    ok: true,
-    provider: 'stripe_identity',
-    sessionId: decoded.id,
-    url: decoded.url,
-    status: decoded.status,
-  };
+  const returnUrl = process.env.SIGILLUM_KYC_RETURN_URL || `${origin}/kyc-return`;
+  const created = await createVerificationSession({ accountId, creatorName, returnUrl });
+  const normalized = await normalizeSession(created);
+  await saveNormalizedKyc(normalized, accountId);
+  await writeAudit('KYC_SESSION_CREATED', accountId, {
+    sessionId: normalized.sessionId,
+    deviceKeyFingerprint: proof.deviceKeyFingerprint,
+  });
+  return { ...normalized, found: true, ok: true };
 }
-async function getKycSessionStatus(sessionId) {
-  if (!process.env.STRIPE_SECRET_KEY) {
-    const error = new Error('KYC_NOT_CONFIGURED');
-    error.statusCode = 501;
-    throw error;
-  }
 
-  const cleaned = String(sessionId || '').trim();
-  if (!cleaned || !cleaned.startsWith('vs_')) {
-    const error = new Error('INVALID_KYC_SESSION');
+async function handleKycRecover(payload) {
+  const proof = verifyDeviceProof(payload);
+  const accountId = safeAccountId(payload.accountId || payload.creatorId);
+  const localByDevice = await getLatestKycByDevice(proof.deviceKeyFingerprint);
+  if (localByDevice) {
+    try {
+      const stripe = await retrieveVerificationSession(localByDevice.session_id);
+      const normalized = await normalizeSession(stripe);
+      await saveNormalizedKyc(normalized, localByDevice.account_id);
+      return { ...normalized, found: true, ok: true };
+    } catch (_) {
+      return publicKycPayload(localByDevice);
+    }
+  }
+  if (!accountId) return { found: false, ok: true };
+
+  const creatorName = String(payload.creatorName || '').slice(0, 160);
+  await upsertAccountAndDevice({
+    accountId,
+    creatorName,
+    deviceKeyFingerprint: proof.deviceKeyFingerprint,
+    publicKey: proof.publicKey,
+  });
+  const stripeExisting = await findLatestSessionForAccount(accountId);
+  if (!stripeExisting) return { found: false, ok: true };
+  await saveNormalizedKyc(stripeExisting, accountId);
+  await writeAudit('KYC_SESSION_RECOVERED', accountId, {
+    sessionId: stripeExisting.sessionId,
+    deviceKeyFingerprint: proof.deviceKeyFingerprint,
+  });
+  return { ...stripeExisting, found: true, ok: true };
+}
+
+async function handleKycBind(payload) {
+  const proof = verifyDeviceProof(payload);
+  const accountId = safeAccountId(payload.accountId || payload.creatorId);
+  const sessionId = safeSessionId(payload.sessionId);
+  if (!accountId || !sessionId) {
+    const error = new Error('KYC_BIND_INPUT_INVALID');
     error.statusCode = 400;
     throw error;
   }
-
-  const stripeResponse = await fetch(
-    `https://api.stripe.com/v1/identity/verification_sessions/${encodeURIComponent(cleaned)}`,
-    {
-      headers: {
-        Authorization: `Bearer ${process.env.STRIPE_SECRET_KEY}`,
-      },
-    },
-  );
-
-  const text = await stripeResponse.text();
-  let decoded;
-  try {
-    decoded = JSON.parse(text);
-  } catch (_) {
-    decoded = { raw: text };
-  }
-
-  if (!stripeResponse.ok) {
-    const error = new Error(decoded?.error?.message || `STRIPE_HTTP_${stripeResponse.status}`);
-    error.statusCode = 502;
+  const stripe = await retrieveVerificationSession(sessionId);
+  const normalized = await normalizeSession(stripe);
+  if (normalized.accountId && normalized.accountId !== accountId) {
+    const error = new Error('KYC_SESSION_ACCOUNT_MISMATCH');
+    error.statusCode = 409;
     throw error;
   }
-
-  let verificationReport = null;
-  if (decoded.last_verification_report) {
-    const reportId = typeof decoded.last_verification_report === 'string'
-      ? decoded.last_verification_report
-      : decoded.last_verification_report?.id;
-
-    if (reportId) {
-      try {
-        const reportResponse = await fetch(
-          `https://api.stripe.com/v1/identity/verification_reports/${encodeURIComponent(reportId)}`,
-          {
-            headers: {
-              Authorization: `Bearer ${process.env.STRIPE_SECRET_KEY}`,
-            },
-          },
-        );
-        const reportText = await reportResponse.text();
-        if (reportResponse.ok) {
-          verificationReport = JSON.parse(reportText);
-        }
-      } catch (_) {}
-    }
-  }
-
-  const reportDocument = verificationReport?.document || {};
-  const verifiedOutputs =
-    decoded.verified_outputs ||
-    reportDocument.verified_outputs ||
-    {};
-  const firstName =
-    verifiedOutputs.first_name ||
-    reportDocument.first_name ||
-    reportDocument.name?.first_name ||
-    '';
-  const lastName =
-    verifiedOutputs.last_name ||
-    reportDocument.last_name ||
-    reportDocument.name?.last_name ||
-    '';
-  const verifiedLegalName = [firstName, lastName]
-    .filter((part) => part)
-    .join(' ')
-    .trim();
-  const verifiedCountry =
-    verifiedOutputs.address?.country ||
-    reportDocument.address?.country ||
-    '';
-
-  return {
-    ok: true,
-    provider: 'stripe_identity',
-    sessionId: decoded.id,
-    status: decoded.status,
-    url: decoded.url || '',
-    lastError: decoded.last_error || null,
-    verifiedOutputs: {
-      legalName: verifiedLegalName,
-      firstName,
-      lastName,
-      country: verifiedCountry,
-    },
-    verified: decoded.status === 'verified',
-  };
+  await upsertAccountAndDevice({
+    accountId,
+    creatorName: String(payload.creatorName || '').slice(0, 160),
+    deviceKeyFingerprint: proof.deviceKeyFingerprint,
+    publicKey: proof.publicKey,
+  });
+  await saveNormalizedKyc(normalized, accountId);
+  await bindKycSession({ sessionId, accountId });
+  await writeAudit('KYC_DEVICE_BOUND', accountId, {
+    sessionId,
+    deviceKeyFingerprint: proof.deviceKeyFingerprint,
+  });
+  return { ...normalized, found: true, ok: true };
 }
-const insertCertificate = db.prepare(`
-INSERT OR REPLACE INTO certificates (
-    hcv_id,
-    created_at,
-    certificate_raw
-) VALUES (?, ?, ?)
-`);
 
-const getCertificate = db.prepare(`
-SELECT *
-FROM certificates
-WHERE hcv_id = ?
-`);
+function certificatePage(row) {
+  const cert = row.certificate_raw;
+  const hcvId = escapeHtml(row.hcv_id);
+  const creator = escapeHtml(cert?.meta?.identity?.creatorName || 'Unknown creator');
+  const createdAt = escapeHtml(cert?.createdAt || row.created_at);
+  const contentType = escapeHtml(cert?.content?.type || 'unknown');
+  const trust = escapeHtml(cert?.claims?.trustLevel || cert?.meta?.identity?.trustLevel || 'UNKNOWN');
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${hcvId} - SIGILLUM</title><style>body{font-family:Arial,sans-serif;background:#071511;color:#f4f1e8;margin:0}.wrap{max-width:760px;margin:40px auto;padding:20px}.card{background:#10201b;border:1px solid #31534a;border-radius:18px;padding:28px}.ok{font-size:30px;font-weight:800;color:#76ded3}.row{padding:12px 0;border-bottom:1px solid #27423b}.label{font-size:12px;color:#aeb9b3}.value{margin-top:4px;word-break:break-word}</style></head><body><main class="wrap"><section class="card"><div class="ok">REGISTRY CONFIRMED</div><div class="row"><div class="label">HCV-ID</div><div class="value">${hcvId}</div></div><div class="row"><div class="label">Creator</div><div class="value">${creator}</div></div><div class="row"><div class="label">Created</div><div class="value">${createdAt}</div></div><div class="row"><div class="label">Content</div><div class="value">${contentType}</div></div><div class="row"><div class="label">Trust</div><div class="value">${trust}</div></div><div class="row"><div class="label">Certificate SHA-256</div><div class="value">${escapeHtml(row.certificate_sha256)}</div></div></section></main></body></html>`;
+}
 
-const server = http.createServer(async (req, res) => {
-  if (req.method === 'OPTIONS') {
-    return sendJson(res, 200, { ok: true });
+async function requestHandler(req, res) {
+  if (req.method === 'OPTIONS') return sendJson(res, 200, { ok: true });
+  const url = new URL(req.url, `http://${req.headers.host}`);
+
+  if (req.method === 'GET' && url.pathname === '/') {
+    return sendJson(res, 200, { ok: true, service: 'sigillum-registry-postgres', version: 2 });
   }
-
-  try {
-    const url = new URL(req.url, `http://${req.headers.host}`);
-
-    const staticLegalPage = legalPage(url.pathname);
-    if (req.method === 'GET' && staticLegalPage) {
-      return sendHtml(res, 200, staticLegalPage);
-    }
-
-    // KYC SESSION
-    if (req.method === 'POST' && url.pathname === '/api/identity/kyc/start') {
-      const body = await readBody(req);
-      const payload = JSON.parse(body || '{}');
-      const origin = `${url.protocol}//${req.headers.host}`;
-
-      try {
-        const session = await createKycSession(payload, origin);
-        return sendJson(res, 200, session);
-      } catch (err) {
-        return sendJson(res, err.statusCode || 500, {
-          ok: false,
-          error: err.message || String(err),
-          message:
-            err.message === 'KYC_NOT_CONFIGURED'
-              ? 'KYC non ancora configurato sul server. Configura STRIPE_SECRET_KEY per attivare Stripe Identity.'
-              : 'KYC non disponibile in questo momento.',
-          supportUrl: '/support',
-        });
-      }
-    }
-    if (req.method === 'GET' && url.pathname === '/api/identity/kyc/status') {
-      try {
-        const session = await getKycSessionStatus(url.searchParams.get('sessionId'));
-        return sendJson(res, 200, session);
-      } catch (err) {
-        return sendJson(res, err.statusCode || 500, {
-          ok: false,
-          error: err.message || String(err),
-          message:
-            err.message === 'KYC_NOT_CONFIGURED'
-              ? 'KYC non ancora configurato sul server. Configura STRIPE_SECRET_KEY per attivare Stripe Identity.'
-              : 'Stato KYC non disponibile in questo momento.',
-        });
-      }
-    }
-    // HEALTH
-    if (req.method === 'GET' && url.pathname === '/health') {
-      return sendJson(res, 200, {
-        ok: true,
-        service: 'hcv-registry-sqlite',
-        aiTrainer: true,
-        aiModel: OPENAI_MODEL,
-      });
-    }
-
-    // AI TRAINER
-    if (req.method === 'POST' && url.pathname === '/sigillum/ai-trainer/analyze') {
-      const body = await readBody(req);
-      const payload = JSON.parse(body || '{}');
-
-      try {
-        const analysis = await analyzeTrainingSample(payload);
-        return sendJson(res, 200, analysis);
-      } catch (err) {
-        return sendJson(res, err.statusCode || 500, {
-          ok: false,
-          error: err.message || String(err),
-        });
-      }
-    }
-
-    // POST CERTIFICATE
-    if (req.method === 'POST' && url.pathname === '/api/certificate') {
-      const body = await readBody(req);
-      const payload = JSON.parse(body || '{}');
-
-      const hcvId = safeHcvId(payload.hcvId);
-      const certificateRaw = payload.certificateRaw;
-
-      if (!hcvId || !certificateRaw) {
-        return sendJson(res, 400, {
-          ok: false,
-          error: 'Servono hcvId e certificateRaw',
-        });
-      }
-
-      try {
-        validateCertificateRaw(certificateRaw, hcvId);
-      } catch (err) {
-        return sendJson(res, 400, {
-          ok: false,
-          error: err.message,
-        });
-      }
-
-      insertCertificate.run(
-        hcvId,
-        new Date().toISOString(),
-        certificateRaw
-      );
-
-      return sendJson(res, 201, {
-        ok: true,
-        hcvId,
-        storage: 'sqlite',
-        url: `/api/certificate/${hcvId}`,
-      });
-    }
-
-    // PUBLIC VERIFY PAGE
-    const verifyMatch = url.pathname.match(
-      /^\/verify\/(HCV-[A-Za-z0-9_-]+)$/
-    );
-
-    if (req.method === 'GET' && verifyMatch) {
-      const hcvId = safeHcvId(verifyMatch[1]);
-
-      if (!hcvId) {
-        res.writeHead(400, { 'Content-Type': 'text/html; charset=utf-8' });
-        return res.end('<h1>Invalid HCV-ID</h1>');
-      }
-
-      const row = getCertificate.get(hcvId);
-
-      if (!row) {
-        res.writeHead(404, { 'Content-Type': 'text/html; charset=utf-8' });
-        return res.end('<h1>Certificate not found</h1>');
-      }
-
-      let cert;
-
-      try {
-        cert = JSON.parse(row.certificate_raw);
-      } catch (_) {
-        res.writeHead(500, { 'Content-Type': 'text/html; charset=utf-8' });
-        return res.end('<h1>Stored certificate is invalid</h1>');
-      }
-
-      const creator =
-        cert?.meta?.identity?.creatorName ||
-        cert?.meta?.identity?.name ||
-        'Unknown creator';
-
-      const createdAt =
-        cert?.createdAt ||
-        row.created_at ||
-        'Unknown timestamp';
-
-      const contentType =
-        cert?.content?.type ||
-        'unknown';
-
-      const trustLevel =
-        cert?.claims?.trustLevel ||
-        cert?.claims?.trust ||
-        cert?.meta?.trust ||
-        'LOCAL_VERIFIED';
-
-      const html = `
-    <!doctype html>
-    <html lang="en">
-    <head>
-      <meta charset="utf-8">
-      <meta name="viewport" content="width=device-width, initial-scale=1">
-      <title>SIGILLUM Verification ${hcvId}</title>
-      <style>
-        body {
-          margin: 0;
-          font-family: Arial, sans-serif;
-          background: #f8f5fb;
-          color: #1f1f1f;
-        }
-        .wrap {
-          max-width: 720px;
-          margin: 40px auto;
-          padding: 24px;
-        }
-        .card {
-          background: white;
-          border-radius: 24px;
-          padding: 32px;
-          box-shadow: 0 12px 40px rgba(0,0,0,.08);
-          text-align: center;
-        }
-        .badge {
-          width: 72px;
-          height: 72px;
-          border-radius: 50%;
-          background: #36b24a;
-          color: white;
-          font-size: 42px;
-          line-height: 72px;
-          margin: 0 auto 18px;
-        }
-        h1 {
-          margin: 0;
-          color: #209b38;
-          font-size: 32px;
-        }
-        .sub {
-          margin-top: 8px;
-          color: #666;
-        }
-        .grid {
-          margin-top: 30px;
-          display: grid;
-          gap: 14px;
-          text-align: left;
-        }
-        .row {
-          background: #fafafa;
-          border: 1px solid #eee;
-          border-radius: 14px;
-          padding: 14px 16px;
-        }
-        .label {
-          font-size: 12px;
-          color: #777;
-          text-transform: uppercase;
-          letter-spacing: .06em;
-        }
-        .value {
-          margin-top: 4px;
-          font-size: 16px;
-          word-break: break-word;
-        }
-        .footer {
-          margin-top: 26px;
-          font-size: 12px;
-          color: #777;
-        }
-      </style>
-    </head>
-    <body>
-      <main class="wrap">
-        <section class="card">
-          <div class="badge">OK</div>
-          <h1>HUMAN VERIFIED</h1>
-          <div class="sub">This media has an HCV registry certificate.</div>
-
-          <div class="grid">
-            <div class="row">
-              <div class="label">HCV-ID</div>
-              <div class="value">${hcvId}</div>
-            </div>
-
-            <div class="row">
-              <div class="label">Creator</div>
-              <div class="value">${creator}</div>
-            </div>
-
-            <div class="row">
-              <div class="label">Created At</div>
-              <div class="value">${createdAt}</div>
-            </div>
-
-            <div class="row">
-              <div class="label">Content Type</div>
-              <div class="value">${contentType}</div>
-            </div>
-
-            <div class="row">
-              <div class="label">Trust</div>
-              <div class="value">${trustLevel}</div>
-            </div>
-
-            <div class="row">
-              <div class="label">Signature Algorithm</div>
-              <div class="value">${cert.signatureAlgorithm || 'RSA-SHA256-HCV-V2'}</div>
-            </div>
-          </div>
-
-          <div class="footer">
-            SIGILLUM verifies provenance and integrity. Powered by HCV Protocol.
-          </div>
-        </section>
-      </main>
-    </body>
-    </html>
-    `;
-
-      res.writeHead(200, {
-        'Content-Type': 'text/html; charset=utf-8',
-      });
-
-      return res.end(html);
-    }
-
-    // GET CERTIFICATE
-    const match = url.pathname.match(
-      /^\/api\/certificate\/(HCV-[A-Za-z0-9_-]+)$/
-    );
-
-    if (req.method === 'GET' && match) {
-      const hcvId = safeHcvId(match[1]);
-
-      if (!hcvId) {
-        return sendJson(res, 400, {
-          ok: false,
-          error: 'HCV-ID non valido',
-        });
-      }
-
-      const row = getCertificate.get(hcvId);
-
-      if (!row) {
-        return sendJson(res, 404, {
-          ok: false,
-          error: 'Certificato non trovato',
-        });
-      }
-
-      return sendJson(res, 200, {
-        ok: true,
-        hcvId: row.hcv_id,
-        createdAt: row.created_at,
-        certificateRaw: row.certificate_raw,
-      });
-    }
-
-    return sendJson(res, 404, {
-      ok: false,
-      error: 'Endpoint non trovato',
-    });
-
-  } catch (err) {
-    return sendJson(res, 500, {
-      ok: false,
-      error: String(err.message || err),
+  if (req.method === 'GET' && url.pathname === '/kyc-return') {
+    return sendHtml(res, 200, '<!doctype html><html><body><h1>Identity verification complete</h1><p><a href="sigillum://kyc-return">Open SIGILLUM</a></p><script>setTimeout(()=>location.href="sigillum://kyc-return",300)</script></body></html>');
+  }
+  if (req.method === 'GET' && url.pathname === '/health') {
+    const database = await healthCheck();
+    return sendJson(res, 200, {
+      ok: true,
+      service: 'sigillum-registry-postgres',
+      version: 2,
+      databaseTime: database.now,
+      kycConfigured: Boolean(process.env.STRIPE_SECRET_KEY),
+      webhookConfigured: Boolean(process.env.STRIPE_WEBHOOK_SECRET),
     });
   }
-});
+  if (req.method === 'POST' && url.pathname === '/api/stripe/webhook') {
+    const rawBody = await readBody(req);
+    const event = verifyStripeWebhook(rawBody, req.headers['stripe-signature']);
+    const session = event?.data?.object;
+    if (event?.type?.startsWith('identity.verification_session.') && session?.id) {
+      const normalized = await normalizeSession(session);
+      await saveNormalizedKyc(normalized, normalized.accountId);
+      await writeAudit('STRIPE_WEBHOOK', normalized.accountId, {
+        eventId: event.id,
+        type: event.type,
+        sessionId: normalized.sessionId,
+        status: normalized.status,
+      });
+    }
+    return sendJson(res, 200, { received: true });
+  }
+  if (req.method === 'POST' && url.pathname === '/api/identity/kyc/start') {
+    const payload = parseJson(await readBody(req));
+    const origin = `${url.protocol}//${req.headers.host}`;
+    return sendJson(res, 200, await handleKycStart(payload, origin));
+  }
+  if (req.method === 'POST' && url.pathname === '/api/identity/kyc/recover') {
+    const payload = parseJson(await readBody(req));
+    return sendJson(res, 200, await handleKycRecover(payload));
+  }
+  if (req.method === 'POST' && url.pathname === '/api/identity/kyc/bind') {
+    const payload = parseJson(await readBody(req));
+    return sendJson(res, 200, await handleKycBind(payload));
+  }
+  if (req.method === 'GET' && url.pathname === '/api/identity/kyc/status') {
+    const sessionId = safeSessionId(url.searchParams.get('sessionId'));
+    if (!sessionId) {
+      const error = new Error('INVALID_KYC_SESSION');
+      error.statusCode = 400;
+      throw error;
+    }
+    const stripe = await retrieveVerificationSession(sessionId);
+    const normalized = await normalizeSession(stripe);
+    await saveNormalizedKyc(normalized, normalized.accountId);
+    return sendJson(res, 200, { ...normalized, found: true, ok: true });
+  }
+  if (req.method === 'POST' && url.pathname === '/api/certificate') {
+    const payload = parseJson(await readBody(req));
+    const hcvId = safeHcvId(payload.hcvId);
+    if (!hcvId) {
+      const error = new Error('HCV_ID_INVALID');
+      error.statusCode = 400;
+      throw error;
+    }
+    const verified = verifyCertificate(payload.certificateRaw, hcvId);
+    const stored = await storeCertificateImmutable({
+      hcvId,
+      certificateSha256: verified.certificateSha256,
+      certificate: verified.certificate,
+      signerFingerprint: verified.signerFingerprint,
+      contentHash: verified.contentHash,
+    });
+    await writeAudit(stored.created ? 'CERTIFICATE_CREATED' : 'CERTIFICATE_RETRY', hcvId, {
+      certificateSha256: verified.certificateSha256,
+    });
+    return sendJson(res, stored.created ? 201 : 200, {
+      ok: true,
+      hcvId,
+      created: stored.created,
+      idempotent: stored.idempotent,
+      certificateSha256: verified.certificateSha256,
+      storage: 'postgresql',
+      url: `/api/certificate/${hcvId}`,
+    });
+  }
 
-server.listen(PORT, '0.0.0.0', () => {
-  console.log(`HCV Registry SQLite listening on http://0.0.0.0:${PORT}`);
-});
+  const certificateMatch = url.pathname.match(/^\/api\/certificate\/(HCV-[A-Za-z0-9_-]+)$/);
+  if (req.method === 'GET' && certificateMatch) {
+    const hcvId = safeHcvId(certificateMatch[1]);
+    if (!hcvId) return sendJson(res, 400, { ok: false, error: 'HCV_ID_INVALID' });
+    const row = await getCertificate(hcvId);
+    if (!row) return sendJson(res, 404, { ok: false, error: 'CERTIFICATE_NOT_FOUND' });
+    return sendJson(res, 200, {
+      ok: true,
+      hcvId: row.hcv_id,
+      createdAt: row.created_at,
+      certificateSha256: row.certificate_sha256,
+      certificateRaw: JSON.stringify(row.certificate_raw),
+    });
+  }
+
+  const verifyMatch = url.pathname.match(/^\/verify\/(HCV-[A-Za-z0-9_-]+)$/);
+  if (req.method === 'GET' && verifyMatch) {
+    const hcvId = safeHcvId(verifyMatch[1]);
+    if (!hcvId) return sendHtml(res, 400, '<h1>Invalid HCV-ID</h1>');
+    const row = await getCertificate(hcvId);
+    if (!row) return sendHtml(res, 404, '<h1>Certificate not found</h1>');
+    return sendHtml(res, 200, certificatePage(row));
+  }
+
+  return sendJson(res, 404, { ok: false, error: 'ENDPOINT_NOT_FOUND' });
+}
+
+async function main() {
+  await initSchema();
+  const server = http.createServer((req, res) => {
+    requestHandler(req, res).catch((error) => {
+      console.error('[request-error]', error.message);
+      sendJson(res, error.statusCode || 500, {
+        ok: false,
+        error: error.message || 'INTERNAL_ERROR',
+      });
+    });
+  });
+  server.listen(PORT, '0.0.0.0', () => {
+    console.log(`SIGILLUM Registry PostgreSQL listening on 0.0.0.0:${PORT}`);
+  });
+}
+
+if (require.main === module) {
+  main().catch((error) => {
+    console.error('[startup-error]', error);
+    process.exit(1);
+  });
+}
+
+module.exports = { safeHcvId, safeAccountId, safeSessionId, publicKycPayload };
