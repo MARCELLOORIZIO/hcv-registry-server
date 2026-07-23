@@ -49,11 +49,14 @@ async function initSchema() {
     CREATE TABLE IF NOT EXISTS certificates (
       hcv_id TEXT PRIMARY KEY,
       certificate_sha256 TEXT NOT NULL UNIQUE,
-      certificate_raw JSONB NOT NULL,
+      certificate_raw TEXT NOT NULL,
       signer_fingerprint TEXT NOT NULL,
       content_hash TEXT NOT NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+    ALTER TABLE certificates
+      ALTER COLUMN certificate_raw TYPE TEXT
+      USING certificate_raw::text;
     CREATE TABLE IF NOT EXISTS audit_events (
       event_id BIGSERIAL PRIMARY KEY,
       event_type TEXT NOT NULL,
@@ -165,7 +168,12 @@ async function getLatestKycByAccount(accountId) {
   return result.rows[0] || null;
 }
 
-async function storeCertificateImmutable({ hcvId, certificateSha256, certificate, signerFingerprint, contentHash }) {
+async function storeCertificateImmutable({ hcvId, certificateSha256, certificateRaw, signerFingerprint, contentHash }) {
+  if (typeof certificateRaw !== 'string' || certificateRaw.length === 0) {
+    const error = new Error('CERTIFICATE_RAW_MISSING');
+    error.statusCode = 400;
+    throw error;
+  }
   return withTransaction(async (client) => {
     const existing = await client.query('SELECT certificate_sha256 FROM certificates WHERE hcv_id = $1', [hcvId]);
     if (existing.rowCount > 0) {
@@ -176,8 +184,8 @@ async function storeCertificateImmutable({ hcvId, certificateSha256, certificate
     }
     await client.query(
       `INSERT INTO certificates (hcv_id, certificate_sha256, certificate_raw, signer_fingerprint, content_hash)
-       VALUES ($1, $2, $3::jsonb, $4, $5)`,
-      [hcvId, certificateSha256, JSON.stringify(certificate), signerFingerprint, contentHash],
+       VALUES ($1, $2, $3, $4, $5)`,
+      [hcvId, certificateSha256, certificateRaw, signerFingerprint, contentHash],
     );
     return { created: true, idempotent: false };
   });
