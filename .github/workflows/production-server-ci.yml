@@ -1,0 +1,41 @@
+name: Production server CI
+
+on:
+  push:
+    branches:
+      - fix/production-postgres-kyc-20260723
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  node-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: sigillum
+          POSTGRES_PASSWORD: sigillum_ci
+          POSTGRES_DB: hcv_registry_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U sigillum -d hcv_registry_test"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
+    env:
+      DATABASE_URL: postgresql://sigillum:sigillum_ci@127.0.0.1:5432/hcv_registry_test
+      PGSSLMODE: disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install dependencies
+        run: npm install
+      - name: Run tests
+        run: npm test
