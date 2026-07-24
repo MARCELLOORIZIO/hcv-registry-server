@@ -21,6 +21,7 @@ const {
   findLatestSessionForAccount,
 } = require('./stripe_identity');
 const { verifyStripeWebhook } = require('./webhook_verifier');
+const { evaluateLegacyKycMigration } = require('./kyc_migration_policy');
 
 const PORT = Number(process.env.PORT || 8080);
 const MAX_BODY_BYTES = Number(process.env.MAX_BODY_BYTES || 35000000);
@@ -222,26 +223,56 @@ async function handleKycBind(payload) {
     error.statusCode = 400;
     throw error;
   }
+
+  const creatorName = String(payload.creatorName || '').slice(0, 160);
   const stripe = await retrieveVerificationSession(sessionId);
   const normalized = await normalizeSession(stripe);
-  if (normalized.accountId && normalized.accountId !== accountId) {
-    const error = new Error('KYC_SESSION_ACCOUNT_MISMATCH');
-    error.statusCode = 409;
-    throw error;
-  }
+  const migration = evaluateLegacyKycMigration({
+    sessionAccountId: normalized.accountId,
+    targetAccountId: accountId,
+    status: normalized.status,
+    verifiedLegalName: normalized.verifiedOutputs?.legalName,
+    claimedLegalName: creatorName,
+  });
+
   await upsertAccountAndDevice({
     accountId,
-    creatorName: String(payload.creatorName || '').slice(0, 160),
+    creatorName,
     deviceKeyFingerprint: proof.deviceKeyFingerprint,
     publicKey: proof.publicKey,
   });
-  await saveNormalizedKyc(normalized, accountId);
-  await bindKycSession({ sessionId, accountId });
-  await writeAudit('KYC_DEVICE_BOUND', accountId, {
-    sessionId,
-    deviceKeyFingerprint: proof.deviceKeyFingerprint,
-  });
-  return { ...normalized, found: true, ok: true };
+
+  if (migration.legacyMigration) {
+    await upsertKycSession({
+      sessionId,
+      accountId,
+      provider: normalized.provider,
+      status: normalized.status,
+      url: normalized.url,
+      verifiedOutputs: normalized.verifiedOutputs,
+      lastError: normalized.lastError,
+    });
+    await writeAudit('KYC_LEGACY_ACCOUNT_MIGRATED', accountId, {
+      sessionId,
+      sourceAccountId: migration.sourceAccountId,
+      deviceKeyFingerprint: proof.deviceKeyFingerprint,
+    });
+  } else {
+    await saveNormalizedKyc(normalized, accountId);
+    await bindKycSession({ sessionId, accountId });
+    await writeAudit('KYC_DEVICE_BOUND', accountId, {
+      sessionId,
+      deviceKeyFingerprint: proof.deviceKeyFingerprint,
+    });
+  }
+
+  return {
+    ...normalized,
+    accountId,
+    found: true,
+    ok: true,
+    legacyMigration: migration.legacyMigration,
+  };
 }
 
 async function handleKycStatus(payload) {
