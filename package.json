@@ -1,13 +1,13 @@
 {
   "name": "hcv-registry-server",
-  "version": "1.1.0",
-  "main": "kyc_proxy.js",
+  "version": "1.2.0",
+  "main": "auth_proxy.js",
   "engines": {
     "node": "20.x"
   },
   "scripts": {
-    "start": "node kyc_proxy.js",
-    "check": "node --check server.js && node --check kyc_proxy.js"
+    "start": "node auth_proxy.js",
+    "check": "node --check server.js && node --check kyc_proxy.js && node --check auth_proxy.js"
   },
   "dependencies": {
     "better-sqlite3": "^11.9.1"
