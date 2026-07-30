@@ -634,6 +634,24 @@ async function handleAuth(req, res, url) {
 }
 
 
+async function handleAuthRequest(req, res, url) {
+  try {
+    return await handleAuth(req, res, url);
+  } catch (error) {
+    return sendJson(
+      res,
+      error.statusCode || 500,
+      error.statusCode
+        ? publicError(error)
+        : {
+            ok: false,
+            error: 'ERRORE_SERVER',
+            message: 'Operazione account non disponibile.',
+          },
+    );
+  }
+}
+
 module.exports = {
-  handleAuth,
+  handleAuth: handleAuthRequest,
 };
