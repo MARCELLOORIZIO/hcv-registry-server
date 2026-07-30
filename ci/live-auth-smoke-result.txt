@@ -1,0 +1,24 @@
+check_status=0
+smoke_status=1
+--- check ---
+
+> hcv-registry-server@1.2.0 check
+> node --check server.js && node --check auth_api.js && node --check kyc_proxy.js && node --check auth_proxy.js && node --check auth_smoke_test.js
+
+--- smoke ---
+
+> hcv-registry-server@1.2.0 smoke
+> node auth_smoke_test.js
+
+AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+
+500 !== 401
+
+    at main (/home/runner/work/hcv-registry-server/hcv-registry-server/auth_smoke_test.js:146:12)
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5) {
+  generatedMessage: true,
+  code: 'ERR_ASSERTION',
+  actual: 500,
+  expected: 401,
+  operator: 'strictEqual'
+}
