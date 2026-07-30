@@ -74,7 +74,7 @@ async function main() {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sigillum-auth-'));
   const dbPath = path.join(tempDir, 'registry.db');
   const logs = [];
-  const child = spawn(process.execPath, ['auth_proxy.js'], {
+  const child = spawn(process.execPath, ['server.js'], {
     cwd: __dirname,
     env: {
       ...process.env,

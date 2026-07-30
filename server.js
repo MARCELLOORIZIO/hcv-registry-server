@@ -1,6 +1,7 @@
 const http = require('http');
 const path = require('path');
 const Database = require('better-sqlite3');
+const { handleAuth } = require('./auth_api');
 
 const PORT = process.env.PORT || 8080;
 const OPENAI_MODEL = process.env.SIGILLUM_AI_MODEL || 'gpt-4o-mini';
@@ -440,6 +441,16 @@ const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, `http://${req.headers.host}`);
 
+    if (url.pathname.startsWith('/api/auth/')) {
+      const handled = await handleAuth(req, res, url);
+      if (handled !== false) return handled;
+      return sendJson(res, 404, {
+        ok: false,
+        error: 'ENDPOINT_ACCOUNT_NON_TROVATO',
+        message: 'Endpoint account non trovato.',
+      });
+    }
+
     const staticLegalPage = legalPage(url.pathname);
     if (req.method === 'GET' && staticLegalPage) {
       return sendHtml(res, 200, staticLegalPage);
@@ -488,6 +499,7 @@ const server = http.createServer(async (req, res) => {
         service: 'hcv-registry-sqlite',
         aiTrainer: true,
         aiModel: OPENAI_MODEL,
+        authApi: true,
       });
     }
 
