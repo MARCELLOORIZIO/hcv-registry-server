@@ -1,0 +1,40 @@
+name: Materialize live Account API
+
+on:
+  push:
+    paths:
+      - '.github/workflows/materialize-live-auth-api.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  materialize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Mount Account routes in server.js
+        run: python3 tool/materialize_auth_in_live_server.py
+      - name: Install dependencies
+        run: npm install
+      - name: Verify syntax and full Account flow
+        run: |
+          npm run check
+          npm run smoke
+      - name: Commit live Account API
+        run: |
+          git config user.name 'SIGILLUM Registry Bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git add server.js auth_api.js auth_smoke_test.js package.json package-lock.json
+          if git diff --cached --quiet; then
+            echo 'Live Account API already materialized'
+          else
+            git commit -m 'Expose Account endpoints from the live Registry server'
+            git push origin HEAD:main
+          fi
