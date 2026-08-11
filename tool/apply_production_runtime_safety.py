@@ -18,6 +18,13 @@ new_ssl = """const pool = new Pool({
 if old_ssl in source:
     source = source.replace(old_ssl, new_ssl, 1)
 
+subscription_flag_anchor = "const SUBSCRIPTIONS_ENFORCED = process.env.SUBSCRIPTIONS_ENFORCED === 'true';\n"
+subscription_flag_value = subscription_flag_anchor + "const KYC_REQUIRES_SUBSCRIPTION = process.env.KYC_REQUIRES_SUBSCRIPTION !== 'false';\n"
+if 'const KYC_REQUIRES_SUBSCRIPTION' not in source:
+    if subscription_flag_anchor not in source:
+        raise RuntimeError('subscription flag anchor missing')
+    source = source.replace(subscription_flag_anchor, subscription_flag_value, 1)
+
 old_code = """function makeCode() {
   return String(crypto.randomInt(0, 1_000_000)).padStart(6, '0');
 }
@@ -122,7 +129,7 @@ password_route = """  if (req.method === 'POST' && url.pathname === '/api/auth/p
     const session = await authenticate(req);
     const body = await readJson(req);
     const currentPassword = String(body.currentPassword || '');
-    const newPassword = validatePassword(body.newPassword, 'NUOVA_PASSWORD_NON_VALIDA');
+    const newPassword = validatePassword(body.newPassword, 'NUOVA_PASSWORD_NON_VALIDIDA');
     const account = (await pool.query('SELECT * FROM accounts WHERE id=$1', [session.account_id])).rows[0];
     if (!account || !(await passwordMatches(currentPassword, account))) {
       throw publicError('CREDENZIALI_NON_VALIDE', 401);
@@ -137,15 +144,46 @@ password_route = """  if (req.method === 'POST' && url.pathname === '/api/auth/p
   }
 
 """
+# Preserve the already validated error code spelling when generating the route.
+password_route = password_route.replace('NUOVA_PASSWORD_NON_VALIDIDA', 'NUOVA_PASSWORD_NON_VALIDA')
 if "url.pathname === '/api/auth/password')" not in source:
     if password_anchor not in source:
         raise RuntimeError('password route anchor missing')
     source = source.replace(password_anchor, password_route + password_anchor, 1)
 
+old_kyc = """  if (req.method === 'POST' && url.pathname === '/api/identity/kyc/start') {
+    const session = await authenticate(req); const account = await accountEnvelope(session.account_id, session.device_key_fingerprint);
+    if (!account.emailVerified || !account.termsAccepted || !account.adultConfirmed) throw publicError('TERMINI_NON_ACCETTATI', 403);
+    if (SUBSCRIPTIONS_ENFORCED && account.subscriptionStatus !== 'active') throw publicError('ABBONAMENTO_NON_ATTIVO', 402);
+    const origin = APP_BASE_URL || `https://${req.headers.host}`;
+    return sendJson(res, 200, await startKyc(session.account_id, origin));
+  }
+"""
+new_kyc = """  if (req.method === 'POST' && url.pathname === '/api/identity/kyc/start') {
+    enforceRate(req, 'kyc-start', 6, 60 * 60 * 1000);
+    const session = await authenticate(req); const account = await accountEnvelope(session.account_id, session.device_key_fingerprint);
+    if (!account.emailVerified || !account.termsAccepted || !account.privacyAcknowledged || !account.adultConfirmed) throw publicError('TERMINI_NON_ACCETTATI', 403);
+    if (KYC_REQUIRES_SUBSCRIPTION && !['active', 'grace'].includes(account.subscriptionStatus)) throw publicError('ABBONAMENTO_NON_ATTIVO', 402);
+    const origin = APP_BASE_URL || `https://${req.headers.host}`;
+    return sendJson(res, 200, await startKyc(session.account_id, origin));
+  }
+"""
+if old_kyc in source:
+    source = source.replace(old_kyc, new_kyc, 1)
+elif "enforceRate(req, 'kyc-start'" not in source:
+    raise RuntimeError('KYC billing protection anchor missing')
+
 if "await pool.query('BEGIN');" in source:
     raise RuntimeError('unsafe pool-level transaction remains')
 if "DATABASE_URL.includes('localhost')" in source:
     raise RuntimeError('legacy implicit SSL selection remains')
+for token in [
+    'const KYC_REQUIRES_SUBSCRIPTION',
+    "enforceRate(req, 'kyc-start'",
+    "!['active', 'grace'].includes(account.subscriptionStatus)",
+]:
+    if token not in source:
+        raise RuntimeError(f'KYC production safety token missing: {token}')
 
 path.write_text(source, encoding='utf-8')
-print('Production PostgreSQL SSL, transaction, password and test safety applied')
+print('Production PostgreSQL SSL, transaction, password, KYC billing and test safety applied')
