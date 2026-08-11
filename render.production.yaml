@@ -17,6 +17,8 @@ services:
         value: production
       - key: PG_POOL_MAX
         value: "10"
+      - key: PG_SSL_REQUIRED
+        value: "false"
       - key: SUBSCRIPTIONS_ENFORCED
         value: "false"
       - key: TERMS_VERSION
