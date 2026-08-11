@@ -20,6 +20,7 @@ const readyEnv = {
   NODE_ENV: 'production',
   DATABASE_URL: 'postgresql://internal.example/sigillum',
   SUBSCRIPTIONS_ENFORCED: 'true',
+  CERTIFICATE_WRITES_ENABLED: 'true',
   KYC_REQUIRES_SUBSCRIPTION: 'true',
   STRIPE_SECRET_KEY: 'sk_live_SIGILLUM_TEST_ONLY',
   RESEND_API_KEY: 're_TEST_ONLY',
@@ -40,6 +41,9 @@ const readyEnv = {
 const ready = assertProductionConfig(readyEnv);
 expect(ready.live === true && ready.ready === true, 'complete LIVE configuration must be accepted');
 
+const writesOff = { ...readyEnv, CERTIFICATE_WRITES_ENABLED: 'false' };
+expect(validateProductionConfig(writesOff).ready === false, 'LIVE must reject disabled certificate writes');
+
 const unsafeStripe = { ...readyEnv, STRIPE_SECRET_KEY: 'sk_test_not_live' };
 const unsafe = validateProductionConfig(unsafeStripe);
 expect(unsafe.ready === false, 'test Stripe key must not be accepted for LIVE');
@@ -49,5 +53,6 @@ console.log(JSON.stringify({
   prelaunchAllowed: true,
   incompleteLiveRejected: true,
   completeLiveAccepted: true,
+  writesMustBeEnabledForLive: true,
   testStripeRejectedForLive: true,
 }, null, 2));
