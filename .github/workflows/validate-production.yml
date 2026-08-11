@@ -33,6 +33,10 @@ jobs:
       SUBSCRIPTIONS_ENFORCED: "false"
       TEST_FIXED_CODE: "123456"
       PG_SSL_REQUIRED: "false"
+      APPLE_BILLING_TEST_MODE: "true"
+      APPLE_BUNDLE_ID: com.sigillum.hcv
+      APPLE_MONTHLY_PRODUCT_ID: com.sigillum.hcv.creator.monthly
+      APPLE_ANNUAL_PRODUCT_ID: com.sigillum.hcv.creator.annual
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -62,7 +66,7 @@ jobs:
         run: |
           STATUS=$(curl -s -o unauth.json -w '%{http_code}' -X POST http://127.0.0.1:8080/api/certificate -H 'Content-Type: application/json' -d '{"hcvId":"HCV-AAAAAAAAAAAAAAAA","certificateRaw":"{}"}')
           test "$STATUS" = "401"
-      - name: Run authenticated account flow
+      - name: Run authenticated account and Apple billing flow
         run: node production_smoke_test.js | tee account-smoke.json
       - name: Run PostgreSQL-backed load probe
         env:
