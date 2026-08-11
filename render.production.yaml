@@ -21,6 +21,8 @@ services:
         value: "10"
       - key: PG_SSL_REQUIRED
         value: "false"
+      - key: CERTIFICATE_WRITES_ENABLED
+        value: "false"
       - key: SUBSCRIPTIONS_ENFORCED
         value: "false"
       - key: KYC_REQUIRES_SUBSCRIPTION
