@@ -30,7 +30,9 @@ jobs:
     env:
       DATABASE_URL: postgresql://sigillum:sigillum@127.0.0.1:5432/sigillum
       NODE_ENV: test
+      PRODUCTION_LIVE: "false"
       SUBSCRIPTIONS_ENFORCED: "false"
+      KYC_REQUIRES_SUBSCRIPTION: "true"
       TEST_FIXED_CODE: "123456"
       PG_SSL_REQUIRED: "false"
       APPLE_BILLING_TEST_MODE: "true"
@@ -46,6 +48,8 @@ jobs:
         run: npm install
       - name: Syntax and safety checks
         run: npm run check
+      - name: Verify LIVE production guard
+        run: node production_config_test.js | tee production-config.json
       - name: Start production server
         run: |
           npm start > server.log 2>&1 &
@@ -60,6 +64,8 @@ jobs:
         run: |
           cat health.json
           grep -q 'sigillum-production-postgres' health.json
+          grep -q '"productionLive":false' health.json
+          grep -q '"readyForLive":false' health.json
           curl -fsS http://127.0.0.1:8080/privacy | grep -q 'MAORI DI MARCELLO ORIZIO'
           curl -fsS http://127.0.0.1:8080/terms | grep -q 'Termini di Servizio SIGILLUM'
       - name: Verify unauthenticated certificate writes are blocked
@@ -82,6 +88,7 @@ jobs:
             server.log
             health.json
             unauth.json
+            production-config.json
             account-smoke.json
             load-result.json
           if-no-files-found: ignore
