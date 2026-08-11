@@ -6,14 +6,15 @@
     "node": "20.x"
   },
   "scripts": {
-    "prestart": "python3 tool/apply_production_runtime_safety.py",
+    "prestart": "python3 tool/apply_production_runtime_safety.py && python3 tool/apply_app_store_billing.py",
     "start": "node production_server.js",
     "start:legacy": "node server.js",
-    "precheck": "python3 tool/apply_production_runtime_safety.py",
-    "check": "node --check production_server.js && node --check server.js && node --check auth_api.js",
+    "precheck": "python3 tool/apply_production_runtime_safety.py && python3 tool/apply_app_store_billing.py",
+    "check": "node --check production_server.js && node --check app_store_billing.js && node --check server.js && node --check auth_api.js",
     "smoke": "node auth_smoke_test.js"
   },
   "dependencies": {
+    "@apple/app-store-server-library": "^3.1.0",
     "better-sqlite3": "^11.9.1",
     "pg": "^8.16.3"
   }
