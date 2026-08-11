@@ -3,8 +3,6 @@ from pathlib import Path
 path = Path('production_server.js')
 source = path.read_text(encoding='utf-8')
 
-# Managed PostgreSQL SSL is explicit. Local/Render-internal connections can run without TLS;
-# external managed connections can set PG_SSL_REQUIRED=true.
 old_ssl = """const pool = new Pool({
   connectionString: DATABASE_URL,
   ssl: DATABASE_URL.includes('localhost') ? false : { rejectUnauthorized: false },
@@ -19,6 +17,20 @@ new_ssl = """const pool = new Pool({
 """
 if old_ssl in source:
     source = source.replace(old_ssl, new_ssl, 1)
+
+old_code = """function makeCode() {
+  return String(crypto.randomInt(0, 1_000_000)).padStart(6, '0');
+}
+"""
+new_code = """function makeCode() {
+  if (NODE_ENV === 'test' && /^\\d{6}$/.test(process.env.TEST_FIXED_CODE || '')) {
+    return process.env.TEST_FIXED_CODE;
+  }
+  return String(crypto.randomInt(0, 1_000_000)).padStart(6, '0');
+}
+"""
+if old_code in source:
+    source = source.replace(old_code, new_code, 1)
 
 anchor = "async function securityEvent(accountId, type, detail = {}) {"
 helper = """async function withTransaction(work) {
@@ -104,7 +116,6 @@ new_duplicate = """    } catch (err) {
 if old_duplicate in source:
     source = source.replace(old_duplicate, new_duplicate, 1)
 
-# Existing mobile AccountPage expects this authenticated endpoint.
 password_anchor = """  if (req.method === 'POST' && url.pathname === '/api/auth/password/forgot') {
 """
 password_route = """  if (req.method === 'POST' && url.pathname === '/api/auth/password') {
@@ -137,4 +148,4 @@ if "DATABASE_URL.includes('localhost')" in source:
     raise RuntimeError('legacy implicit SSL selection remains')
 
 path.write_text(source, encoding='utf-8')
-print('Production PostgreSQL SSL, transaction, password and idempotency safety applied')
+print('Production PostgreSQL SSL, transaction, password and test safety applied')
