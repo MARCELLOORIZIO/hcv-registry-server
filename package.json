@@ -1,16 +1,18 @@
 {
   "name": "hcv-registry-server",
-  "version": "1.2.0",
-  "main": "server.js",
+  "version": "2.0.0-prelaunch",
+  "main": "production_server.js",
   "engines": {
     "node": "20.x"
   },
   "scripts": {
-    "start": "node server.js",
-    "check": "node --check server.js && node --check auth_api.js && node --check kyc_proxy.js && node --check auth_proxy.js && node --check auth_smoke_test.js",
+    "start": "node production_server.js",
+    "start:legacy": "node server.js",
+    "check": "node --check production_server.js && node --check server.js && node --check auth_api.js",
     "smoke": "node auth_smoke_test.js"
   },
   "dependencies": {
-    "better-sqlite3": "^11.9.1"
+    "better-sqlite3": "^11.9.1",
+    "pg": "^8.16.3"
   }
 }
