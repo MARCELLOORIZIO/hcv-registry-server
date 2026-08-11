@@ -1,0 +1,42 @@
+services:
+  - type: web
+    name: sigillum-registry-production
+    runtime: node
+    region: frankfurt
+    plan: starter
+    branch: commercial/prelaunch-20260811
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: sigillum-registry-db
+          property: connectionString
+      - key: NODE_ENV
+        value: production
+      - key: PG_POOL_MAX
+        value: "10"
+      - key: SUBSCRIPTIONS_ENFORCED
+        value: "false"
+      - key: TERMS_VERSION
+        value: "2026-08-11"
+      - key: PRIVACY_VERSION
+        value: "2026-08-11"
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
+      - key: APP_BASE_URL
+        sync: false
+      - key: SIGILLUM_KYC_RETURN_URL
+        sync: false
+
+databases:
+  - name: sigillum-registry-db
+    region: frankfurt
+    plan: basic-256mb
+    databaseName: sigillum
+    user: sigillum
