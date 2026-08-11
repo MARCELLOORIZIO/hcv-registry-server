@@ -116,9 +116,20 @@ async function main() {
   expect(result.status, 200, 'login with new password');
   const nextToken = result.data.token;
 
+  result = await request('POST', '/api/billing/apple/verify', {
+    transactionId: `CI-TX-${Date.now()}`,
+    productId: 'com.sigillum.hcv.creator.monthly',
+  }, nextToken);
+  expect(result.status, 200, 'Apple subscription verification');
+  if (result.data.verified !== true || result.data.status !== 'active') {
+    throw new Error('Apple subscription was not activated by verified server flow');
+  }
+
   result = await request('GET', '/api/billing/status', null, nextToken);
   expect(result.status, 200, 'billing status');
   if (result.data.enforced !== false) throw new Error('test billing enforcement should be false');
+  if (result.data.appleConfigured !== true) throw new Error('Apple billing test service should be configured');
+  if (result.data.status !== 'active') throw new Error('verified subscription status not persisted');
 
   result = await request('POST', '/api/certificate', {
     hcvId: 'HCV-AAAAAAAAAAAAAAAA',
@@ -135,6 +146,7 @@ async function main() {
     emailVerification: true,
     passwordChange: true,
     session: true,
+    appleSubscriptionVerification: true,
     creatorGateBlocksUnverifiedIdentity: true,
   }, null, 2));
 }
