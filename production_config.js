@@ -49,6 +49,7 @@ function validateProductionConfig(env = process.env) {
 
   if (env.NODE_ENV !== 'production') invalid.push('NODE_ENV=production');
   if (!isTrue(env.SUBSCRIPTIONS_ENFORCED)) invalid.push('SUBSCRIPTIONS_ENFORCED=true');
+  if (!isTrue(env.CERTIFICATE_WRITES_ENABLED)) invalid.push('CERTIFICATE_WRITES_ENABLED=true');
   if (String(env.KYC_REQUIRES_SUBSCRIPTION || '').toLowerCase() === 'false') {
     invalid.push('KYC_REQUIRES_SUBSCRIPTION=true');
   }
