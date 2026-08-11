@@ -25,6 +25,22 @@ services:
         value: "2026-08-11"
       - key: PRIVACY_VERSION
         value: "2026-08-11"
+      - key: APPLE_BUNDLE_ID
+        value: "com.sigillum.hcv"
+      - key: APPLE_MONTHLY_PRODUCT_ID
+        value: "com.sigillum.hcv.creator.monthly"
+      - key: APPLE_ANNUAL_PRODUCT_ID
+        value: "com.sigillum.hcv.creator.annual"
+      - key: APPLE_IAP_ENVIRONMENT
+        value: "AUTO"
+      - key: APPLE_APP_ID
+        sync: false
+      - key: APPLE_IAP_ISSUER_ID
+        sync: false
+      - key: APPLE_IAP_KEY_ID
+        sync: false
+      - key: APPLE_IAP_PRIVATE_KEY_BASE64
+        sync: false
       - key: STRIPE_SECRET_KEY
         sync: false
       - key: RESEND_API_KEY
