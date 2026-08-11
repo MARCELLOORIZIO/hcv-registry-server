@@ -1,0 +1,73 @@
+name: Validate SIGILLUM production backend
+
+on:
+  push:
+    branches:
+      - commercial/prelaunch-20260811
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: sigillum
+          POSTGRES_PASSWORD: sigillum
+          POSTGRES_DB: sigillum
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U sigillum"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://sigillum:sigillum@127.0.0.1:5432/sigillum
+      NODE_ENV: test
+      SUBSCRIPTIONS_ENFORCED: "false"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Install dependencies
+        run: npm install
+      - name: Syntax and safety checks
+        run: npm run check
+      - name: Start production server
+        run: |
+          npm start > server.log 2>&1 &
+          echo $! > server.pid
+          for i in {1..30}; do
+            if curl -fsS http://127.0.0.1:8080/health > health.json; then exit 0; fi
+            sleep 1
+          done
+          cat server.log
+          exit 1
+      - name: Verify health and legal endpoints
+        run: |
+          cat health.json
+          grep -q 'sigillum-production-postgres' health.json
+          curl -fsS http://127.0.0.1:8080/privacy | grep -q 'MAORI DI MARCELLO ORIZIO'
+          curl -fsS http://127.0.0.1:8080/terms | grep -q 'Termini di Servizio SIGILLUM'
+      - name: Verify unauthenticated certificate writes are blocked
+        run: |
+          STATUS=$(curl -s -o unauth.json -w '%{http_code}' -X POST http://127.0.0.1:8080/api/certificate -H 'Content-Type: application/json' -d '{"hcvId":"HCV-AAAAAAAAAAAAAAAA","certificateRaw":"{}"}')
+          test "$STATUS" = "401"
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sigillum-production-backend-logs
+          path: |
+            server.log
+            health.json
+            unauth.json
+          if-no-files-found: ignore
