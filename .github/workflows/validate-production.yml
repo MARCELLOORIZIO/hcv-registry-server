@@ -12,7 +12,7 @@ on:
 jobs:
   validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     services:
       postgres:
         image: postgres:16
@@ -31,6 +31,8 @@ jobs:
       DATABASE_URL: postgresql://sigillum:sigillum@127.0.0.1:5432/sigillum
       NODE_ENV: test
       SUBSCRIPTIONS_ENFORCED: "false"
+      TEST_FIXED_CODE: "123456"
+      PG_SSL_REQUIRED: "false"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -60,6 +62,13 @@ jobs:
         run: |
           STATUS=$(curl -s -o unauth.json -w '%{http_code}' -X POST http://127.0.0.1:8080/api/certificate -H 'Content-Type: application/json' -d '{"hcvId":"HCV-AAAAAAAAAAAAAAAA","certificateRaw":"{}"}')
           test "$STATUS" = "401"
+      - name: Run authenticated account flow
+        run: node production_smoke_test.js | tee account-smoke.json
+      - name: Run PostgreSQL-backed load probe
+        env:
+          LOAD_DURATION_MS: "10000"
+          LOAD_CONCURRENCY: "25"
+        run: node load_test.js | tee load-result.json
       - name: Upload logs
         if: always()
         uses: actions/upload-artifact@v4
@@ -69,4 +78,6 @@ jobs:
             server.log
             health.json
             unauth.json
+            account-smoke.json
+            load-result.json
           if-no-files-found: ignore
