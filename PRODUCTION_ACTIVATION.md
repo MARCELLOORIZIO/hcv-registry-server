@@ -6,7 +6,7 @@ This document is operational. It does not modify the HCV capture or certificatio
 
 - App validated commit: `3ea10197157cdcb80508bfefa7b38f58a55a0c2e`
 - App stable branch: `stable/commercial-prelaunch-code-20260811`
-- Backend validated commit: `39574f05d4c8e256979dc5cbfd6ceee68b05bca9`
+- Backend validated commit: `b9db4c568f8394baf7644e8c42d89088f634f384`
 - Backend stable branch: `stable/commercial-prelaunch-backend-guarded-20260811`
 - Frozen app engine base: `f810af479546075ffe84c3ea2411dcc6300c0bb3`
 
@@ -50,7 +50,37 @@ Do not put the Resend key in GitHub.
 
 ## Phase 3 — Render prelaunch deployment
 
-Deploy `render.production.yaml` in Frankfurt from backend commit `39574f05d4c8e256979dc5cbfd6ceee68b05bca9` or its stable branch.
+Create a NEW Render Blueprint. Do not modify or attach the legacy Free/SQLite Registry service.
+
+Blueprint source configuration:
+
+```text
+Repository: MARCELLOORIZIO/hcv-registry-server
+Blueprint branch: commercial/prelaunch-20260811
+Blueprint path: render.production.yaml
+```
+
+`render.production.yaml` deliberately deploys the web service from the frozen backend branch:
+
+```text
+stable/commercial-prelaunch-backend-guarded-20260811
+```
+
+and sets:
+
+```text
+autoDeployTrigger: off
+```
+
+so future commits cannot automatically replace the validated backend running on Render. After the Blueprint has been created, set the Blueprint itself to `Auto Sync = No` in Render Settings as an additional deployment-control safeguard. Subsequent Blueprint changes must be synced manually.
+
+The Blueprint provisions in Frankfurt:
+
+```text
+Render Web Service Starter
++
+Render PostgreSQL Basic-256mb
+```
 
 Initial safety state MUST remain:
 
