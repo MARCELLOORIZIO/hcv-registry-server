@@ -23,12 +23,12 @@ const readyEnv = {
   CERTIFICATE_WRITES_ENABLED: 'true',
   KYC_REQUIRES_SUBSCRIPTION: 'true',
   STRIPE_SECRET_KEY: 'sk_live_SIGILLUM_TEST_ONLY',
-  RESEND_API_KEY: 're_TEST_ONLY',
-  EMAIL_FROM: 'SIGILLUM <noreply@sigillum.example>',
-  SUPPORT_EMAIL: 'support@sigillum.example',
-  PRIVACY_EMAIL: 'privacy@sigillum.example',
-  APP_BASE_URL: 'https://sigillum.example',
-  SIGILLUM_KYC_RETURN_URL: 'https://sigillum.example/kyc-return',
+  RESEND_API_KEY: 're_SIGILLUM_TEST_ONLY',
+  EMAIL_FROM: 'SIGILLUM <noreply@sigillum-hcv.com>',
+  SUPPORT_EMAIL: 'support@sigillum-hcv.com',
+  PRIVACY_EMAIL: 'privacy@sigillum-hcv.com',
+  APP_BASE_URL: 'https://sigillum-hcv.com',
+  SIGILLUM_KYC_RETURN_URL: 'https://sigillum-hcv.com/kyc-return',
   APPLE_BUNDLE_ID: 'com.sigillum.hcv',
   APPLE_APP_ID: '1234567890',
   APPLE_IAP_ENVIRONMENT: 'PRODUCTION',
@@ -45,8 +45,16 @@ const writesOff = { ...readyEnv, CERTIFICATE_WRITES_ENABLED: 'false' };
 expect(validateProductionConfig(writesOff).ready === false, 'LIVE must reject disabled certificate writes');
 
 const unsafeStripe = { ...readyEnv, STRIPE_SECRET_KEY: 'sk_test_not_live' };
-const unsafe = validateProductionConfig(unsafeStripe);
-expect(unsafe.ready === false, 'test Stripe key must not be accepted for LIVE');
+expect(validateProductionConfig(unsafeStripe).ready === false, 'test Stripe key must not be accepted for LIVE');
+
+const resendDevSender = { ...readyEnv, EMAIL_FROM: 'SIGILLUM <onboarding@resend.dev>' };
+expect(validateProductionConfig(resendDevSender).ready === false, 'resend.dev sender must not be accepted for LIVE');
+
+const invalidSender = { ...readyEnv, EMAIL_FROM: 'SIGILLUM <noreply@example.invalid>' };
+expect(validateProductionConfig(invalidSender).ready === false, 'reserved sender domain must not be accepted for LIVE');
+
+const invalidSupport = { ...readyEnv, SUPPORT_EMAIL: 'not-an-email' };
+expect(validateProductionConfig(invalidSupport).ready === false, 'invalid support email must not be accepted for LIVE');
 
 console.log(JSON.stringify({
   ok: true,
@@ -55,4 +63,7 @@ console.log(JSON.stringify({
   completeLiveAccepted: true,
   writesMustBeEnabledForLive: true,
   testStripeRejectedForLive: true,
+  resendDevRejectedForLive: true,
+  reservedSenderRejectedForLive: true,
+  invalidSupportRejectedForLive: true,
 }, null, 2));
