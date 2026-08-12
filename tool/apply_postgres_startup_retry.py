@@ -54,14 +54,14 @@ if 'async function initSchemaWithRetry()' not in source:
         raise RuntimeError('main startup anchor missing')
     source = source.replace(helper_anchor, helper + helper_anchor, 1)
 
-old_main = """async function main() {
-  await initSchema();
+old_start = """  await initSchema();
+  const server = http.createServer((req, res) => {
 """
-new_main = """async function main() {
-  await initSchemaWithRetry();
+new_start = """  await initSchemaWithRetry();
+  const server = http.createServer((req, res) => {
 """
-if old_main in source:
-    source = source.replace(old_main, new_main, 1)
+if old_start in source:
+    source = source.replace(old_start, new_start, 1)
 elif 'await initSchemaWithRetry();' not in source:
     raise RuntimeError('startup retry main replacement missing')
 
