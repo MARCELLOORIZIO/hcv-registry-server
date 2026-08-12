@@ -17,6 +17,24 @@ function present(value) {
   return typeof value === 'string' && value.trim().length > 0;
 }
 
+function validEmail(value) {
+  const email = String(value || '').trim();
+  return email.length >= 5 && email.length <= 254 && /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(email);
+}
+
+function extractFromEmail(value) {
+  const raw = String(value || '').trim();
+  const angle = raw.match(/<([^<>]+)>\s*$/);
+  return (angle ? angle[1] : raw).trim().toLowerCase();
+}
+
+function isProductionSender(value) {
+  const email = extractFromEmail(value);
+  if (!validEmail(email)) return false;
+  const domain = email.split('@')[1] || '';
+  return domain !== 'resend.dev' && domain !== 'example.invalid' && !domain.endsWith('.example');
+}
+
 function validateProductionConfig(env = process.env) {
   const live = isTrue(env.PRODUCTION_LIVE);
   if (!live) return { live: false, ready: false, missing: [], invalid: [] };
@@ -70,6 +88,18 @@ function validateProductionConfig(env = process.env) {
   }
   if (present(env.STRIPE_SECRET_KEY) && !/^([sr]k)_live_/.test(env.STRIPE_SECRET_KEY)) {
     invalid.push('STRIPE_SECRET_KEY=live');
+  }
+  if (present(env.RESEND_API_KEY) && !/^re_[A-Za-z0-9_-]+$/.test(String(env.RESEND_API_KEY))) {
+    invalid.push('RESEND_API_KEY=format');
+  }
+  if (present(env.EMAIL_FROM) && !isProductionSender(env.EMAIL_FROM)) {
+    invalid.push('EMAIL_FROM=verified-production-domain');
+  }
+  if (present(env.SUPPORT_EMAIL) && !validEmail(env.SUPPORT_EMAIL)) {
+    invalid.push('SUPPORT_EMAIL=email');
+  }
+  if (present(env.PRIVACY_EMAIL) && !validEmail(env.PRIVACY_EMAIL)) {
+    invalid.push('PRIVACY_EMAIL=email');
   }
 
   return {
