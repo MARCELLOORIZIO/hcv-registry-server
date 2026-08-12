@@ -2,12 +2,25 @@
 
 This document is operational. It does not modify the HCV capture or certification algorithms.
 
-## Frozen code snapshots
+## Validated frozen snapshots
 
-- App: `stable/commercial-prelaunch-code-20260811`
-- Backend: `stable/commercial-prelaunch-backend-20260811`
+- App validated commit: `3ea10197157cdcb80508bfefa7b38f58a55a0c2e`
+- App stable branch: `stable/commercial-prelaunch-code-20260811`
+- Backend validated commit: `39574f05d4c8e256979dc5cbfd6ceee68b05bca9`
+- Backend stable branch: `stable/commercial-prelaunch-backend-guarded-20260811`
+- Frozen app engine base: `f810af479546075ffe84c3ea2411dcc6300c0bb3`
 
-The active commercial branches remain validation branches until the external services below are configured and tested.
+Validation status at these snapshots:
+
+- App frozen capture-engine diff guard: PASS
+- App Flutter test suite: 156 PASS
+- Backend PostgreSQL production validation: PASS
+- Backend account/email/password flow: PASS
+- Backend Apple billing verification contracts: PASS
+- Backend unauthenticated certificate-write rejection: PASS
+- Local CI PostgreSQL load baseline: 44,787/44,787 successful requests, 0 failures, 4,477.8 req/s, p50 4.99 ms, p95 8.88 ms, p99 12.7 ms, concurrency 25 for 10 seconds.
+
+The load figure above is a GitHub-runner/local-PostgreSQL baseline only. It is NOT a capacity guarantee for Render Starter. The active commercial branches remain validation branches until the external services below are configured and tested.
 
 ## Phase 1 — Dedicated communications
 
@@ -37,7 +50,7 @@ Do not put the Resend key in GitHub.
 
 ## Phase 3 — Render prelaunch deployment
 
-Deploy `render.production.yaml` in Frankfurt.
+Deploy `render.production.yaml` in Frankfurt from backend commit `39574f05d4c8e256979dc5cbfd6ceee68b05bca9` or its stable branch.
 
 Initial safety state MUST remain:
 
@@ -61,7 +74,7 @@ Expected health state:
 }
 ```
 
-Run the load probe against the real Render URL after deployment. The GitHub CI load result is only a local PostgreSQL baseline and is not a capacity guarantee for Render.
+Run the load probe against the real Render URL after deployment. Compare p95, p99, error rate and sustained throughput with the local CI baseline; do not assume the local figure transfers to Render Starter.
 
 ## Phase 4 — Stripe Identity
 
@@ -175,7 +188,7 @@ The commercial app, account service and Registry transport use the same compile-
 SIGILLUM_API_BASE_URL
 ```
 
-The final iOS production/TestFlight build must set this to the paid production API URL. Do not ship a commercial build that still uses the legacy Free Registry URL.
+The final iOS production/TestFlight build must use app commit `3ea10197157cdcb80508bfefa7b38f58a55a0c2e` or its stable branch and set `SIGILLUM_API_BASE_URL` to the paid production API URL. Do not ship a commercial build that still uses the legacy Free Registry URL.
 
 ## Legal publication gate
 
