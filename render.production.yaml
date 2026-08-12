@@ -4,7 +4,8 @@ services:
     runtime: node
     region: frankfurt
     plan: starter
-    branch: commercial/prelaunch-20260811
+    branch: stable/commercial-prelaunch-backend-guarded-20260811
+    autoDeployTrigger: off
     buildCommand: npm install
     startCommand: npm start
     healthCheckPath: /health
