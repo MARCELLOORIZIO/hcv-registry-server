@@ -32,7 +32,10 @@ function isProductionSender(value) {
   const email = extractFromEmail(value);
   if (!validEmail(email)) return false;
   const domain = email.split('@')[1] || '';
-  return domain !== 'resend.dev' && domain !== 'example.invalid' && !domain.endsWith('.example');
+  if (domain === 'resend.dev' || domain === 'example.invalid') return false;
+  if (domain === 'localhost' || domain.endsWith('.localhost')) return false;
+  if (domain.endsWith('.example') || domain.endsWith('.invalid') || domain.endsWith('.test')) return false;
+  return true;
 }
 
 function validateProductionConfig(env = process.env) {
