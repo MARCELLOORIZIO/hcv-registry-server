@@ -48,3 +48,11 @@ if 'signedPayloadFromRawCertificate(raw)' not in source:
 
 path.write_text(source, encoding='utf-8')
 print('Dart-compatible HCV signature canonicalization applied')
+
+kyc_patch = Path('tool/apply_kyc_session_safety.py')
+if not kyc_patch.exists():
+    raise RuntimeError('KYC session safety patch missing')
+exec(
+    compile(kyc_patch.read_text(encoding='utf-8'), str(kyc_patch), 'exec'),
+    {'__name__': '__main__'},
+)
