@@ -32,10 +32,16 @@ for token in [
     '--purple:#7645D9',
     '--ink:#280D5F',
     'emailReusable: true',
-    "await pool.query('DELETE FROM accounts WHERE id=$1'",
 ]:
     if token not in source:
         raise RuntimeError(f'consumer refinement token missing: {token}')
+
+delete_query_tokens = [
+    "await client.query('DELETE FROM accounts WHERE id=$1'",
+    "await pool.query('DELETE FROM accounts WHERE id=$1'",
+]
+if not any(token in source for token in delete_query_tokens):
+    raise RuntimeError('consumer refinement token missing: account deletion query')
 
 path.write_text(source, encoding='utf-8')
 print('Consumer legal palette and reusable-email account deletion contract applied')
