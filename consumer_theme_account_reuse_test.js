@@ -10,7 +10,8 @@ assert(source.includes('--purple:#7645D9'), 'approved purple legal palette missi
 assert(source.includes('--ink:#280D5F'), 'approved text palette missing');
 assert(source.includes('emailReusable: true'), 'delete response must declare reusable email');
 assert(
-  source.includes("await pool.query('DELETE FROM accounts WHERE id=$1'"),
+  source.includes("await client.query('DELETE FROM accounts WHERE id=$1'") ||
+    source.includes("await pool.query('DELETE FROM accounts WHERE id=$1'"),
   'account row must still be deleted so the same email can register again',
 );
 
