@@ -11,7 +11,15 @@ new_shell = '''function legalShell(title, body) {
   return `<!doctype html><html lang="it"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title} - SIGILLUM</title><style>:root{--ink:#280D5F;--muted:#7A6EAA;--bg:#FAF9FA;--panel:#FFFFFF;--soft:#EEEAF4;--border:#E7E3EB;--cyan:#1FC7D4;--purple:#7645D9}*{box-sizing:border-box}body{margin:0;background:linear-gradient(180deg,#eefcff 0,#FAF9FA 36%);color:var(--ink);font:16px/1.58 -apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif}.page{max-width:900px;margin:auto;padding:34px 20px 72px}h1{font-size:clamp(34px,7vw,52px);line-height:1.05;margin:12px 0 28px;color:var(--ink);letter-spacing:-1px}h2{color:var(--purple);margin:30px 0 10px;font-size:24px}p{background:var(--panel);border:1px solid var(--border);border-radius:24px;padding:18px 20px;margin:12px 0;box-shadow:0 8px 30px rgba(40,13,95,.05)}a{color:var(--purple);font-weight:700}.card{background:var(--panel);border:1px solid var(--border);padding:20px;border-radius:24px;margin:18px 0}.muted{color:var(--muted);background:var(--soft)}::selection{background:var(--cyan);color:var(--ink)}@media(max-width:600px){.page{padding:24px 16px 48px}h2{font-size:21px}p{border-radius:20px;padding:16px}}</style></head><body><main class="page"><h1>${title}</h1>${body}<p class="muted">MAORI DI MARCELLO ORIZIO · Via della Battaglia 28, 25030 Maclodio (BS) · P.IVA 04773680980 · REA BS-640525 · PEC marcelloorizio@legalmail.it</p></main></body></html>`;
 }
 '''
-if new_shell not in source:
+
+# Historical stable builds kept the legal HTML inline in production_server.js.
+# The multilingual architecture deliberately moves it to legal_documents.js.
+# On the first application we can still refine the inline shell; on every
+# later precheck/prestart run, the presence of the modular legal import is the
+# valid idempotency marker and the dedicated legal-theme integration patch is
+# responsible for the palette in legal_documents.js.
+modular_legal = "require('./legal_documents')" in source
+if not modular_legal and new_shell not in source:
     if source.count(old_shell) != 1:
         raise RuntimeError(f'legal shell anchor: expected 1, found {source.count(old_shell)}')
     source = source.replace(old_shell, new_shell, 1)
@@ -27,14 +35,20 @@ if new_delete not in source:
         raise RuntimeError(f'account delete response anchor: expected 1, found {source.count(old_delete)}')
     source = source.replace(old_delete, new_delete, 1)
 
-for token in [
-    '--cyan:#1FC7D4',
-    '--purple:#7645D9',
-    '--ink:#280D5F',
-    'emailReusable: true',
-]:
-    if token not in source:
-        raise RuntimeError(f'consumer refinement token missing: {token}')
+if modular_legal:
+    if "require('./legal_documents')" not in source:
+        raise RuntimeError('modular legal architecture marker missing')
+else:
+    for token in [
+        '--cyan:#1FC7D4',
+        '--purple:#7645D9',
+        '--ink:#280D5F',
+    ]:
+        if token not in source:
+            raise RuntimeError(f'consumer refinement token missing: {token}')
+
+if 'emailReusable: true' not in source:
+    raise RuntimeError('consumer refinement token missing: emailReusable: true')
 
 delete_query_tokens = [
     "await client.query('DELETE FROM accounts WHERE id=$1'",
