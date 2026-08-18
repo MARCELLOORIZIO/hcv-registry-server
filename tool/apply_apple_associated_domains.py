@@ -73,13 +73,18 @@ async function readJson(req, maxBytes = 1_000_000) {
     'Apple association response helper',
 )
 
-replace_once(
-    """async function handle(req, res) {
+# A later localization patch legitimately rewrites the legalPage(...) line in
+# handle(). On subsequent prestart runs the exact replacement block therefore
+# no longer matches, even though the Apple routes are already installed. Treat
+# the route token itself as the idempotency marker and only insert once.
+if "url.pathname === '/.well-known/apple-app-site-association'" not in source:
+    replace_once(
+        """async function handle(req, res) {
   if (req.method === 'OPTIONS') return sendJson(res, 200, { ok: true });
   const url = new URL(req.url, `http://${req.headers.host}`);
   const legal = legalPage(url.pathname);
 """,
-    """async function handle(req, res) {
+        """async function handle(req, res) {
   if (req.method === 'OPTIONS') return sendJson(res, 200, { ok: true });
   const url = new URL(req.url, `http://${req.headers.host}`);
   if (
@@ -91,8 +96,8 @@ replace_once(
   }
   const legal = legalPage(url.pathname);
 """,
-    'Apple association routes',
-)
+        'Apple association routes',
+    )
 
 for token in [
     "const APPLE_TEAM_ID = process.env.APPLE_TEAM_ID || 'DN9W7Z3HCZ';",
