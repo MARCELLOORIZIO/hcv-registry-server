@@ -35,6 +35,7 @@ jobs:
       DATABASE_URL: postgresql://sigillum:sigillum@127.0.0.1:5432/sigillum
       NODE_ENV: test
       PRODUCTION_LIVE: "false"
+      CERTIFICATE_WRITES_ENABLED: "false"
       SUBSCRIPTIONS_ENFORCED: "false"
       KYC_REQUIRES_SUBSCRIPTION: "true"
       TEST_FIXED_CODE: "123456"
@@ -82,7 +83,7 @@ jobs:
           grep -q 'sigillum-production-postgres' health.json
           grep -q '"productionLive":false' health.json
           grep -q '"readyForLive":false' health.json
-          grep -q '"legalLanguages":\["it","en","es","ru"\]' health.json
+          grep -q '"certificateWritesEnabled":false' health.json
 
           curl -fsS 'http://127.0.0.1:8080/privacy?lang=it' | grep -q 'Informativa Privacy SIGILLUM'
           curl -fsS 'http://127.0.0.1:8080/terms?lang=it' | grep -q 'Termini di Servizio SIGILLUM'
@@ -98,10 +99,11 @@ jobs:
 
           curl -fsS 'http://127.0.0.1:8080/terms' | grep -q 'SIGILLUM Terms of Service'
           curl -fsS 'http://127.0.0.1:8080/terms?lang=fr' | grep -q 'SIGILLUM Terms of Service'
-      - name: Verify unauthenticated certificate writes are blocked
+      - name: Verify certificate writes are disabled in prelaunch
         run: |
           STATUS=$(curl -s -o unauth.json -w '%{http_code}' -X POST http://127.0.0.1:8080/api/certificate -H 'Content-Type: application/json' -d '{"hcvId":"HCV-AAAAAAAAAAAAAAAA","certificateRaw":"{}"}')
-          test "$STATUS" = "401"
+          test "$STATUS" = "503"
+          grep -q 'CERTIFICATE_WRITES_DISABLED' unauth.json
       - name: Run authenticated account and Apple billing flow
         run: node production_smoke_test.js | tee account-smoke.json
       - name: Run PostgreSQL-backed load probe
