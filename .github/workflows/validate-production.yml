@@ -60,14 +60,29 @@ jobs:
           done
           cat server.log
           exit 1
-      - name: Verify health and legal endpoints
+      - name: Verify health and multilingual legal endpoints
         run: |
           cat health.json
           grep -q 'sigillum-production-postgres' health.json
           grep -q '"productionLive":false' health.json
           grep -q '"readyForLive":false' health.json
-          curl -fsS http://127.0.0.1:8080/privacy | grep -q 'MAORI DI MARCELLO ORIZIO'
-          curl -fsS http://127.0.0.1:8080/terms | grep -q 'Termini di Servizio SIGILLUM'
+          grep -q '"legalLanguages":\["it","en","es","ru"\]' health.json
+
+          curl -fsS 'http://127.0.0.1:8080/privacy?lang=it' | grep -q 'Informativa Privacy SIGILLUM'
+          curl -fsS 'http://127.0.0.1:8080/terms?lang=it' | grep -q 'Termini di Servizio SIGILLUM'
+          curl -fsS 'http://127.0.0.1:8080/support?lang=it' | grep -q 'Supporto SIGILLUM'
+          curl -fsS 'http://127.0.0.1:8080/delete-data?lang=it' | grep -q 'Cancellazione account e dati'
+
+          curl -fsS 'http://127.0.0.1:8080/privacy?lang=en' | grep -q 'SIGILLUM Privacy Policy'
+          curl -fsS 'http://127.0.0.1:8080/terms?lang=en' | grep -q 'SIGILLUM Terms of Service'
+          curl -fsS 'http://127.0.0.1:8080/privacy?lang=es' | grep -q 'Política de Privacidad de SIGILLUM'
+          curl -fsS 'http://127.0.0.1:8080/terms?lang=es' | grep -q 'Términos de Servicio de SIGILLUM'
+          curl -fsS 'http://127.0.0.1:8080/privacy?lang=ru' | grep -q 'Политика конфиденциальности SIGILLUM'
+          curl -fsS 'http://127.0.0.1:8080/terms?lang=ru' | grep -q 'Условия использования SIGILLUM'
+
+          # Unsupported/missing languages deliberately fall back to English.
+          curl -fsS 'http://127.0.0.1:8080/terms' | grep -q 'SIGILLUM Terms of Service'
+          curl -fsS 'http://127.0.0.1:8080/terms?lang=fr' | grep -q 'SIGILLUM Terms of Service'
       - name: Verify unauthenticated certificate writes are blocked
         run: |
           STATUS=$(curl -s -o unauth.json -w '%{http_code}' -X POST http://127.0.0.1:8080/api/certificate -H 'Content-Type: application/json' -d '{"hcvId":"HCV-AAAAAAAAAAAAAAAA","certificateRaw":"{}"}')
