@@ -1,5 +1,6 @@
 const assert = require('assert');
 const crypto = require('crypto');
+const fs = require('fs');
 const {
   SUPPORTED_LANGUAGES,
   normalizeLanguage,
@@ -45,5 +46,22 @@ for (const lang of SUPPORTED_LANGUAGES) {
   assert.ok(mail.subject.length > 5);
   assert.ok(mail.html.includes('123456'));
 }
+
+// The precheck step patches production_server.js before this test executes.
+// Ensure the additive legal/account migration is actually inside initSchema(),
+// not accidentally inside withTransaction() or another later function.
+const serverSource = fs.readFileSync('production_server.js', 'utf8');
+const initStart = serverSource.indexOf('async function initSchema() {');
+assert.ok(initStart >= 0, 'initSchema missing');
+const withTransactionStart = serverSource.indexOf('\nasync function withTransaction', initStart);
+const securityEventStart = serverSource.indexOf('\nasync function securityEvent', initStart);
+const successorCandidates = [withTransactionStart, securityEventStart].filter((pos) => pos >= 0);
+assert.ok(successorCandidates.length > 0, 'initSchema successor missing');
+const initBoundary = Math.min(...successorCandidates);
+const migrationToken = 'ALTER TABLE accounts ADD COLUMN IF NOT EXISTS preferred_language';
+const migrationPos = serverSource.indexOf(migrationToken);
+assert.ok(migrationPos > initStart && migrationPos < initBoundary, 'legal migration must run inside initSchema');
+assert.strictEqual(serverSource.split(migrationToken).length - 1, 1, 'legal migration must exist exactly once');
+assert.ok(serverSource.includes('preferred_language,contract_language,terms_document_sha256,privacy_document_sha256,acceptance_method'), 'registration must persist legal acceptance evidence');
 
 console.log('Multilingual legal documents: PASS');
