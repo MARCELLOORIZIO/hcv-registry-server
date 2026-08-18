@@ -4,7 +4,7 @@ services:
     runtime: node
     region: frankfurt
     plan: starter
-    branch: stable/commercial-prelaunch-backend-guarded-20260811
+    branch: release/prelaunch-20260818-registry-localization
     autoDeployTrigger: off
     buildCommand: npm install
     startCommand: npm start
@@ -23,15 +23,15 @@ services:
       - key: PG_SSL_REQUIRED
         value: "false"
       - key: CERTIFICATE_WRITES_ENABLED
-        value: "false"
+        value: "true"
       - key: SUBSCRIPTIONS_ENFORCED
         value: "false"
       - key: KYC_REQUIRES_SUBSCRIPTION
         value: "true"
       - key: TERMS_VERSION
-        value: "2026-08-11"
+        value: "2026-08-18"
       - key: PRIVACY_VERSION
-        value: "2026-08-11"
+        value: "2026-08-18"
       - key: SUPPORT_EMAIL
         sync: false
       - key: PRIVACY_EMAIL
