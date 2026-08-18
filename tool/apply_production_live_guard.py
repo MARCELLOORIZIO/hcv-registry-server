@@ -10,7 +10,12 @@ if config_import not in source:
         raise RuntimeError('pg import anchor missing')
     source = source.replace(pg_import, pg_import + config_import, 1)
 
-privacy_anchor = "const PRIVACY_VERSION = process.env.PRIVACY_VERSION || '2026-08-11';\n"
+# Accept both the historical prelaunch revision and the current localized legal
+# revision. Contact constants are server configuration and do not depend on the
+# legal document implementation being inline or modular.
+privacy_anchor_old = "const PRIVACY_VERSION = process.env.PRIVACY_VERSION || '2026-08-11';\n"
+privacy_anchor_current = "const PRIVACY_VERSION = process.env.PRIVACY_VERSION || '2026-08-18';\n"
+privacy_anchor = privacy_anchor_current if privacy_anchor_current in source else privacy_anchor_old
 contact_constants = privacy_anchor + "const SUPPORT_EMAIL = process.env.SUPPORT_EMAIL || 'marcelloorizio@legalmail.it';\nconst PRIVACY_EMAIL = process.env.PRIVACY_EMAIL || 'marcelloorizio@legalmail.it';\nconst CERTIFICATE_WRITES_ENABLED = process.env.CERTIFICATE_WRITES_ENABLED !== 'false';\n"
 if 'const SUPPORT_EMAIL =' not in source:
     if privacy_anchor not in source:
@@ -28,7 +33,11 @@ new_contact = "<h2>Contatti</h2><p>Email privacy: ${PRIVACY_EMAIL}. Assistenza: 
 if old_contact in source:
     source = source.replace(old_contact, new_contact, 1)
 elif new_contact not in source:
-    raise RuntimeError('privacy contact anchor missing')
+    # The multilingual legal architecture deliberately moves page copy to
+    # legal_documents.js. In that shape there is no inline privacy-contact HTML
+    # to rewrite; the configured contact constants remain available to runtime.
+    if "require('./legal_documents')" not in source:
+        raise RuntimeError('privacy contact anchor missing')
 
 health_old = "return sendJson(res, 200, { ok: true, service: 'sigillum-production-postgres', database: true, dbTime: db.rows[0].now, subscriptionsEnforced: SUBSCRIPTIONS_ENFORCED, termsVersion: TERMS_VERSION, privacyVersion: PRIVACY_VERSION });"
 health_new = """const readiness = validateProductionConfig(process.env);
