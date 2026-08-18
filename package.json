@@ -1,16 +1,21 @@
 {
   "name": "hcv-registry-server",
-  "version": "1.2.0",
-  "main": "server.js",
+  "version": "2.0.0-prelaunch",
+  "main": "production_server.js",
   "engines": {
     "node": "20.x"
   },
   "scripts": {
-    "start": "node server.js",
-    "check": "node --check server.js && node --check auth_api.js && node --check kyc_proxy.js && node --check auth_proxy.js && node --check auth_smoke_test.js",
+    "prestart": "python3 tool/apply_production_runtime_safety.py && python3 tool/apply_app_store_billing.py && python3 tool/apply_production_live_guard.py && python3 tool/apply_postgres_startup_retry.py && python3 tool/apply_legal_localization_20260818.py",
+    "start": "node production_server.js",
+    "start:legacy": "node server.js",
+    "precheck": "python3 tool/apply_production_runtime_safety.py && python3 tool/apply_app_store_billing.py && python3 tool/apply_production_live_guard.py && python3 tool/apply_postgres_startup_retry.py && python3 tool/apply_legal_localization_20260818.py",
+    "check": "node legal_documents_test.js && node --check legal_documents.js && node --check production_server.js && node --check production_config.js && node --check app_store_billing.js && node --check server.js && node --check auth_api.js",
     "smoke": "node auth_smoke_test.js"
   },
   "dependencies": {
-    "better-sqlite3": "^11.9.1"
+    "@apple/app-store-server-library": "^3.1.0",
+    "better-sqlite3": "^11.9.1",
+    "pg": "^8.16.3"
   }
 }

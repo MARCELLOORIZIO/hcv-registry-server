@@ -1,0 +1,41 @@
+name: Load test SIGILLUM Render production
+
+# Manual external baseline trigger: 2026-08-12 after Stripe Identity prelaunch validation.
+on:
+  push:
+    branches:
+      - commercial/prelaunch-20260811
+    paths:
+      - .github/workflows/render-load-test.yml
+  workflow_dispatch:
+
+jobs:
+  load-test-render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Verify Render prelaunch health
+        run: |
+          curl -fsS https://sigillum-registry-production.onrender.com/health | tee render-health.json
+          grep -q '"database":true' render-health.json
+          grep -q '"certificateWritesEnabled":false' render-health.json
+          grep -q '"productionLive":false' render-health.json
+      - name: Run Render PostgreSQL-backed load probe
+        env:
+          LOAD_BASE_URL: https://sigillum-registry-production.onrender.com
+          LOAD_DURATION_MS: "10000"
+          LOAD_CONCURRENCY: "25"
+        run: node load_test.js | tee render-load-result.json
+      - name: Upload Render load-test result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sigillum-render-load-test
+          path: |
+            render-health.json
+            render-load-result.json
+          if-no-files-found: ignore
