@@ -16,6 +16,24 @@ def replace_once(old, new, label):
     raise RuntimeError(f'{label}: expected one anchor, found {count}')
 
 
+def init_schema_bounds():
+    start = source.find('async function initSchema() {')
+    if start < 0:
+        raise RuntimeError('initSchema start not found')
+    markers = [
+        source.find('\nasync function withTransaction', start),
+        source.find('\nasync function securityEvent', start),
+    ]
+    boundaries = [pos for pos in markers if pos >= 0]
+    if not boundaries:
+        raise RuntimeError('initSchema successor boundary not found')
+    boundary = min(boundaries)
+    end = source.rfind('\n}', start, boundary)
+    if end < 0:
+        raise RuntimeError('initSchema closing boundary not found')
+    return start, end, boundary
+
+
 # Legal module only: no certificate verification, Registry storage, HCV signature,
 # hash-chain or KYC implementation is modified by this patch.
 if "require('./legal_documents')" not in source:
@@ -46,6 +64,11 @@ if 'terms_document_sha256 TEXT' not in source:
     replace_once(create_columns_old, create_columns_new, 'acceptance schema columns')
 
 # Existing PostgreSQL databases need additive migration without deleting data.
+# Keep this migration inside initSchema(). A previous implementation searched for
+# the last closing brace before securityEvent(), which became unsafe after the
+# runtime-safety patch inserted withTransaction() between initSchema and
+# securityEvent. That could place the migration inside withTransaction instead of
+# startup schema initialization.
 migration = """  await pool.query(`
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS preferred_language TEXT NOT NULL DEFAULT 'en';
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS contract_language TEXT NOT NULL DEFAULT 'en';
@@ -53,17 +76,14 @@ migration = """  await pool.query(`
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS privacy_document_sha256 TEXT NOT NULL DEFAULT '';
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS acceptance_method TEXT NOT NULL DEFAULT 'clickwrap';
   `);"""
-if 'ALTER TABLE accounts ADD COLUMN IF NOT EXISTS contract_language' not in source:
-    security_marker = '\nasync function securityEvent'
-    security_pos = source.find(security_marker)
-    if security_pos < 0 or source.find(security_marker, security_pos + 1) >= 0:
-        raise RuntimeError('securityEvent boundary not unique')
-    # Previous prelaunch patches can append their own schema queries. Insert the
-    # additive legal migration immediately before initSchema's final closing brace
-    # instead of depending on the shape of its last pool.query block.
-    init_end = source.rfind('\n}', 0, security_pos)
-    if init_end < 0:
-        raise RuntimeError('initSchema closing boundary not found')
+
+init_start, init_end, _ = init_schema_bounds()
+existing_migration = source.find(migration)
+if existing_migration >= 0 and not (init_start < existing_migration < init_end):
+    source = source[:existing_migration] + source[existing_migration + len(migration):]
+    init_start, init_end, _ = init_schema_bounds()
+
+if source.find(migration, init_start, init_end) < 0:
     source = source[:init_end] + '\n' + migration + source[init_end:]
 
 # Transactional email follows the user-selected language.
@@ -194,6 +214,16 @@ required = [
 for token in required:
     if token not in source:
         raise RuntimeError(f'backend legal localization token missing: {token}')
+
+# Migration invariant: the additive account/legal migration must execute during
+# initSchema startup, before any registration request can use the new columns.
+init_start, init_end, _ = init_schema_bounds()
+migration_token = 'ALTER TABLE accounts ADD COLUMN IF NOT EXISTS preferred_language'
+migration_pos = source.find(migration_token)
+if migration_pos < init_start or migration_pos >= init_end:
+    raise RuntimeError('legal account migration is outside initSchema')
+if source.count(migration_token) != 1:
+    raise RuntimeError('legal account migration must exist exactly once')
 
 # Explicit invariant: this patch must not alter or replace HCV verification/storage
 # implementation. The strings below must still exist after the legal patch.
