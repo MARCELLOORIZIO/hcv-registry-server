@@ -68,6 +68,12 @@ function expect(actual, expected, label) {
   }
 }
 
+function assertSha256(value, label) {
+  if (!/^[a-f0-9]{64}$/.test(String(value || ''))) {
+    throw new Error(`${label}: missing or invalid SHA-256`);
+  }
+}
+
 async function main() {
   const device = buildDevice();
 
@@ -76,6 +82,7 @@ async function main() {
     password,
     creatorName: 'SIGILLUM CI Creator',
     creatorId: 'CI-CREATOR',
+    languageCode: 'es',
     acceptTerms: true,
     acknowledgePrivacy: true,
     adultConfirmed: true,
@@ -98,9 +105,17 @@ async function main() {
 
   result = await request('GET', '/api/auth/session', null, token);
   expect(result.status, 200, 'restore session');
-  if (result.data.account?.termsAccepted !== true) throw new Error('terms not persisted');
-  if (result.data.account?.privacyAcknowledged !== true) throw new Error('privacy acknowledgement not persisted');
-  if (result.data.account?.adultConfirmed !== true) throw new Error('adult confirmation not persisted');
+  const account = result.data.account || {};
+  if (account.termsAccepted !== true) throw new Error('terms not persisted');
+  if (account.privacyAcknowledged !== true) throw new Error('privacy acknowledgement not persisted');
+  if (account.adultConfirmed !== true) throw new Error('adult confirmation not persisted');
+  if (account.preferredLanguage !== 'es') throw new Error(`preferred language not persisted: ${account.preferredLanguage}`);
+  if (account.contractLanguage !== 'es') throw new Error(`contract language not persisted: ${account.contractLanguage}`);
+  if (account.acceptanceMethod !== 'clickwrap') throw new Error(`acceptance method not persisted: ${account.acceptanceMethod}`);
+  if (account.termsVersion !== '2026-08-18') throw new Error(`unexpected Terms revision: ${account.termsVersion}`);
+  if (account.privacyVersion !== '2026-08-18') throw new Error(`unexpected Privacy revision: ${account.privacyVersion}`);
+  assertSha256(account.termsDocumentSha256, 'Terms document hash');
+  assertSha256(account.privacyDocumentSha256, 'Privacy document hash');
 
   result = await request('POST', '/api/auth/password', {
     currentPassword: password,
@@ -131,6 +146,9 @@ async function main() {
   if (result.data.appleConfigured !== true) throw new Error('Apple billing test service should be configured');
   if (result.data.status !== 'active') throw new Error('verified subscription status not persisted');
 
+  // The workflow runs this smoke test on a local PRELAUNCH server with writes
+  // temporarily enabled only to verify that the Creator identity gate still
+  // executes before certificate acceptance. Nothing is deployed or published.
   result = await request('POST', '/api/certificate', {
     hcvId: 'HCV-AAAAAAAAAAAAAAAA',
     certificateRaw: '{}',
@@ -146,6 +164,10 @@ async function main() {
     emailVerification: true,
     passwordChange: true,
     session: true,
+    localizedClickwrapEvidence: true,
+    contractLanguage: 'es',
+    termsVersion: account.termsVersion,
+    privacyVersion: account.privacyVersion,
     appleSubscriptionVerification: true,
     creatorGateBlocksUnverifiedIdentity: true,
   }, null, 2));
