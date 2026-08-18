@@ -66,8 +66,10 @@ jobs:
       - name: Syntax and safety checks
         run: npm run check
       - name: Verify LIVE production guard
-        run: node production_config_test.js | tee production-config.json
-      - name: Start production server
+        run: |
+          node production_config_test.js > production-config.json
+          cat production-config.json
+      - name: Start strict PRELAUNCH server
         run: |
           npm start > server.log 2>&1 &
           echo $! > server.pid
@@ -99,18 +101,40 @@ jobs:
 
           curl -fsS 'http://127.0.0.1:8080/terms' | grep -q 'SIGILLUM Terms of Service'
           curl -fsS 'http://127.0.0.1:8080/terms?lang=fr' | grep -q 'SIGILLUM Terms of Service'
-      - name: Verify certificate writes are disabled in prelaunch
+      - name: Verify certificate writes are disabled in PRELAUNCH
         run: |
           STATUS=$(curl -s -o unauth.json -w '%{http_code}' -X POST http://127.0.0.1:8080/api/certificate -H 'Content-Type: application/json' -d '{"hcvId":"HCV-AAAAAAAAAAAAAAAA","certificateRaw":"{}"}')
           test "$STATUS" = "503"
           grep -q 'CERTIFICATE_WRITES_DISABLED' unauth.json
-      - name: Run authenticated account and Apple billing flow
-        run: node production_smoke_test.js | tee account-smoke.json
+      - name: Restart isolated CI server with writes enabled for Creator gate test
+        run: |
+          kill "$(cat server.pid)" || true
+          for i in {1..10}; do
+            if ! kill -0 "$(cat server.pid)" 2>/dev/null; then break; fi
+            sleep 1
+          done
+          CERTIFICATE_WRITES_ENABLED=true npm start > server-smoke.log 2>&1 &
+          echo $! > server-smoke.pid
+          for i in {1..30}; do
+            if curl -fsS http://127.0.0.1:8080/health > health-smoke.json; then
+              grep -q '"certificateWritesEnabled":true' health-smoke.json
+              exit 0
+            fi
+            sleep 1
+          done
+          cat server-smoke.log
+          exit 1
+      - name: Run authenticated account, localized clickwrap and Apple billing flow
+        run: |
+          node production_smoke_test.js > account-smoke.json
+          cat account-smoke.json
       - name: Run PostgreSQL-backed load probe
         env:
           LOAD_DURATION_MS: "10000"
           LOAD_CONCURRENCY: "25"
-        run: node load_test.js | tee load-result.json
+        run: |
+          node load_test.js > load-result.json
+          cat load-result.json
       - name: Mark validation success
         if: success()
         shell: bash
@@ -144,7 +168,9 @@ jobs:
           name: sigillum-production-backend-logs
           path: |
             server.log
+            server-smoke.log
             health.json
+            health-smoke.json
             unauth.json
             production-config.json
             account-smoke.json
