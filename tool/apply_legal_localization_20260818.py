@@ -146,12 +146,13 @@ reg_new = """    const creatorName = validateName(body.creatorName);
 if 'const termsDocumentSha256' not in source:
     replace_once(reg_anchor, reg_new, 'registration legal evidence')
 
-insert_old = """      await pool.query(`INSERT INTO accounts(id,email_normalized,email_display,password_salt,password_hash,creator_name,creator_id,terms_version,privacy_version,terms_accepted_at,privacy_ack_at,adult_confirmed_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$10,$10)`, [accountId, email, String(body.email).trim(), pw.salt, pw.passwordHash, creatorName, String(body.creatorId || ''), TERMS_VERSION, PRIVACY_VERSION, now]);
-"""
-insert_new = """      await pool.query(`INSERT INTO accounts(id,email_normalized,email_display,password_salt,password_hash,creator_name,creator_id,terms_version,privacy_version,preferred_language,contract_language,terms_document_sha256,privacy_document_sha256,acceptance_method,terms_accepted_at,privacy_ack_at,adult_confirmed_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$10,$11,$12,'clickwrap',$13,$13,$13)`, [accountId, email, String(body.email).trim(), pw.salt, pw.passwordHash, creatorName, String(body.creatorId || ''), TERMS_VERSION, PRIVACY_VERSION, preferredLanguage, termsDocumentSha256, privacyDocumentSha256, now]);
-"""
+insert_sql_old = """`INSERT INTO accounts(id,email_normalized,email_display,password_salt,password_hash,creator_name,creator_id,terms_version,privacy_version,terms_accepted_at,privacy_ack_at,adult_confirmed_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$10,$10)`, [accountId, email, String(body.email).trim(), pw.salt, pw.passwordHash, creatorName, String(body.creatorId || ''), TERMS_VERSION, PRIVACY_VERSION, now]"""
+insert_sql_new = """`INSERT INTO accounts(id,email_normalized,email_display,password_salt,password_hash,creator_name,creator_id,terms_version,privacy_version,preferred_language,contract_language,terms_document_sha256,privacy_document_sha256,acceptance_method,terms_accepted_at,privacy_ack_at,adult_confirmed_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$10,$11,$12,'clickwrap',$13,$13,$13)`, [accountId, email, String(body.email).trim(), pw.salt, pw.passwordHash, creatorName, String(body.creatorId || ''), TERMS_VERSION, PRIVACY_VERSION, preferredLanguage, termsDocumentSha256, privacyDocumentSha256, now]"""
 if "acceptance_method,terms_accepted_at" not in source:
-    replace_once(insert_old, insert_new, 'registration insert evidence')
+    # The runtime-safety patch intentionally changes pool.query to client.query
+    # inside a transaction. Replacing only the SQL+arguments preserves whichever
+    # safe query object is already in use.
+    replace_once(insert_sql_old, insert_sql_new, 'registration insert evidence')
 
 source = source.replace(
     "await sendCode(String(body.email).trim(), code, 'verify_email');",
