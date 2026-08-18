@@ -52,13 +52,19 @@ migration = """  await pool.query(`
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS terms_document_sha256 TEXT NOT NULL DEFAULT '';
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS privacy_document_sha256 TEXT NOT NULL DEFAULT '';
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS acceptance_method TEXT NOT NULL DEFAULT 'clickwrap';
-  `);
-"""
+  `);"""
 if 'ALTER TABLE accounts ADD COLUMN IF NOT EXISTS contract_language' not in source:
-    anchor = "  `);\n}\n\nasync function securityEvent"
-    if source.count(anchor) != 1:
-        raise RuntimeError('initSchema migration anchor not unique')
-    source = source.replace(anchor, "  `);\n" + migration + "}\n\nasync function securityEvent", 1)
+    security_marker = '\nasync function securityEvent'
+    security_pos = source.find(security_marker)
+    if security_pos < 0 or source.find(security_marker, security_pos + 1) >= 0:
+        raise RuntimeError('securityEvent boundary not unique')
+    # Previous prelaunch patches can append their own schema queries. Insert the
+    # additive legal migration immediately before initSchema's final closing brace
+    # instead of depending on the shape of its last pool.query block.
+    init_end = source.rfind('\n}', 0, security_pos)
+    if init_end < 0:
+        raise RuntimeError('initSchema closing boundary not found')
+    source = source[:init_end] + '\n' + migration + source[init_end:]
 
 # Transactional email follows the user-selected language.
 send_pattern = re.compile(r"async function sendCode\(email, code, purpose\) \{.*?\n\}\n\nasync function storeCode", re.S)
