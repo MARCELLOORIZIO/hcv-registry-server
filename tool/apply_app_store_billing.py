@@ -79,6 +79,18 @@ async function refreshAppleSubscriptionForAccount(accountId) {
     return (await pool.query('SELECT * FROM subscriptions WHERE account_id=$1', [accountId])).rows[0] || null;
   } catch (error) {
     console.error('APPLE_SUBSCRIPTION_REFRESH', error.message || error);
+    const expiresMs = row.expires_at ? new Date(row.expires_at).getTime() : 0;
+    const expiredStoredActive = row.status === 'active' &&
+      (!Number.isFinite(expiresMs) || !expiresMs || expiresMs <= Date.now());
+    const sandboxActiveUnconfirmed = sandbox && row.status === 'active';
+    if (expiredStoredActive || sandboxActiveUnconfirmed) {
+      const fallbackStatus = expiredStoredActive ? 'expired' : 'inactive';
+      await pool.query(
+        'UPDATE subscriptions SET status=$2,last_verified_at=NULL,updated_at=NOW() WHERE account_id=$1',
+        [accountId, fallbackStatus],
+      );
+      return (await pool.query('SELECT * FROM subscriptions WHERE account_id=$1', [accountId])).rows[0] || null;
+    }
     return row;
   }
 }
