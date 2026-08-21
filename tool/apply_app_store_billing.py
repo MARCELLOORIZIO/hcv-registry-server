@@ -67,8 +67,17 @@ helpers = r'''async function saveAppleSubscription(accountId, subscription) {
 }
 
 async function refreshAppleSubscriptionForAccount(accountId) {
-  const row = (await pool.query('SELECT * FROM subscriptions WHERE account_id=$1', [accountId])).rows[0];
-  if (!row?.original_transaction_id || !appStoreBilling.configured()) return row || null;
+  let row = (await pool.query('SELECT * FROM subscriptions WHERE account_id=$1', [accountId])).rows[0];
+  if (!row?.original_transaction_id || !appStoreBilling.configured()) {
+    if (SUBSCRIPTIONS_ENFORCED && ['active', 'grace'].includes(row?.status)) {
+      await pool.query(
+        "UPDATE subscriptions SET status='inactive',last_verified_at=NULL,updated_at=NOW() WHERE account_id=$1",
+        [accountId],
+      );
+      row = (await pool.query('SELECT * FROM subscriptions WHERE account_id=$1', [accountId])).rows[0] || null;
+    }
+    return row || null;
+  }
   const lastVerified = row.last_verified_at ? new Date(row.last_verified_at).getTime() : 0;
   const sandbox = String(row.environment || '').toLowerCase() === 'sandbox';
   const maxAgeMs = sandbox ? 0 : 15 * 60 * 1000;
@@ -82,8 +91,9 @@ async function refreshAppleSubscriptionForAccount(accountId) {
     const expiresMs = row.expires_at ? new Date(row.expires_at).getTime() : 0;
     const expiredStoredActive = row.status === 'active' &&
       (!Number.isFinite(expiresMs) || !expiresMs || expiresMs <= Date.now());
-    const sandboxActiveUnconfirmed = sandbox && row.status === 'active';
-    if (expiredStoredActive || sandboxActiveUnconfirmed) {
+    const sandboxEntitlementUnconfirmed = sandbox &&
+      ['active', 'grace'].includes(row.status);
+    if (expiredStoredActive || sandboxEntitlementUnconfirmed) {
       const fallbackStatus = expiredStoredActive ? 'expired' : 'inactive';
       await pool.query(
         'UPDATE subscriptions SET status=$2,last_verified_at=NULL,updated_at=NOW() WHERE account_id=$1',
