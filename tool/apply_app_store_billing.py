@@ -70,7 +70,9 @@ async function refreshAppleSubscriptionForAccount(accountId) {
   const row = (await pool.query('SELECT * FROM subscriptions WHERE account_id=$1', [accountId])).rows[0];
   if (!row?.original_transaction_id || !appStoreBilling.configured()) return row || null;
   const lastVerified = row.last_verified_at ? new Date(row.last_verified_at).getTime() : 0;
-  if (Date.now() - lastVerified < 15 * 60 * 1000) return row;
+  const sandbox = String(row.environment || '').toLowerCase() === 'sandbox';
+  const maxAgeMs = sandbox ? 0 : 15 * 60 * 1000;
+  if (maxAgeMs > 0 && Date.now() - lastVerified < maxAgeMs) return row;
   try {
     const refreshed = await appStoreBilling.refreshSubscription(row.original_transaction_id, row.product_id);
     await saveAppleSubscription(accountId, refreshed);
@@ -123,30 +125,51 @@ new_billing = r'''  if (req.method === 'POST' && url.pathname === '/api/billing/
       throw publicError('TERMINI_NON_ACCETTATI', 403);
     }
     const body = await readJson(req, 2_000_000);
-    const verified = await appStoreBilling.verifyPurchase({
+    const transaction = await appStoreBilling.verifyPurchase({
       transactionId: body.transactionId,
       receiptData: body.receiptData,
       expectedProductId: String(body.productId || ''),
     });
 
-    // Transaction authenticity and Creator entitlement are separate concerns.
-    // Once Apple verifies the transaction, persist and return its real status
-    // even when it is expired/revoked. The app can then finish the StoreKit
-    // delivery without granting access. Access checks remain active/grace only.
-    await saveAppleSubscription(session.account_id, verified);
+    // Transaction authenticity and current entitlement are separate. A valid
+    // historical transaction proves the Apple purchase, but only Apple's
+    // current auto-renewable subscription status can grant Creator access.
+    let current = transaction;
+    let entitlementConfirmed = false;
+    try {
+      current = await appStoreBilling.refreshSubscription(
+        transaction.originalTransactionId || transaction.transactionId,
+        transaction.productId,
+      );
+      entitlementConfirmed = true;
+    } catch (error) {
+      // Fail closed for entitlement while still allowing the client to finish
+      // an authentic StoreKit delivery. A subsequent billing/status request
+      // retries Apple immediately because last_verified_at is cleared below.
+      console.error('APPLE_ENTITLEMENT_REFRESH', error.message || error);
+      current = { ...transaction, status: 'inactive' };
+    }
+
+    await saveAppleSubscription(session.account_id, current);
+    if (!entitlementConfirmed) {
+      await pool.query('UPDATE subscriptions SET last_verified_at=NULL WHERE account_id=$1', [session.account_id]);
+    }
     await securityEvent(session.account_id, 'APPLE_SUBSCRIPTION_VERIFIED', {
-      productId: verified.productId,
-      originalTransactionIdHash: hash(verified.originalTransactionId),
-      environment: verified.environment,
-      status: verified.status,
+      productId: current.productId,
+      originalTransactionIdHash: hash(current.originalTransactionId),
+      environment: current.environment,
+      transactionStatus: transaction.status,
+      currentStatus: current.status,
+      entitlementConfirmed,
     });
     return sendJson(res, 200, {
       ok: true,
       verified: true,
-      status: verified.status,
-      productId: verified.productId,
-      expiresAt: verified.expiresAt,
-      environment: verified.environment,
+      status: current.status,
+      productId: current.productId,
+      expiresAt: current.expiresAt,
+      environment: current.environment,
+      entitlementConfirmed,
     });
   }
 
