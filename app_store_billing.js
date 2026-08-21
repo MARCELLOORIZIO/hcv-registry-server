@@ -137,7 +137,14 @@ function normalizeDecoded(decoded, environment, status) {
   assertProduct(productId);
   const expiresMs = Number(decoded.expiresDate || 0);
   const revoked = Boolean(decoded.revocationDate);
-  const derivedStatus = status || (revoked ? 'revoked' : (expiresMs > Date.now() ? 'active' : 'expired'));
+  let derivedStatus = status || (revoked ? 'revoked' : (expiresMs > Date.now() ? 'active' : 'expired'));
+  if (revoked) derivedStatus = 'revoked';
+  // An auto-renewable subscription can never grant active entitlement after
+  // its signed transaction expiration. This also protects Sandbox from stale
+  // status metadata while preserving Apple's explicit grace-period state.
+  if (derivedStatus === 'active' && (!expiresMs || expiresMs <= Date.now())) {
+    derivedStatus = 'expired';
+  }
   return {
     provider: 'app_store',
     environment: environment === Environment.PRODUCTION ? 'Production' : 'Sandbox',
