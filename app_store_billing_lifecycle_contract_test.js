@@ -64,8 +64,16 @@ assert.ok(
   'Sandbox must bypass the production 15-minute entitlement cache',
 );
 assert.ok(
-  server.includes("const sandboxActiveUnconfirmed = sandbox && row.status === 'active';"),
-  'unconfirmed Sandbox active entitlement must fail closed',
+  server.includes("const sandboxEntitlementUnconfirmed = sandbox &&"),
+  'unconfirmed Sandbox entitlement must fail closed',
+);
+assert.ok(
+  server.includes("['active', 'grace'].includes(row.status)"),
+  'both active and grace Sandbox states must be reconfirmed by Apple',
+);
+assert.ok(
+  server.includes("SUBSCRIPTIONS_ENFORCED && ['active', 'grace'].includes(row?.status)"),
+  'configured enforcement must deny cached active/grace when Apple billing cannot be queried',
 );
 assert.ok(
   server.includes("const expiredStoredActive = row.status === 'active'"),
@@ -73,7 +81,7 @@ assert.ok(
 );
 assert.ok(
   server.includes("const fallbackStatus = expiredStoredActive ? 'expired' : 'inactive';"),
-  'stale/unconfirmed active entitlement must be downgraded',
+  'stale/unconfirmed entitlement must be downgraded',
 );
 assert.ok(
   appleBilling.includes("if (derivedStatus === 'active' && (!expiresMs || expiresMs <= Date.now()))"),
