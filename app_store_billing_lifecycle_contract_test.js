@@ -84,8 +84,8 @@ assert.ok(
   'revocation must override any active status metadata',
 );
 assert.ok(
-  server.includes("['active', 'grace'].includes(subscription?.status)"),
-  'Creator entitlement must remain limited to active/grace subscriptions',
+  server.includes("['active', 'grace'].includes(effectiveSubscriptionStatusValue)"),
+  'Creator entitlement must remain limited to effective active/grace subscriptions',
 );
 assert.ok(
   server.includes("!['active', 'grace'].includes(account.subscriptionStatus)"),
