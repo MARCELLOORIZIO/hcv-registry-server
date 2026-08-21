@@ -2,6 +2,7 @@ const assert = require('assert');
 const fs = require('fs');
 
 const server = fs.readFileSync('production_server.js', 'utf8');
+const appleBilling = fs.readFileSync('app_store_billing.js', 'utf8');
 
 const verifyStart = server.indexOf("url.pathname === '/api/billing/apple/verify'");
 assert.ok(verifyStart >= 0, 'Apple verify route missing');
@@ -61,6 +62,26 @@ assert.ok(
 assert.ok(
   server.includes('const maxAgeMs = sandbox ? 0 : 15 * 60 * 1000;'),
   'Sandbox must bypass the production 15-minute entitlement cache',
+);
+assert.ok(
+  server.includes("const sandboxActiveUnconfirmed = sandbox && row.status === 'active';"),
+  'unconfirmed Sandbox active entitlement must fail closed',
+);
+assert.ok(
+  server.includes("const expiredStoredActive = row.status === 'active'"),
+  'stored active entitlement must be checked against its expiration',
+);
+assert.ok(
+  server.includes("const fallbackStatus = expiredStoredActive ? 'expired' : 'inactive';"),
+  'stale/unconfirmed active entitlement must be downgraded',
+);
+assert.ok(
+  appleBilling.includes("if (derivedStatus === 'active' && (!expiresMs || expiresMs <= Date.now()))"),
+  'Apple active status must never survive an expired signed transaction',
+);
+assert.ok(
+  appleBilling.includes("if (revoked) derivedStatus = 'revoked';"),
+  'revocation must override any active status metadata',
 );
 assert.ok(
   server.includes("['active', 'grace'].includes(subscription?.status)"),
