@@ -47,6 +47,18 @@ function configured() {
   return TEST_MODE || Boolean(ISSUER_ID && KEY_ID && privateKey().length && BUNDLE_ID);
 }
 
+function safeHash(value) {
+  const text = String(value || '');
+  if (!text) return '';
+  return crypto.createHash('sha256').update(text).digest('hex').slice(0, 16);
+}
+
+function isoDate(value) {
+  const ms = Number(value || 0);
+  if (!Number.isFinite(ms) || !ms) return null;
+  return new Date(ms).toISOString();
+}
+
 function fetchBuffer(url, redirects = 0) {
   return new Promise((resolve, reject) => {
     const request = https.get(url, { timeout: 10000 }, response => {
@@ -139,9 +151,6 @@ function normalizeDecoded(decoded, environment, status) {
   const revoked = Boolean(decoded.revocationDate);
   let derivedStatus = status || (revoked ? 'revoked' : (expiresMs > Date.now() ? 'active' : 'expired'));
   if (revoked) derivedStatus = 'revoked';
-  // An auto-renewable subscription can never grant active entitlement after
-  // its signed transaction expiration. This also protects Sandbox from stale
-  // status metadata while preserving Apple's explicit grace-period state.
   if (derivedStatus === 'active' && (!expiresMs || expiresMs <= Date.now())) {
     derivedStatus = 'expired';
   }
@@ -219,11 +228,44 @@ async function refreshSubscription(anyTransactionId, expectedProductId = '') {
           const productId = String(decoded.productId || '');
           if (!ALLOWED_PRODUCTS.has(productId)) continue;
           if (expectedProductId && productId !== expectedProductId) continue;
-          candidates.push(normalizeDecoded(decoded, environment, normalizedStatus(item.status)));
+
+          let renewal = null;
+          if (item.signedRenewalInfo) {
+            try {
+              renewal = await verify.verifyAndDecodeRenewalInfo(item.signedRenewalInfo);
+            } catch (_) {
+              renewal = null;
+            }
+          }
+
+          const normalized = normalizeDecoded(decoded, environment, normalizedStatus(item.status));
+          console.log('APPLE_SUBSCRIPTION_CANDIDATE', JSON.stringify({
+            environment: environment === Environment.PRODUCTION ? 'Production' : 'Sandbox',
+            rawStatus: Number(item.status || 0),
+            normalizedStatus: normalized.status,
+            productId,
+            transactionHash: safeHash(decoded.transactionId),
+            originalTransactionHash: safeHash(decoded.originalTransactionId || decoded.transactionId),
+            expiresDate: isoDate(decoded.expiresDate),
+            signedDate: isoDate(decoded.signedDate),
+            autoRenewStatus: renewal?.autoRenewStatus ?? null,
+            renewalDate: isoDate(renewal?.renewalDate),
+            expirationIntent: renewal?.expirationIntent ?? null,
+            gracePeriodExpiresDate: isoDate(renewal?.gracePeriodExpiresDate),
+          }));
+          candidates.push(normalized);
         }
       }
       if (!candidates.length) throw new Error('APPLE_SUBSCRIPTION_NOT_FOUND');
       candidates.sort((a, b) => Date.parse(b.expiresAt || 0) - Date.parse(a.expiresAt || 0));
+      console.log('APPLE_SUBSCRIPTION_SELECTED', JSON.stringify({
+        environment: candidates[0].environment,
+        status: candidates[0].status,
+        productId: candidates[0].productId,
+        transactionHash: safeHash(candidates[0].transactionId),
+        originalTransactionHash: safeHash(candidates[0].originalTransactionId),
+        expiresAt: candidates[0].expiresAt,
+      }));
       return candidates[0];
     } catch (error) {
       lastError = error;
