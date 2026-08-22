@@ -1,0 +1,71 @@
+services:
+  - type: web
+    name: sigillum-registry-production
+    runtime: node
+    region: frankfurt
+    plan: starter
+    branch: release/prelaunch-20260818-registry-localization
+    autoDeployTrigger: off
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: sigillum-registry-db
+          property: connectionString
+      - key: NODE_ENV
+        value: production
+      - key: PRODUCTION_LIVE
+        value: "false"
+      - key: PG_POOL_MAX
+        value: "10"
+      - key: PG_SSL_REQUIRED
+        value: "false"
+      - key: CERTIFICATE_WRITES_ENABLED
+        value: "true"
+      - key: SUBSCRIPTIONS_ENFORCED
+        value: "false"
+      - key: KYC_REQUIRES_SUBSCRIPTION
+        value: "true"
+      - key: TERMS_VERSION
+        value: "2026-08-18"
+      - key: PRIVACY_VERSION
+        value: "2026-08-18"
+      - key: SUPPORT_EMAIL
+        sync: false
+      - key: PRIVACY_EMAIL
+        sync: false
+      - key: APPLE_BUNDLE_ID
+        value: "com.sigillum.hcv"
+      - key: APPLE_MONTHLY_PRODUCT_ID
+        value: "com.sigillum.hcv.creator.monthly"
+      - key: APPLE_ANNUAL_PRODUCT_ID
+        value: "com.sigillum.hcv.creator.annual"
+      - key: APPLE_IAP_ENVIRONMENT
+        value: "AUTO"
+      - key: APPLE_APP_ID
+        sync: false
+      - key: APPLE_IAP_ISSUER_ID
+        sync: false
+      - key: APPLE_IAP_KEY_ID
+        sync: false
+      - key: APPLE_IAP_PRIVATE_KEY_BASE64
+        sync: false
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
+      - key: APP_BASE_URL
+        sync: false
+      - key: SIGILLUM_KYC_RETURN_URL
+        sync: false
+
+databases:
+  - name: sigillum-registry-db
+    region: frankfurt
+    plan: basic-256mb
+    databaseName: sigillum
+    user: sigillum

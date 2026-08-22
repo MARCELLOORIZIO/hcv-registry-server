@@ -1,0 +1,153 @@
+name: Validate SIGILLUM integrated prelaunch release
+
+on:
+  push:
+    branches:
+      - release/prelaunch-20260818-registry-localization
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  statuses: write
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: sigillum
+          POSTGRES_PASSWORD: sigillum
+          POSTGRES_DB: sigillum
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U sigillum"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://sigillum:sigillum@127.0.0.1:5432/sigillum
+      NODE_ENV: test
+      PRODUCTION_LIVE: "false"
+      CERTIFICATE_WRITES_ENABLED: "false"
+      SUBSCRIPTIONS_ENFORCED: "false"
+      KYC_REQUIRES_SUBSCRIPTION: "true"
+      TEST_FIXED_CODE: "123456"
+      PG_SSL_REQUIRED: "false"
+      APPLE_BILLING_TEST_MODE: "true"
+      APPLE_BUNDLE_ID: com.sigillum.hcv
+      APPLE_MONTHLY_PRODUCT_ID: com.sigillum.hcv.creator.monthly
+      APPLE_ANNUAL_PRODUCT_ID: com.sigillum.hcv.creator.annual
+    steps:
+      - name: Mark integrated validation pending
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          curl -fsS -L -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${{ github.repository }}/statuses/${{ github.sha }}" \
+            -d '{"state":"pending","context":"sigillum/integrated-prelaunch","description":"Validating stable HCV guards, legal localization and Registry"}'
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install dependencies
+        run: npm install
+      - name: Validate stable HCV guards plus multilingual legal layer
+        run: npm run check
+      - name: Verify production LIVE guard
+        run: node production_config_test.js
+      - name: Start strict PRELAUNCH server
+        run: |
+          npm start > server-prelaunch.log 2>&1 &
+          echo $! > server-prelaunch.pid
+          for i in {1..30}; do
+            if curl -fsS http://127.0.0.1:8080/health > health-prelaunch.json; then exit 0; fi
+            sleep 1
+          done
+          cat server-prelaunch.log
+          exit 1
+      - name: Verify multilingual legal pages and strict PRELAUNCH state
+        run: |
+          grep -q '"productionLive":false' health-prelaunch.json
+          grep -q '"certificateWritesEnabled":false' health-prelaunch.json
+          curl -fsS 'http://127.0.0.1:8080/privacy?lang=it' | grep -q 'Informativa Privacy SIGILLUM'
+          curl -fsS 'http://127.0.0.1:8080/privacy?lang=en' | grep -q 'SIGILLUM Privacy Policy'
+          curl -fsS 'http://127.0.0.1:8080/privacy?lang=es' | grep -q 'Política de Privacidad de SIGILLUM'
+          curl -fsS 'http://127.0.0.1:8080/privacy?lang=ru' | grep -q 'Политика конфиденциальности SIGILLUM'
+          curl -fsS 'http://127.0.0.1:8080/terms?lang=it' | grep -q 'Termini di Servizio SIGILLUM'
+          curl -fsS 'http://127.0.0.1:8080/terms?lang=en' | grep -q 'SIGILLUM Terms of Service'
+          curl -fsS 'http://127.0.0.1:8080/terms?lang=es' | grep -q 'Términos de Servicio de SIGILLUM'
+          curl -fsS 'http://127.0.0.1:8080/terms?lang=ru' | grep -q 'Условия использования SIGILLUM'
+          curl -fsS 'http://127.0.0.1:8080/support?lang=es' | grep -q 'Soporte de SIGILLUM'
+          curl -fsS 'http://127.0.0.1:8080/delete-data?lang=ru' | grep -q 'Удаление аккаунта и данных'
+          curl -fsS 'http://127.0.0.1:8080/terms?lang=fr' | grep -q 'SIGILLUM Terms of Service'
+      - name: Prove Registry writes are disabled on strict PRELAUNCH server
+        run: |
+          STATUS=$(curl -s -o strict-write.json -w '%{http_code}' -X POST http://127.0.0.1:8080/api/certificate -H 'Content-Type: application/json' -d '{"hcvId":"HCV-AAAAAAAAAAAAAAAA","certificateRaw":"{}"}')
+          test "$STATUS" = "503"
+          grep -q 'CERTIFICATE_WRITES_DISABLED' strict-write.json
+      - name: Start isolated write-enabled test server on port 8081
+        run: |
+          PORT=8081 CERTIFICATE_WRITES_ENABLED=true npm start > server-write-test.log 2>&1 &
+          echo $! > server-write-test.pid
+          for i in {1..30}; do
+            if curl -fsS http://127.0.0.1:8081/health > health-write-test.json; then
+              grep -q '"certificateWritesEnabled":true' health-write-test.json
+              exit 0
+            fi
+            sleep 1
+          done
+          cat server-write-test.log
+          exit 1
+      - name: Run authenticated account, localized clickwrap, Apple billing and Creator gate flow
+        env:
+          SMOKE_BASE_URL: http://127.0.0.1:8081
+        run: node production_smoke_test.js
+      - name: Run PostgreSQL load probe on strict PRELAUNCH server
+        env:
+          LOAD_DURATION_MS: "10000"
+          LOAD_CONCURRENCY: "25"
+        run: node load_test.js
+      - name: Mark integrated validation success
+        if: success()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          curl -fsS -L -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${{ github.repository }}/statuses/${{ github.sha }}" \
+            -d '{"state":"success","context":"sigillum/integrated-prelaunch","description":"Integrated prelaunch validation passed"}'
+      - name: Mark integrated validation failure
+        if: failure()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          curl -sS -L -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${{ github.repository }}/statuses/${{ github.sha }}" \
+            -d '{"state":"failure","context":"sigillum/integrated-prelaunch","description":"Integrated prelaunch validation failed; do not deploy"}' || true
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sigillum-integrated-prelaunch-release-logs
+          path: |
+            server-prelaunch.log
+            server-write-test.log
+            health-prelaunch.json
+            health-write-test.json
+            strict-write.json
+          if-no-files-found: ignore
