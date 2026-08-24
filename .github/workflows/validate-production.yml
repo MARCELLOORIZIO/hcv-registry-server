@@ -89,8 +89,8 @@ jobs:
           grep -q '"certificateWritesEnabled":false' health.json
           curl -fsS 'http://127.0.0.1:8080/.well-known/apple-app-site-association' > aasa.json
           grep -q 'DN9W7Z3HCZ.com.sigillum.hcv' aasa.json
-          grep -q '/verify/\\*' aasa.json
-          grep -q '/v/\\*' aasa.json
+          grep -Fq '"/verify/*"' aasa.json
+          grep -Fq '"/v/*"' aasa.json
           curl -fsS 'http://127.0.0.1:8080/privacy?lang=it' | grep -q 'Informativa Privacy SIGILLUM'
           curl -fsS 'http://127.0.0.1:8080/terms?lang=it' | grep -q 'Termini di Servizio SIGILLUM'
           curl -fsS 'http://127.0.0.1:8080/support?lang=it' | grep -q 'Supporto SIGILLUM'
