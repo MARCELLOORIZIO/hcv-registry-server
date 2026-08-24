@@ -1,0 +1,69 @@
+name: Diagnose reconciled patch reapply
+
+on:
+  push:
+    branches:
+      - commercial/reconciled-prelaunch-20260824
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  statuses: write
+
+jobs:
+  reapply:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm install
+      - run: npm run check
+      - name: Reapply canonical and KYC
+        run: python3 tool/apply_hcv_signature_canonical_fix.py
+      - name: Mark canonical reapply
+        run: |
+          curl -fsS -L -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/${{ github.repository }}/statuses/${{ github.sha }}" -d '{"state":"success","context":"sigillum/reapply-canonical"}'
+      - name: Reapply runtime safety
+        run: python3 tool/apply_production_runtime_safety.py
+      - name: Mark runtime reapply
+        run: |
+          curl -fsS -L -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/${{ github.repository }}/statuses/${{ github.sha }}" -d '{"state":"success","context":"sigillum/reapply-runtime"}'
+      - name: Reapply Apple billing
+        run: python3 tool/apply_app_store_billing.py
+      - name: Mark billing reapply
+        run: |
+          curl -fsS -L -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/${{ github.repository }}/statuses/${{ github.sha }}" -d '{"state":"success","context":"sigillum/reapply-billing"}'
+      - name: Reapply AASA
+        run: python3 tool/apply_apple_associated_domains.py
+      - name: Mark AASA reapply
+        run: |
+          curl -fsS -L -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/${{ github.repository }}/statuses/${{ github.sha }}" -d '{"state":"success","context":"sigillum/reapply-aasa"}'
+      - name: Reapply live guard
+        run: python3 tool/apply_production_live_guard.py
+      - name: Mark live reapply
+        run: |
+          curl -fsS -L -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/${{ github.repository }}/statuses/${{ github.sha }}" -d '{"state":"success","context":"sigillum/reapply-live"}'
+      - name: Reapply PostgreSQL retry
+        run: python3 tool/apply_postgres_startup_retry.py
+      - name: Mark retry reapply
+        run: |
+          curl -fsS -L -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/${{ github.repository }}/statuses/${{ github.sha }}" -d '{"state":"success","context":"sigillum/reapply-retry"}'
+      - name: Reapply legal 18
+        run: python3 tool/apply_legal_localization_20260818.py
+      - name: Mark legal reapply
+        run: |
+          curl -fsS -L -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/${{ github.repository }}/statuses/${{ github.sha }}" -d '{"state":"success","context":"sigillum/reapply-legal"}'
+      - name: Reapply legal theme
+        run: python3 tool/apply_consumer_legal_theme.py
+      - name: Mark theme reapply
+        run: |
+          curl -fsS -L -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/${{ github.repository }}/statuses/${{ github.sha }}" -d '{"state":"success","context":"sigillum/reapply-theme"}'
+      - name: Reapply email reuse
+        run: python3 tool/apply_account_email_reuse.py
+      - name: Mark reuse reapply
+        run: |
+          curl -fsS -L -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/${{ github.repository }}/statuses/${{ github.sha }}" -d '{"state":"success","context":"sigillum/reapply-reuse"}'
