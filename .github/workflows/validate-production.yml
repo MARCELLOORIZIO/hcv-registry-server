@@ -105,9 +105,9 @@ jobs:
           curl -fsS 'http://127.0.0.1:8080/terms?lang=en' | grep -q -- '--purple:#7645D9'
 
           curl -fsS 'http://127.0.0.1:8080/.well-known/apple-app-site-association' > aasa.json
-          grep -q 'DN9W7Z3HCZ.com.sigillum.hcv' aasa.json
-          grep -q '"/verify/\\*"' aasa.json
-          grep -q '"/v/\\*"' aasa.json
+          grep -Fq 'DN9W7Z3HCZ.com.sigillum.hcv' aasa.json
+          grep -Fq '"/verify/*"' aasa.json
+          grep -Fq '"/v/*"' aasa.json
       - name: Verify certificate writes are disabled in PRELAUNCH
         run: |
           STATUS=$(curl -s -o unauth.json -w '%{http_code}' -X POST http://127.0.0.1:8080/api/certificate -H 'Content-Type: application/json' -d '{"hcvId":"HCV-AAAAAAAAAAAAAAAA","certificateRaw":"{}"}')
