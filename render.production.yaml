@@ -4,7 +4,7 @@ services:
     runtime: node
     region: frankfurt
     plan: starter
-    branch: stable/commercial-prelaunch-backend-guarded-20260811
+    branch: stable/commercial-prelaunch-backend-reconciled-20260824
     autoDeployTrigger: off
     buildCommand: npm install
     startCommand: npm start
@@ -23,7 +23,7 @@ services:
       - key: PG_SSL_REQUIRED
         value: "false"
       - key: CERTIFICATE_WRITES_ENABLED
-        value: "true"
+        value: "false"
       - key: SUBSCRIPTIONS_ENFORCED
         value: "false"
       - key: KYC_REQUIRES_SUBSCRIPTION
