@@ -1,4 +1,4 @@
-name: Verify Render live prelaunch state
+name: Diagnose Render live prelaunch state
 
 on:
   push:
@@ -13,7 +13,7 @@ permissions:
   statuses: write
 
 jobs:
-  verify-render:
+  diagnose-render:
     runs-on: ubuntu-latest
     timeout-minutes: 8
     env:
@@ -24,60 +24,91 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      - name: Mark verification pending
+      - name: Diagnose public Render state
+        shell: bash
         run: |
-          curl -fsS -L -X POST \
-            -H "Authorization: Bearer $GH_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/${{ github.repository }}/statuses/${{ github.sha }}" \
-            -d '{"state":"pending","context":"sigillum/render-live-prelaunch","description":"Checking live Render prelaunch state"}'
-      - name: Verify live health flags
-        run: |
-          curl -fsS "$BASE_URL/health" | tee render-health.json
-          grep -q '"database":true' render-health.json
-          grep -q '"certificateWritesEnabled":false' render-health.json
-          grep -q '"productionLive":false' render-health.json
-          grep -q '"termsVersion":"2026-08-18"' render-health.json
-          grep -q '"privacyVersion":"2026-08-18"' render-health.json
-      - name: Mark health success
-        run: |
-          curl -fsS -L -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/${{ github.repository }}/statuses/${{ github.sha }}" -d '{"state":"success","context":"sigillum/render-health"}'
-      - name: Verify AASA
-        run: |
-          curl -fsS "$BASE_URL/.well-known/apple-app-site-association" | tee render-aasa.json
-          grep -Fq 'DN9W7Z3HCZ.com.sigillum.hcv' render-aasa.json
-          grep -Fq '"/verify/*"' render-aasa.json
-          grep -Fq '"/v/*"' render-aasa.json
-      - name: Mark AASA success
-        run: |
-          curl -fsS -L -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/${{ github.repository }}/statuses/${{ github.sha }}" -d '{"state":"success","context":"sigillum/render-aasa"}'
-      - name: Verify multilingual legal endpoints
-        run: |
-          curl -fsS "$BASE_URL/terms?lang=it" | grep -q 'Termini di Servizio SIGILLUM'
-          curl -fsS "$BASE_URL/terms?lang=en" | grep -q 'SIGILLUM Terms of Service'
-          curl -fsS "$BASE_URL/terms?lang=es" | grep -q 'Términos de Servicio de SIGILLUM'
-          curl -fsS "$BASE_URL/terms?lang=ru" | grep -q 'Условия использования SIGILLUM'
-      - name: Mark legal success
-        run: |
-          curl -fsS -L -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/${{ github.repository }}/statuses/${{ github.sha }}" -d '{"state":"success","context":"sigillum/render-legal"}'
-      - name: Run read-only Render health load probe
-        env:
-          LOAD_BASE_URL: https://sigillum-registry-production.onrender.com
-          LOAD_DURATION_MS: "10000"
-          LOAD_CONCURRENCY: "25"
-        run: node load_test.js | tee render-load-result.json
-      - name: Mark load success
-        run: |
-          curl -fsS -L -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/${{ github.repository }}/statuses/${{ github.sha }}" -d '{"state":"success","context":"sigillum/render-load"}'
-      - name: Mark verification success
-        if: success()
-        run: |
-          curl -fsS -L -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/${{ github.repository }}/statuses/${{ github.sha }}" -d '{"state":"success","context":"sigillum/render-live-prelaunch","description":"Render live prelaunch verification passed"}'
-      - name: Mark verification failure
-        if: failure()
-        run: |
-          curl -sS -L -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/${{ github.repository }}/statuses/${{ github.sha }}" -d '{"state":"failure","context":"sigillum/render-live-prelaunch","description":"Render live prelaunch verification failed"}' || true
-      - name: Upload live verification artifacts
+          set +e
+          post_status() {
+            local context="$1"
+            local state="$2"
+            local description="$3"
+            curl -sS -L -X POST \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${{ github.repository }}/statuses/${{ github.sha }}" \
+              -d "{\"state\":\"$state\",\"context\":\"$context\",\"description\":\"$description\"}" >/dev/null || true
+          }
+
+          FAILED=0
+          HEALTH_CODE=$(curl -sS -o render-health.json -w '%{http_code}' "$BASE_URL/health")
+          if [ "$HEALTH_CODE" = "200" ]; then
+            post_status sigillum/render-http-health success "Render health endpoint reachable"
+          else
+            post_status sigillum/render-http-health failure "Render health endpoint HTTP $HEALTH_CODE"
+            FAILED=1
+          fi
+
+          check_health() {
+            local pattern="$1"
+            local context="$2"
+            local okdesc="$3"
+            local faildesc="$4"
+            if grep -Fq "$pattern" render-health.json 2>/dev/null; then
+              post_status "$context" success "$okdesc"
+            else
+              post_status "$context" failure "$faildesc"
+              FAILED=1
+            fi
+          }
+
+          check_health '"database":true' sigillum/render-database "Render PostgreSQL healthy" "Render PostgreSQL health missing"
+          check_health '"certificateWritesEnabled":false' sigillum/render-writes-off "Certificate writes disabled" "Certificate writes are not confirmed disabled"
+          check_health '"productionLive":false' sigillum/render-not-live "Production LIVE disabled" "Production LIVE is not confirmed disabled"
+          check_health '"termsVersion":"2026-08-18"' sigillum/render-terms18 "Terms version 2026-08-18" "Terms version is not 2026-08-18"
+          check_health '"privacyVersion":"2026-08-18"' sigillum/render-privacy18 "Privacy version 2026-08-18" "Privacy version is not 2026-08-18"
+
+          AASA_CODE=$(curl -sS -o render-aasa.json -w '%{http_code}' "$BASE_URL/.well-known/apple-app-site-association")
+          if [ "$AASA_CODE" = "200" ] && grep -Fq 'DN9W7Z3HCZ.com.sigillum.hcv' render-aasa.json && grep -Fq '"/verify/*"' render-aasa.json && grep -Fq '"/v/*"' render-aasa.json; then
+            post_status sigillum/render-aasa success "AASA contract available"
+          else
+            post_status sigillum/render-aasa failure "AASA contract missing or incomplete"
+            FAILED=1
+          fi
+
+          LEGAL_OK=1
+          curl -fsS "$BASE_URL/terms?lang=it" | grep -q 'Termini di Servizio SIGILLUM' || LEGAL_OK=0
+          curl -fsS "$BASE_URL/terms?lang=en" | grep -q 'SIGILLUM Terms of Service' || LEGAL_OK=0
+          curl -fsS "$BASE_URL/terms?lang=es" | grep -q 'Términos de Servicio de SIGILLUM' || LEGAL_OK=0
+          curl -fsS "$BASE_URL/terms?lang=ru" | grep -q 'Условия использования SIGILLUM' || LEGAL_OK=0
+          if [ "$LEGAL_OK" = "1" ]; then
+            post_status sigillum/render-legal success "Multilingual legal endpoints available"
+          else
+            post_status sigillum/render-legal failure "Multilingual legal endpoints incomplete"
+            FAILED=1
+          fi
+
+          if grep -Fq '"database":true' render-health.json 2>/dev/null && grep -Fq '"certificateWritesEnabled":false' render-health.json 2>/dev/null && grep -Fq '"productionLive":false' render-health.json 2>/dev/null; then
+            LOAD_BASE_URL="$BASE_URL" LOAD_DURATION_MS=10000 LOAD_CONCURRENCY=25 node load_test.js > render-load-result.json
+            LOAD_RC=$?
+            if [ "$LOAD_RC" = "0" ]; then
+              post_status sigillum/render-load success "Read-only health load probe passed"
+            else
+              post_status sigillum/render-load failure "Read-only health load probe failed"
+              FAILED=1
+            fi
+          else
+            echo '{"skipped":true,"reason":"unsafe-or-unconfirmed-prelaunch-state"}' > render-load-result.json
+            post_status sigillum/render-load failure "Load skipped because safe prelaunch flags are unconfirmed"
+            FAILED=1
+          fi
+
+          if [ "$FAILED" = "0" ]; then
+            post_status sigillum/render-live-prelaunch success "Render live prelaunch verification passed"
+            exit 0
+          fi
+          post_status sigillum/render-live-prelaunch failure "Render live prelaunch verification failed"
+          exit 1
+      - name: Upload live diagnosis artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
