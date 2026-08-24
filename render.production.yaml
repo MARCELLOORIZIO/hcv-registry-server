@@ -4,7 +4,7 @@ services:
     runtime: node
     region: frankfurt
     plan: starter
-    branch: commercial/reconciled-prelaunch-20260824
+    branch: stable/commercial-prelaunch-backend-reconciled-clean-20260824
     autoDeployTrigger: off
     buildCommand: npm install
     startCommand: npm start
