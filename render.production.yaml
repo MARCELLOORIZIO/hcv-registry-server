@@ -38,6 +38,8 @@ services:
         sync: false
       - key: APPLE_BUNDLE_ID
         value: "com.sigillum.hcv"
+      - key: APPLE_WEEKLY_PRODUCT_ID
+        value: "com.sigillum.hcv.creator.weekly"
       - key: APPLE_MONTHLY_PRODUCT_ID
         value: "com.sigillum.hcv.creator.monthly"
       - key: APPLE_ANNUAL_PRODUCT_ID
