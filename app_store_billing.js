@@ -14,6 +14,7 @@ const KEY_ID = process.env.APPLE_IAP_KEY_ID || '';
 const ENVIRONMENT_MODE = String(process.env.APPLE_IAP_ENVIRONMENT || 'AUTO').toUpperCase();
 const TEST_MODE = process.env.NODE_ENV === 'test' && process.env.APPLE_BILLING_TEST_MODE === 'true';
 const ALLOWED_PRODUCTS = new Set([
+  process.env.APPLE_WEEKLY_PRODUCT_ID || 'com.sigillum.hcv.creator.weekly',
   process.env.APPLE_MONTHLY_PRODUCT_ID || 'com.sigillum.hcv.creator.monthly',
   process.env.APPLE_ANNUAL_PRODUCT_ID || 'com.sigillum.hcv.creator.annual',
 ]);
