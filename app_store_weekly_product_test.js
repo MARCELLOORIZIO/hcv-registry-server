@@ -1,6 +1,7 @@
 process.env.NODE_ENV = 'test';
 process.env.APPLE_BILLING_TEST_MODE = 'true';
 
+const fs = require('fs');
 const billing = require('./app_store_billing');
 
 function expect(condition, message) {
@@ -30,11 +31,29 @@ async function main() {
   expect(verified.productId === weekly, 'verified weekly product id must be preserved');
   expect(verified.environment === 'Sandbox', 'test purchase must use Sandbox environment');
 
+  // package.json runs precheck before this test, so this contract guards the
+  // exact production route materialized by apply_app_store_billing.py.
+  const billingPatch = fs.readFileSync('./tool/apply_app_store_billing.py', 'utf8');
+  expect(
+    !billingPatch.includes("if (!['active', 'grace'].includes(verified.status)) throw publicError('ABBONAMENTO_NON_ATTIVO', 402);"),
+    'verified expired/revoked Apple transactions must not be rejected before the client can finish stale StoreKit state',
+  );
+  expect(
+    billingPatch.includes('await saveAppleSubscription(session.account_id, verified);'),
+    'verified Apple transaction state must be persisted even when entitlement is inactive',
+  );
+  expect(
+    billingPatch.includes('verified: true') && billingPatch.includes('status: verified.status'),
+    'verification endpoint must distinguish Apple authenticity from entitlement state',
+  );
+
   console.log(JSON.stringify({
     ok: true,
     weeklyProductAllowed: true,
     existingProductsPreserved: true,
     weeklyPurchaseVerifies: true,
+    verifiedInactiveStateReturned: true,
+    staleTransactionRecoverySupported: true,
   }, null, 2));
 }
 

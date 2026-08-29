@@ -128,12 +128,17 @@ new_billing = r'''  if (req.method === 'POST' && url.pathname === '/api/billing/
       receiptData: body.receiptData,
       expectedProductId: String(body.productId || ''),
     });
-    if (!['active', 'grace'].includes(verified.status)) throw publicError('ABBONAMENTO_NON_ATTIVO', 402);
+    // Authenticity and entitlement are separate. Persist and return Apple's
+    // verified status even when the transaction is expired or revoked so the
+    // client can finish a stale StoreKit transaction and start a new purchase.
+    // Creator access remains fail-closed because both client and protected
+    // server routes grant entitlement only for active/grace states.
     await saveAppleSubscription(session.account_id, verified);
     await securityEvent(session.account_id, 'APPLE_SUBSCRIPTION_VERIFIED', {
       productId: verified.productId,
       originalTransactionIdHash: hash(verified.originalTransactionId),
       environment: verified.environment,
+      status: verified.status,
     });
     return sendJson(res, 200, {
       ok: true,
