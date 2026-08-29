@@ -9,10 +9,16 @@ function expect(condition, message) {
 
 async function main() {
   const weekly = 'com.sigillum.hcv.creator.weekly';
+  const monthly = 'com.sigillum.hcv.creator.monthly';
+  const annual = 'com.sigillum.hcv.creator.annual';
 
   expect(
     billing.allowedProducts.has(weekly),
     'weekly Creator product must be accepted by server verification',
+  );
+  expect(
+    billing.allowedProducts.has(monthly) && billing.allowedProducts.has(annual),
+    'existing monthly and annual Creator products must remain accepted',
   );
 
   const verified = await billing.verifyPurchase({
@@ -27,6 +33,7 @@ async function main() {
   console.log(JSON.stringify({
     ok: true,
     weeklyProductAllowed: true,
+    existingProductsPreserved: true,
     weeklyPurchaseVerifies: true,
   }, null, 2));
 }
