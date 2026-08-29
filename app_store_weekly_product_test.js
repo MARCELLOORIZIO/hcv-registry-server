@@ -31,6 +31,8 @@ async function main() {
   expect(verified.productId === weekly, 'verified weekly product id must be preserved');
   expect(verified.environment === 'Sandbox', 'test purchase must use Sandbox environment');
 
+  // package.json runs precheck before this test, so this contract guards the
+  // exact production route materialized by apply_app_store_billing.py.
   const billingPatch = fs.readFileSync('./tool/apply_app_store_billing.py', 'utf8');
   expect(
     !billingPatch.includes("if (!['active', 'grace'].includes(verified.status)) throw publicError('ABBONAMENTO_NON_ATTIVO', 402);"),
