@@ -147,7 +147,15 @@ function inspectCertificateAccountBinding({
   }
 
   const serverCreatorId = String(accountCreatorId || '').trim();
-  if (serverCreatorId && serverCreatorId !== certificateCreatorId) {
+  if (!serverCreatorId) {
+    return {
+      ok: false,
+      reason: 'ACCOUNT_CREATOR_ID_MISSING',
+      certificateFingerprint,
+      certificateCreatorId,
+    };
+  }
+  if (serverCreatorId !== certificateCreatorId) {
     return {
       ok: false,
       reason: 'CERTIFICATE_CREATOR_ID_MISMATCH',
@@ -161,7 +169,6 @@ function inspectCertificateAccountBinding({
     certificateFingerprint,
     certificateCreatorId,
     certificateCreatorName,
-    needsCreatorIdBind: !serverCreatorId,
   };
 }
 
