@@ -11,7 +11,9 @@ function requireToken(token, label = token) {
 requireToken('CREATE TABLE IF NOT EXISTS device_enrollment_challenges');
 requireToken('ALTER TABLE account_devices ADD COLUMN IF NOT EXISTS revoked_at TIMESTAMPTZ');
 requireToken('function deviceEnrollmentCopy(language)');
-requireToken("url.pathname === '/device/approve'");
+requireToken("req.method === 'GET' && url.pathname === '/device/approve'");
+requireToken("req.method === 'POST' && url.pathname === '/device/approve'");
+requireToken('method="post"', 'explicit confirmation form');
 requireToken("crypto.randomBytes(32).toString('base64url')", '256-bit approval token');
 requireToken('token_hash TEXT NOT NULL UNIQUE');
 requireToken("NOW()+INTERVAL '15 minutes'", '15-minute expiry');
@@ -25,6 +27,7 @@ requireToken('revoked_at=NULL');
 requireToken('const client = await pool.connect();', 'dedicated approval DB connection');
 requireToken("await client.query('BEGIN');", 'atomic approval begin');
 requireToken("await client.query('COMMIT');", 'atomic approval commit');
+requireToken('FOR UPDATE OF c', 'single-use row lock');
 requireToken('client.release();', 'approval connection release');
 
 for (const marker of [
@@ -36,10 +39,43 @@ for (const marker of [
   requireToken(marker, `localized copy: ${marker}`);
 }
 
-const loginStart = source.indexOf("if (req.method === 'POST' && url.pathname === '/api/auth/login')");
+const getStart = source.indexOf("if (req.method === 'GET' && url.pathname === '/device/approve')");
+const postStart = source.indexOf("if (req.method === 'POST' && url.pathname === '/device/approve')", getStart);
+const loginStart = source.indexOf("if (req.method === 'POST' && url.pathname === '/api/auth/login')", postStart);
 const loginEnd = source.indexOf("if (req.method === 'GET' && url.pathname === '/api/auth/session')", loginStart);
-if (loginStart < 0 || loginEnd < 0) throw new Error('Login route boundaries missing');
+if (getStart < 0 || postStart < 0 || loginStart < 0 || loginEnd < 0) {
+  throw new Error('Device approval/login route boundaries missing');
+}
+
+const getBlock = source.slice(getStart, postStart);
+const postBlock = source.slice(postStart, loginStart);
 const loginBlock = source.slice(loginStart, loginEnd);
+
+// GET must only render the confirmation page. Email security scanners commonly
+// prefetch links, so enrollment/consumption on GET would silently defeat 2FA.
+for (const forbidden of [
+  'INSERT INTO account_devices',
+  'DELETE FROM device_enrollment_challenges WHERE token_hash=$1',
+  'DEVICE_ENROLLMENT_APPROVED',
+]) {
+  if (getBlock.includes(forbidden)) {
+    throw new Error(`GET approval route mutates security state: ${forbidden}`);
+  }
+}
+if (!getBlock.includes("deviceApprovalPage(copy, 'confirm'")) {
+  throw new Error('GET route does not require an explicit confirmation page');
+}
+
+// POST must lock and consume exactly the stored challenge before enrollment.
+if (!postBlock.includes('FOR UPDATE OF c')) {
+  throw new Error('POST approval route does not lock the challenge row');
+}
+if (!postBlock.includes('INSERT INTO account_devices')) {
+  throw new Error('POST approval route does not enroll the approved device');
+}
+if (!postBlock.includes('DELETE FROM device_enrollment_challenges WHERE token_hash=$1')) {
+  throw new Error('POST approval route does not consume the token');
+}
 
 if (!loginBlock.includes('if (!knownDevice)')) {
   throw new Error('Unknown-device branch is not fail-closed');
