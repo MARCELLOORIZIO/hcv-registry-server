@@ -15,7 +15,8 @@ if "require('./certificate_account_binding')" not in source:
 
 schema_anchor = """    CREATE INDEX IF NOT EXISTS certificates_account_idx ON certificates(account_id, created_at DESC);
 """
-schema_extension = schema_anchor + """    ALTER TABLE certificates ADD COLUMN IF NOT EXISTS device_key_fingerprint TEXT NOT NULL DEFAULT '';
+schema_extension = schema_anchor + """    ALTER TABLE certificates ADD COLUMN IF NOT EXISTS account_subject_hash TEXT NOT NULL DEFAULT '';
+    ALTER TABLE certificates ADD COLUMN IF NOT EXISTS device_key_fingerprint TEXT NOT NULL DEFAULT '';
     ALTER TABLE certificates ADD COLUMN IF NOT EXISTS creator_id TEXT NOT NULL DEFAULT '';
     ALTER TABLE certificates ADD COLUMN IF NOT EXISTS binding_version INTEGER NOT NULL DEFAULT 0;
 """
@@ -53,45 +54,19 @@ new_upload = """    const certificate = verifyCertificateRaw(raw, hcvId);
         'Il certificato non corrisponde al dispositivo o all’identità dell’account.',
       );
     }
-    if (binding.needsCreatorIdBind) {
-      await pool.query(
-        `UPDATE accounts
-         SET creator_id=$2,updated_at=NOW()
-         WHERE id=$1 AND (creator_id IS NULL OR creator_id='')`,
-        [access.session.account_id, binding.certificateCreatorId],
-      );
-      const creatorBinding = (
-        await pool.query('SELECT creator_id FROM accounts WHERE id=$1', [access.session.account_id])
-      ).rows[0];
-      if (String(creatorBinding?.creator_id || '').trim() !== binding.certificateCreatorId) {
-        await securityEvent(access.session.account_id, 'CERTIFICATE_BINDING_REJECTED', {
-          hcvId,
-          device: access.session.device_key_fingerprint,
-          reason: 'CREATOR_ID_CONCURRENT_BINDING_MISMATCH',
-        });
-        throw publicError(
-          'CERTIFICATO_NON_VALIDO',
-          400,
-          'Il certificato non corrisponde al dispositivo o all’identità dell’account.',
-        );
-      }
-      access.account.creatorId = binding.certificateCreatorId;
-      await securityEvent(access.session.account_id, 'CREATOR_ID_BOUND_FROM_CERTIFICATE', {
-        creatorId: binding.certificateCreatorId,
-        device: binding.certificateFingerprint,
-      });
-    }
+    const accountSubjectHash = hash(access.session.account_id);
     try {
       await pool.query(
         `INSERT INTO certificates(
            hcv_id,account_id,certificate_raw,certificate_sha256,
-           device_key_fingerprint,creator_id,binding_version
-         ) VALUES($1,$2,$3,$4,$5,$6,1)`,
+           account_subject_hash,device_key_fingerprint,creator_id,binding_version
+         ) VALUES($1,$2,$3,$4,$5,$6,$7,1)`,
         [
           hcvId,
           access.session.account_id,
           raw,
           hash(raw),
+          accountSubjectHash,
           binding.certificateFingerprint,
           binding.certificateCreatorId,
         ],
@@ -104,12 +79,13 @@ elif "'CERTIFICATE_BINDING_REJECTED'" not in source:
 
 required = [
     "require('./certificate_account_binding')",
+    'ADD COLUMN IF NOT EXISTS account_subject_hash',
     'ADD COLUMN IF NOT EXISTS device_key_fingerprint',
     'ADD COLUMN IF NOT EXISTS creator_id',
     'ADD COLUMN IF NOT EXISTS binding_version',
     'inspectCertificateAccountBinding({',
     "'CERTIFICATE_BINDING_REJECTED'",
-    'CREATOR_ID_CONCURRENT_BINDING_MISMATCH',
+    'const accountSubjectHash = hash(access.session.account_id);',
     'binding.certificateFingerprint',
     'binding.certificateCreatorId',
     'binding_version',
