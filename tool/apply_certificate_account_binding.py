@@ -60,6 +60,21 @@ new_upload = """    const certificate = verifyCertificateRaw(raw, hcvId);
          WHERE id=$1 AND (creator_id IS NULL OR creator_id='')`,
         [access.session.account_id, binding.certificateCreatorId],
       );
+      const creatorBinding = (
+        await pool.query('SELECT creator_id FROM accounts WHERE id=$1', [access.session.account_id])
+      ).rows[0];
+      if (String(creatorBinding?.creator_id || '').trim() !== binding.certificateCreatorId) {
+        await securityEvent(access.session.account_id, 'CERTIFICATE_BINDING_REJECTED', {
+          hcvId,
+          device: access.session.device_key_fingerprint,
+          reason: 'CREATOR_ID_CONCURRENT_BINDING_MISMATCH',
+        });
+        throw publicError(
+          'CERTIFICATO_NON_VALIDO',
+          400,
+          'Il certificato non corrisponde al dispositivo o all’identità dell’account.',
+        );
+      }
       access.account.creatorId = binding.certificateCreatorId;
       await securityEvent(access.session.account_id, 'CREATOR_ID_BOUND_FROM_CERTIFICATE', {
         creatorId: binding.certificateCreatorId,
@@ -94,6 +109,7 @@ required = [
     'ADD COLUMN IF NOT EXISTS binding_version',
     'inspectCertificateAccountBinding({',
     "'CERTIFICATE_BINDING_REJECTED'",
+    'CREATOR_ID_CONCURRENT_BINDING_MISMATCH',
     'binding.certificateFingerprint',
     'binding.certificateCreatorId',
     'binding_version',
