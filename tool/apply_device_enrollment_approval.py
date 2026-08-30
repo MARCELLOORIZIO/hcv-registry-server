@@ -51,6 +51,7 @@ function deviceEnrollmentCopy(language) {
       intro: 'È stato richiesto l’accesso al tuo account SIGILLUM da un nuovo dispositivo.',
       action: 'CONFERMA NUOVO DISPOSITIVO',
       ignore: 'Se non sei stato tu, non approvare questo dispositivo e cambia la password del tuo account.',
+      expires: 'Il link scade tra 15 minuti.',
       pending: 'Nuovo dispositivo rilevato. Ti abbiamo inviato un’email di conferma. Approva il dispositivo dal link ricevuto, poi premi di nuovo ACCEDI.',
       approvedTitle: 'Dispositivo confermato',
       approvedBody: 'Il dispositivo è stato autorizzato. Torna in SIGILLUM e premi di nuovo ACCEDI.',
@@ -63,6 +64,7 @@ function deviceEnrollmentCopy(language) {
       intro: 'A sign-in to your SIGILLUM account was requested from a new device.',
       action: 'CONFIRM NEW DEVICE',
       ignore: 'If this was not you, do not approve the device and change your account password.',
+      expires: 'The link expires in 15 minutes.',
       pending: 'New device detected. We sent you a confirmation email. Approve the device from the link, then tap SIGN IN again.',
       approvedTitle: 'Device confirmed',
       approvedBody: 'The device has been authorized. Return to SIGILLUM and tap SIGN IN again.',
@@ -75,6 +77,7 @@ function deviceEnrollmentCopy(language) {
       intro: 'Se ha solicitado el acceso a tu cuenta SIGILLUM desde un nuevo dispositivo.',
       action: 'CONFIRMAR NUEVO DISPOSITIVO',
       ignore: 'Si no has sido tú, no apruebes el dispositivo y cambia la contraseña de tu cuenta.',
+      expires: 'El enlace caduca en 15 minutos.',
       pending: 'Se ha detectado un nuevo dispositivo. Te hemos enviado un email de confirmación. Aprueba el dispositivo desde el enlace y después pulsa ACCEDER de nuevo.',
       approvedTitle: 'Dispositivo confirmado',
       approvedBody: 'El dispositivo ha sido autorizado. Vuelve a SIGILLUM y pulsa ACCEDER de nuevo.',
@@ -87,6 +90,7 @@ function deviceEnrollmentCopy(language) {
       intro: 'Запрошен вход в ваш аккаунт SIGILLUM с нового устройства.',
       action: 'ПОДТВЕРДИТЬ НОВОЕ УСТРОЙСТВО',
       ignore: 'Если это были не вы, не подтверждайте устройство и смените пароль аккаунта.',
+      expires: 'Ссылка действует 15 минут.',
       pending: 'Обнаружено новое устройство. Мы отправили письмо для подтверждения. Подтвердите устройство по ссылке, затем снова нажмите ВОЙТИ.',
       approvedTitle: 'Устройство подтверждено',
       approvedBody: 'Устройство авторизовано. Вернитесь в SIGILLUM и снова нажмите ВОЙТИ.',
@@ -121,7 +125,7 @@ async function sendDeviceEnrollmentEmail(account, token, fingerprint, origin) {
     console.log(`[DEV EMAIL] ${account.email_display} device_enrollment: ${approvalUrl}`);
     return copy;
   }
-  const html = `<div style="font-family:Arial,sans-serif;max-width:560px;margin:auto"><h2>SIGILLUM</h2><p>${copy.intro}</p><p><strong>${copy.fingerprint}:</strong> …${fpTail}</p><p style="margin:28px 0"><a href="${approvalUrl}" style="display:inline-block;background:#23c4cc;color:#2b0b67;text-decoration:none;font-weight:800;padding:14px 18px;border-radius:12px">${copy.action}</a></p><p>${copy.ignore}</p><p style="color:#76679a">Il link / link: 15 min</p></div>`;
+  const html = `<div style="font-family:Arial,sans-serif;max-width:560px;margin:auto"><h2>SIGILLUM</h2><p>${copy.intro}</p><p><strong>${copy.fingerprint}:</strong> …${fpTail}</p><p style="margin:28px 0"><a href="${approvalUrl}" style="display:inline-block;background:#23c4cc;color:#2b0b67;text-decoration:none;font-weight:800;padding:14px 18px;border-radius:12px">${copy.action}</a></p><p>${copy.expires}</p><p>${copy.ignore}</p></div>`;
   const response = await fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: { Authorization: `Bearer ${RESEND_API_KEY}`, 'Content-Type': 'application/json' },
@@ -181,9 +185,10 @@ if "url.pathname === '/device/approve'" not in source:
     `, [tokenHash])).rows[0];
     if (!challenge) return sendHtml(res, 400, deviceApprovalPage(fallbackCopy, false));
 
-    await pool.query('BEGIN');
+    const client = await pool.connect();
     try {
-      await pool.query(`
+      await client.query('BEGIN');
+      await client.query(`
         INSERT INTO account_devices(
           account_id,device_key_fingerprint,public_key_json,created_at,last_seen_at,revoked_at
         ) VALUES($1,$2,$3,NOW(),NOW(),NULL)
@@ -193,11 +198,13 @@ if "url.pathname === '/device/approve'" not in source:
           last_seen_at=NOW(),
           revoked_at=NULL
       `, [challenge.account_id, challenge.device_key_fingerprint, challenge.public_key_json]);
-      await pool.query('DELETE FROM device_enrollment_challenges WHERE token_hash=$1', [tokenHash]);
-      await pool.query('COMMIT');
+      await client.query('DELETE FROM device_enrollment_challenges WHERE token_hash=$1', [tokenHash]);
+      await client.query('COMMIT');
     } catch (error) {
-      await pool.query('ROLLBACK');
+      try { await client.query('ROLLBACK'); } catch (_) {}
       throw error;
+    } finally {
+      client.release();
     }
     await securityEvent(challenge.account_id, 'DEVICE_ENROLLMENT_APPROVED', {
       device: challenge.device_key_fingerprint,
@@ -266,6 +273,7 @@ required = [
     'NUOVO_DISPOSITIVO_DA_CONFERMARE',
     "enforceRate(req, 'new-device-enrollment'",
     "device_key_fingerprint=$2 AND revoked_at IS NULL",
+    'const client = await pool.connect();',
     "it: {",
     "en: {",
     "es: {",
