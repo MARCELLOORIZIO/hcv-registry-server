@@ -36,7 +36,10 @@ if 'CREATE TABLE IF NOT EXISTS device_enrollment_challenges' not in source:
     source = source[:init_end] + '\n' + migration + source[init_end:]
 
 # 2) Helpers: 4-language email + approval page. The token is random, stored only
-# as SHA-256 server-side, expires after 15 minutes and is single-use.
+# as SHA-256 server-side, expires after 15 minutes and is single-use. Opening the
+# email link with GET is intentionally non-mutating: actual enrollment requires a
+# second explicit POST from the confirmation page, protecting against email link
+# scanners and security prefetchers.
 helper_anchor = '\nasync function issueSession(accountId, fingerprint) {'
 if 'function deviceEnrollmentCopy(language)' not in source:
     helper_pos = source.find(helper_anchor)
@@ -53,6 +56,8 @@ function deviceEnrollmentCopy(language) {
       ignore: 'Se non sei stato tu, non approvare questo dispositivo e cambia la password del tuo account.',
       expires: 'Il link scade tra 15 minuti.',
       pending: 'Nuovo dispositivo rilevato. Ti abbiamo inviato un’email di conferma. Approva il dispositivo dal link ricevuto, poi premi di nuovo ACCEDI.',
+      confirmTitle: 'Conferma questo dispositivo',
+      confirmBody: 'Conferma solo se sei stato tu a tentare l’accesso a SIGILLUM da questo dispositivo.',
       approvedTitle: 'Dispositivo confermato',
       approvedBody: 'Il dispositivo è stato autorizzato. Torna in SIGILLUM e premi di nuovo ACCEDI.',
       invalidTitle: 'Link non valido o scaduto',
@@ -66,6 +71,8 @@ function deviceEnrollmentCopy(language) {
       ignore: 'If this was not you, do not approve the device and change your account password.',
       expires: 'The link expires in 15 minutes.',
       pending: 'New device detected. We sent you a confirmation email. Approve the device from the link, then tap SIGN IN again.',
+      confirmTitle: 'Confirm this device',
+      confirmBody: 'Confirm only if you attempted to sign in to SIGILLUM from this device.',
       approvedTitle: 'Device confirmed',
       approvedBody: 'The device has been authorized. Return to SIGILLUM and tap SIGN IN again.',
       invalidTitle: 'Invalid or expired link',
@@ -79,6 +86,8 @@ function deviceEnrollmentCopy(language) {
       ignore: 'Si no has sido tú, no apruebes el dispositivo y cambia la contraseña de tu cuenta.',
       expires: 'El enlace caduca en 15 minutos.',
       pending: 'Se ha detectado un nuevo dispositivo. Te hemos enviado un email de confirmación. Aprueba el dispositivo desde el enlace y después pulsa ACCEDER de nuevo.',
+      confirmTitle: 'Confirma este dispositivo',
+      confirmBody: 'Confirma solo si has intentado acceder a SIGILLUM desde este dispositivo.',
       approvedTitle: 'Dispositivo confirmado',
       approvedBody: 'El dispositivo ha sido autorizado. Vuelve a SIGILLUM y pulsa ACCEDER de nuevo.',
       invalidTitle: 'Enlace no válido o caducado',
@@ -92,6 +101,8 @@ function deviceEnrollmentCopy(language) {
       ignore: 'Если это были не вы, не подтверждайте устройство и смените пароль аккаунта.',
       expires: 'Ссылка действует 15 минут.',
       pending: 'Обнаружено новое устройство. Мы отправили письмо для подтверждения. Подтвердите устройство по ссылке, затем снова нажмите ВОЙТИ.',
+      confirmTitle: 'Подтвердите это устройство',
+      confirmBody: 'Подтверждайте только в том случае, если именно вы пытались войти в SIGILLUM с этого устройства.',
       approvedTitle: 'Устройство подтверждено',
       approvedBody: 'Устройство авторизовано. Вернитесь в SIGILLUM и снова нажмите ВОЙТИ.',
       invalidTitle: 'Ссылка недействительна или истекла',
@@ -110,10 +121,19 @@ function deviceApprovalOrigin(req) {
   return 'https://sigillum-registry-production.onrender.com';
 }
 
-function deviceApprovalPage(copy, ok) {
-  const title = ok ? copy.approvedTitle : copy.invalidTitle;
-  const body = ok ? copy.approvedBody : copy.invalidBody;
-  return `<!doctype html><html lang="${copy.lang}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title} - SIGILLUM</title><style>body{margin:0;background:#eefaff;color:#2b0b67;font:16px/1.55 Arial,sans-serif}.wrap{max-width:620px;margin:48px auto;padding:24px}.card{background:white;border:1px solid #ddd5e6;border-radius:24px;padding:30px;box-shadow:0 12px 35px #30107012}h1{margin:0 0 16px;font-size:30px}.ok{color:#17b98a;font-weight:800}.muted{color:#76679a}</style></head><body><main class="wrap"><section class="card"><div class="ok">SIGILLUM</div><h1>${title}</h1><p>${body}</p><p class="muted">SIGILLUM Creator</p></section></main></body></html>`;
+function deviceApprovalPage(copy, mode, token = '', fingerprint = '') {
+  const isConfirm = mode === 'confirm';
+  const isSuccess = mode === 'success';
+  const title = isConfirm ? copy.confirmTitle : (isSuccess ? copy.approvedTitle : copy.invalidTitle);
+  const body = isConfirm ? copy.confirmBody : (isSuccess ? copy.approvedBody : copy.invalidBody);
+  const fpTail = String(fingerprint || '').slice(-12).toUpperCase();
+  const action = isConfirm
+    ? `<form method="post" action="/device/approve?token=${encodeURIComponent(token)}&lang=${copy.lang}"><button type="submit">${copy.action}</button></form>`
+    : '';
+  const fp = isConfirm && fpTail
+    ? `<p class="muted"><strong>${copy.fingerprint}:</strong> …${fpTail}</p>`
+    : '';
+  return `<!doctype html><html lang="${copy.lang}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title} - SIGILLUM</title><style>body{margin:0;background:#eefaff;color:#2b0b67;font:16px/1.55 Arial,sans-serif}.wrap{max-width:620px;margin:48px auto;padding:24px}.card{background:white;border:1px solid #ddd5e6;border-radius:24px;padding:30px;box-shadow:0 12px 35px #30107012}h1{margin:0 0 16px;font-size:30px}.ok{color:#17b98a;font-weight:800}.muted{color:#76679a}button{border:0;border-radius:14px;background:#23c4cc;color:#2b0b67;font-weight:900;font-size:16px;padding:15px 20px;cursor:pointer}</style></head><body><main class="wrap"><section class="card"><div class="ok">SIGILLUM</div><h1>${title}</h1><p>${body}</p>${fp}${action}<p class="muted">SIGILLUM Creator</p></section></main></body></html>`;
 }
 
 async function sendDeviceEnrollmentEmail(account, token, fingerprint, origin) {
@@ -164,30 +184,49 @@ async function requestDeviceEnrollment(req, account, proof) {
 '''
     source = source[:helper_pos] + '\n' + helpers + source[helper_pos:]
 
-# 3) Approval route. Approval itself enrolls the exact key that produced the
-# signed device proof during login; the emailed token cannot authorize another
-# fingerprint/public key.
+# 3) GET only previews the confirmation page. It never writes account_devices or
+# consumes the token, so automatic email security scanners cannot approve a key.
 approval_anchor = "  if (req.method === 'POST' && url.pathname === '/api/auth/login') {"
-if "url.pathname === '/device/approve'" not in source:
+if "req.method === 'GET' && url.pathname === '/device/approve'" not in source:
     pos = source.find(approval_anchor)
     if pos < 0 or source.find(approval_anchor, pos + 1) >= 0:
         raise RuntimeError('login route anchor missing or not unique')
-    approval_route = r'''  if (req.method === 'GET' && url.pathname === '/device/approve') {
+    approval_routes = r'''  if (req.method === 'GET' && url.pathname === '/device/approve') {
     const fallbackCopy = deviceEnrollmentCopy(url.searchParams.get('lang'));
     const token = String(url.searchParams.get('token') || '');
-    if (!token || token.length < 20) return sendHtml(res, 400, deviceApprovalPage(fallbackCopy, false));
+    if (!token || token.length < 20) return sendHtml(res, 400, deviceApprovalPage(fallbackCopy, 'invalid'));
     const tokenHash = hash(token);
     const challenge = (await pool.query(`
-      SELECT c.*, a.email_display, a.preferred_language
+      SELECT c.device_key_fingerprint, a.preferred_language
       FROM device_enrollment_challenges c
       JOIN accounts a ON a.id=c.account_id
       WHERE c.token_hash=$1 AND c.expires_at>NOW()
     `, [tokenHash])).rows[0];
-    if (!challenge) return sendHtml(res, 400, deviceApprovalPage(fallbackCopy, false));
+    if (!challenge) return sendHtml(res, 400, deviceApprovalPage(fallbackCopy, 'invalid'));
+    const copy = deviceEnrollmentCopy(challenge.preferred_language || fallbackCopy.lang);
+    return sendHtml(res, 200, deviceApprovalPage(copy, 'confirm', token, challenge.device_key_fingerprint));
+  }
 
+  if (req.method === 'POST' && url.pathname === '/device/approve') {
+    const fallbackCopy = deviceEnrollmentCopy(url.searchParams.get('lang'));
+    const token = String(url.searchParams.get('token') || '');
+    if (!token || token.length < 20) return sendHtml(res, 400, deviceApprovalPage(fallbackCopy, 'invalid'));
+    const tokenHash = hash(token);
     const client = await pool.connect();
+    let challenge;
     try {
       await client.query('BEGIN');
+      challenge = (await client.query(`
+        SELECT c.*, a.email_display, a.preferred_language
+        FROM device_enrollment_challenges c
+        JOIN accounts a ON a.id=c.account_id
+        WHERE c.token_hash=$1 AND c.expires_at>NOW()
+        FOR UPDATE OF c
+      `, [tokenHash])).rows[0];
+      if (!challenge) {
+        await client.query('ROLLBACK');
+        return sendHtml(res, 400, deviceApprovalPage(fallbackCopy, 'invalid'));
+      }
       await client.query(`
         INSERT INTO account_devices(
           account_id,device_key_fingerprint,public_key_json,created_at,last_seen_at,revoked_at
@@ -210,11 +249,11 @@ if "url.pathname === '/device/approve'" not in source:
       device: challenge.device_key_fingerprint,
     });
     const copy = deviceEnrollmentCopy(challenge.preferred_language || fallbackCopy.lang);
-    return sendHtml(res, 200, deviceApprovalPage(copy, true));
+    return sendHtml(res, 200, deviceApprovalPage(copy, 'success'));
   }
 
 '''
-    source = source[:pos] + approval_route + source[pos:]
+    source = source[:pos] + approval_routes + source[pos:]
 
 # 4) Replace auto-enrollment-on-password-login. Known active devices behave as
 # before. Unknown/revoked keys receive no session until email approval.
@@ -267,13 +306,16 @@ required = [
     'CREATE TABLE IF NOT EXISTS device_enrollment_challenges',
     'ALTER TABLE account_devices ADD COLUMN IF NOT EXISTS revoked_at',
     'function deviceEnrollmentCopy(language)',
-    "url.pathname === '/device/approve'",
+    "req.method === 'GET' && url.pathname === '/device/approve'",
+    "req.method === 'POST' && url.pathname === '/device/approve'",
     'DEVICE_ENROLLMENT_REQUESTED',
     'DEVICE_ENROLLMENT_APPROVED',
     'NUOVO_DISPOSITIVO_DA_CONFERMARE',
     "enforceRate(req, 'new-device-enrollment'",
     "device_key_fingerprint=$2 AND revoked_at IS NULL",
     'const client = await pool.connect();',
+    'FOR UPDATE OF c',
+    'method="post"',
     "it: {",
     "en: {",
     "es: {",
