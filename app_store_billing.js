@@ -13,6 +13,10 @@ const ISSUER_ID = process.env.APPLE_IAP_ISSUER_ID || '';
 const KEY_ID = process.env.APPLE_IAP_KEY_ID || '';
 const ENVIRONMENT_MODE = String(process.env.APPLE_IAP_ENVIRONMENT || 'AUTO').toUpperCase();
 const TEST_MODE = process.env.NODE_ENV === 'test' && process.env.APPLE_BILLING_TEST_MODE === 'true';
+// Apple App Store Server Library VerificationStatus.RETRYABLE_VERIFICATION_FAILURE.
+// Keep this local instead of importing an internal dist path: some library
+// versions do not export VerificationStatus from the public package surface.
+const RETRYABLE_VERIFICATION_FAILURE_STATUS = 2;
 const ALLOWED_PRODUCTS = new Set([
   process.env.APPLE_WEEKLY_PRODUCT_ID || 'com.sigillum.hcv.creator.weekly',
   process.env.APPLE_MONTHLY_PRODUCT_ID || 'com.sigillum.hcv.creator.monthly',
@@ -96,23 +100,48 @@ function environmentCandidates() {
   return [Environment.PRODUCTION, Environment.SANDBOX];
 }
 
+function environmentName(environment) {
+  return environment === Environment.PRODUCTION ? 'Production' : 'Sandbox';
+}
+
 function client(environment) {
   if (!configured()) throw Object.assign(new Error('APPLE_BILLING_NOT_CONFIGURED'), { statusCode: 503 });
   return new AppStoreServerAPIClient(privateKey(), KEY_ID, ISSUER_ID, BUNDLE_ID, environment);
 }
 
-async function verifier(environment) {
+async function verifier(environment, enableOnlineChecks = true) {
   const roots = await loadRoots();
   if (environment === Environment.PRODUCTION && !APPLE_APP_ID) {
     throw Object.assign(new Error('APPLE_APP_ID_REQUIRED'), { statusCode: 503 });
   }
   return new SignedDataVerifier(
     roots,
-    true,
+    enableOnlineChecks,
     environment,
     BUNDLE_ID,
     environment === Environment.PRODUCTION ? APPLE_APP_ID : undefined,
   );
+}
+
+function isRetryableVerificationFailure(error) {
+  return Number(error?.status) === RETRYABLE_VERIFICATION_FAILURE_STATUS;
+}
+
+async function verifyTransactionWithOcspFallback(environment, signedTransactionInfo, onlineVerifier = null) {
+  const online = onlineVerifier || await verifier(environment, true);
+  try {
+    return await online.verifyAndDecodeTransaction(signedTransactionInfo);
+  } catch (error) {
+    if (!isRetryableVerificationFailure(error)) throw error;
+
+    // Status 2 is emitted by Apple's verifier for transient OCSP/network
+    // failures. Fall back only for that status. The second verifier still
+    // validates the Apple certificate chain, JWS signature, bundle identifier
+    // and environment; it merely skips live revocation/OCSP network checks.
+    console.warn('APPLE_OCSP_RETRYABLE_FALLBACK', environmentName(environment));
+    const offline = await verifier(environment, false);
+    return offline.verifyAndDecodeTransaction(signedTransactionInfo);
+  }
 }
 
 function normalizedStatus(status) {
@@ -141,7 +170,7 @@ function normalizeDecoded(decoded, environment, status) {
   const derivedStatus = status || (revoked ? 'revoked' : (expiresMs > Date.now() ? 'active' : 'expired'));
   return {
     provider: 'app_store',
-    environment: environment === Environment.PRODUCTION ? 'Production' : 'Sandbox',
+    environment: environmentName(environment),
     status: derivedStatus,
     productId,
     transactionId: String(decoded.transactionId || ''),
@@ -186,7 +215,7 @@ async function verifyPurchase({ transactionId, receiptData, expectedProductId })
     try {
       const response = await client(environment).getTransactionInfo(tx);
       if (!response.signedTransactionInfo) throw new Error('APPLE_SIGNED_TRANSACTION_MISSING');
-      const decoded = await (await verifier(environment)).verifyAndDecodeTransaction(response.signedTransactionInfo);
+      const decoded = await verifyTransactionWithOcspFallback(environment, response.signedTransactionInfo);
       assertProduct(String(decoded.productId || ''), expectedProductId);
       return normalizeDecoded(decoded, environment);
     } catch (error) {
@@ -204,12 +233,16 @@ async function refreshSubscription(anyTransactionId, expectedProductId = '') {
   for (const environment of environmentCandidates()) {
     try {
       const response = await client(environment).getAllSubscriptionStatuses(String(anyTransactionId));
-      const verify = await verifier(environment);
+      const onlineVerifier = await verifier(environment, true);
       const candidates = [];
       for (const group of response.data || []) {
         for (const item of group.lastTransactions || []) {
           if (!item.signedTransactionInfo) continue;
-          const decoded = await verify.verifyAndDecodeTransaction(item.signedTransactionInfo);
+          const decoded = await verifyTransactionWithOcspFallback(
+            environment,
+            item.signedTransactionInfo,
+            onlineVerifier,
+          );
           const productId = String(decoded.productId || '');
           if (!ALLOWED_PRODUCTS.has(productId)) continue;
           if (expectedProductId && productId !== expectedProductId) continue;
@@ -231,7 +264,9 @@ async function verifyNotification(signedPayload) {
   let lastError;
   for (const environment of environmentCandidates()) {
     try {
-      const verify = await verifier(environment);
+      // Notifications remain strict-online. Apple can retry their delivery, so
+      // an OCSP outage must not weaken notification validation.
+      const verify = await verifier(environment, true);
       const decodedNotification = await verify.verifyAndDecodeNotification(String(signedPayload || ''));
       const signedTransaction = decodedNotification?.data?.signedTransactionInfo;
       if (!signedTransaction) {
