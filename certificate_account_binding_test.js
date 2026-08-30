@@ -70,7 +70,6 @@ function registeredDevice(overrides = {}) {
   assert.equal(result.ok, true);
   assert.equal(result.certificateFingerprint, fingerprint);
   assert.equal(result.certificateCreatorId, 'creator-123');
-  assert.equal(result.needsCreatorIdBind, false);
 }
 
 {
@@ -150,9 +149,8 @@ function registeredDevice(overrides = {}) {
     registeredDevice: registeredDevice(),
     accountCreatorId: '',
   });
-  assert.equal(result.ok, true);
-  assert.equal(result.needsCreatorIdBind, true);
-  assert.equal(result.certificateCreatorId, 'creator-123');
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'ACCOUNT_CREATOR_ID_MISSING');
 }
 
 console.log('Certificate account/device binding tests passed');
