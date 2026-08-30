@@ -8,13 +8,14 @@ function normalizePublicKey(publicKey) {
   return { modulus, exponent };
 }
 
+function sha256(value) {
+  return crypto.createHash('sha256').update(String(value), 'utf8').digest('hex');
+}
+
 function fingerprintPublicKey(publicKey) {
   const normalized = normalizePublicKey(publicKey);
   if (!normalized) return '';
-  return crypto
-    .createHash('sha256')
-    .update(JSON.stringify(normalized), 'utf8')
-    .digest('hex');
+  return sha256(JSON.stringify(normalized));
 }
 
 function normalizeFingerprint(value) {
@@ -76,11 +77,45 @@ function inspectCertificateAccountBinding({
     }
   }
 
+  const certificateCreatorId = String(identity.creatorId || '').trim();
+  const certificateCreatorName = String(identity.creatorName || '').trim();
+  const signedIdentityFingerprint = normalizeFingerprint(
+    identity.identityFingerprint,
+  );
+  if (!certificateCreatorId) {
+    return {
+      ok: false,
+      reason: 'CERTIFICATE_CREATOR_ID_MISSING',
+      certificateFingerprint,
+    };
+  }
+  if (!certificateCreatorName || !signedIdentityFingerprint) {
+    return {
+      ok: false,
+      reason: 'CERTIFICATE_IDENTITY_FINGERPRINT_MISSING',
+      certificateFingerprint,
+      certificateCreatorId,
+    };
+  }
+
+  const expectedIdentityFingerprint = sha256(
+    `${certificateCreatorId}|${certificateCreatorName}|${certificateFingerprint}`,
+  );
+  if (signedIdentityFingerprint !== expectedIdentityFingerprint) {
+    return {
+      ok: false,
+      reason: 'CERTIFICATE_IDENTITY_FINGERPRINT_MISMATCH',
+      certificateFingerprint,
+      certificateCreatorId,
+    };
+  }
+
   if (!registeredDevice || typeof registeredDevice !== 'object') {
     return {
       ok: false,
       reason: 'REGISTERED_DEVICE_MISSING',
       certificateFingerprint,
+      certificateCreatorId,
     };
   }
 
@@ -92,6 +127,7 @@ function inspectCertificateAccountBinding({
       ok: false,
       reason: 'REGISTERED_DEVICE_SESSION_MISMATCH',
       certificateFingerprint,
+      certificateCreatorId,
     };
   }
 
@@ -106,15 +142,7 @@ function inspectCertificateAccountBinding({
       ok: false,
       reason: 'REGISTERED_DEVICE_KEY_MISMATCH',
       certificateFingerprint,
-    };
-  }
-
-  const certificateCreatorId = String(identity.creatorId || '').trim();
-  if (!certificateCreatorId) {
-    return {
-      ok: false,
-      reason: 'CERTIFICATE_CREATOR_ID_MISSING',
-      certificateFingerprint,
+      certificateCreatorId,
     };
   }
 
@@ -132,6 +160,7 @@ function inspectCertificateAccountBinding({
     ok: true,
     certificateFingerprint,
     certificateCreatorId,
+    certificateCreatorName,
     needsCreatorIdBind: !serverCreatorId,
   };
 }
