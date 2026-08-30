@@ -11,6 +11,7 @@ for (const token of [
   'inspectCertificateAccountBinding({',
   "'CERTIFICATE_BINDING_REJECTED'",
   'SELECT device_key_fingerprint,public_key_json FROM account_devices',
+  'CREATOR_ID_CONCURRENT_BINDING_MISMATCH',
   'binding.certificateFingerprint',
   'binding.certificateCreatorId',
   'binding_version',
