@@ -22,6 +22,10 @@ requireToken("enforceRate(req, 'new-device-enrollment', 4, 15 * 60 * 1000)");
 requireToken("SELECT device_key_fingerprint FROM account_devices WHERE account_id=$1 AND device_key_fingerprint=$2 AND revoked_at IS NULL");
 requireToken("UPDATE account_devices SET public_key_json=$3,last_seen_at=NOW() WHERE account_id=$1 AND device_key_fingerprint=$2 AND revoked_at IS NULL");
 requireToken('revoked_at=NULL');
+requireToken('const client = await pool.connect();', 'dedicated approval DB connection');
+requireToken("await client.query('BEGIN');", 'atomic approval begin');
+requireToken("await client.query('COMMIT');", 'atomic approval commit');
+requireToken('client.release();', 'approval connection release');
 
 for (const marker of [
   'Conferma nuovo dispositivo SIGILLUM',
