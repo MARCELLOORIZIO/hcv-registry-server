@@ -20,7 +20,7 @@ requireToken("NOW()+INTERVAL '15 minutes'", '15-minute expiry');
 requireToken("'NUOVO_DISPOSITIVO_DA_CONFERMARE'");
 requireToken("'DEVICE_ENROLLMENT_REQUESTED'");
 requireToken("'DEVICE_ENROLLMENT_APPROVED'");
-requireToken("enforceRate(req, 'new-device-enrollment', 4, 15 * 60 * 1000)");
+requireToken('enforceRate(req, `new-device-enrollment:${account.id}`, 4, 15 * 60 * 1000)', 'account-scoped enrollment rate limit');
 requireToken("SELECT device_key_fingerprint FROM account_devices WHERE account_id=$1 AND device_key_fingerprint=$2 AND revoked_at IS NULL");
 requireToken("UPDATE account_devices SET public_key_json=$3,last_seen_at=NOW() WHERE account_id=$1 AND device_key_fingerprint=$2 AND revoked_at IS NULL");
 requireToken('revoked_at=NULL');
@@ -91,5 +91,9 @@ if (loginBlock.indexOf('issueSession(account.id, proof.fingerprint)') < loginBlo
 // accepted as the registered device for a new certificate.
 requireToken('SELECT device_key_fingerprint,public_key_json FROM account_devices WHERE account_id=$1 AND device_key_fingerprint=$2 AND revoked_at IS NULL');
 requireToken("'CERTIFICATE_BINDING_REJECTED'");
+
+if (source.includes('AND revoked_at IS NULL AND revoked_at IS NULL')) {
+  throw new Error('Device revocation predicate duplicated by lifecycle patches');
+}
 
 console.log('Device enrollment approval runtime contract: OK');
