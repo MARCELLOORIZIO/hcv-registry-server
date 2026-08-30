@@ -1,4 +1,5 @@
 const assert = require('assert');
+const crypto = require('crypto');
 const {
   fingerprintPublicKey,
   inspectCertificateAccountBinding,
@@ -15,14 +16,34 @@ const otherKey = {
 const fingerprint = fingerprintPublicKey(deviceKey);
 const otherFingerprint = fingerprintPublicKey(otherKey);
 
+function identityFingerprint(creatorId, creatorName, keyFingerprint) {
+  return crypto
+    .createHash('sha256')
+    .update(`${creatorId}|${creatorName}|${keyFingerprint}`, 'utf8')
+    .digest('hex');
+}
+
 function certificate(overrides = {}) {
+  const creatorId = overrides.identity?.creatorId || 'creator-123';
+  const creatorName = overrides.identity?.creatorName || 'Verified Creator';
+  const declaredKeyFingerprint =
+    overrides.identity?.devicePublicKeyFingerprint || fingerprint;
+  const baseIdentity = {
+    creatorId,
+    creatorName,
+    devicePublicKeyFingerprint: declaredKeyFingerprint,
+    publicKey: deviceKey,
+    identityFingerprint: identityFingerprint(
+      creatorId,
+      creatorName,
+      declaredKeyFingerprint,
+    ),
+  };
   return {
     publicKey: deviceKey,
     meta: {
       identity: {
-        creatorId: 'creator-123',
-        devicePublicKeyFingerprint: fingerprint,
-        publicKey: deviceKey,
+        ...baseIdentity,
         ...(overrides.identity || {}),
       },
       ...(overrides.meta || {}),
@@ -74,6 +95,19 @@ function registeredDevice(overrides = {}) {
   });
   assert.equal(result.ok, false);
   assert.equal(result.reason, 'CERTIFICATE_IDENTITY_KEY_MISMATCH');
+}
+
+{
+  const cert = certificate();
+  cert.meta.identity.identityFingerprint = '0'.repeat(64);
+  const result = inspectCertificateAccountBinding({
+    certificate: cert,
+    sessionDeviceFingerprint: fingerprint,
+    registeredDevice: registeredDevice(),
+    accountCreatorId: 'creator-123',
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'CERTIFICATE_IDENTITY_FINGERPRINT_MISMATCH');
 }
 
 {
