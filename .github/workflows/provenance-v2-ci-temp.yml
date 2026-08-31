@@ -24,10 +24,7 @@ jobs:
       - name: Install dependencies
         run: npm install --no-audit --no-fund
 
-      - name: Materialize production runtime
-        run: npm run precheck
-
-      - name: Run backend checks
+      - name: Run backend checks with single materialization
         run: npm run check
 
       - name: Prove provenance runtime remains materialized
