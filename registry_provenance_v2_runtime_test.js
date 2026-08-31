@@ -18,6 +18,8 @@ const required = [
   'provenance.attestationSha256',
   'provenanceEnvelopeFromRow(row)',
   "status === 'SIGILLUM_REGISTRY_VERIFIED'",
+  'provenance.identityVerified === true',
+  "if (!account.legalIdentityVerified) throw publicError('IDENTITA_NON_VERIFICATA'",
   'SIGILLUM REGISTRY VERIFIED',
   'HCV INTEGRITY VERIFIED',
 ];
