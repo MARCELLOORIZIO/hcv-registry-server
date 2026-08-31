@@ -31,4 +31,14 @@ jobs:
         run: |
           grep -F "SIGILLUM REGISTRY VERIFIED" production_server.js
           grep -F "provenanceEnvelopeFromRow(row)" production_server.js
-          git diff -- production_server.js
+
+      - name: Inspect creator access contract
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          s = Path('production_server.js').read_text(encoding='utf-8')
+          i = s.find('async function requireCreatorAccess')
+          if i < 0:
+              raise SystemExit('requireCreatorAccess not found')
+          print(s[i:i+2600])
+          PY
