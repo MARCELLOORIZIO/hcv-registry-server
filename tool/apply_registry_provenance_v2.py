@@ -141,11 +141,11 @@ new_verify = """    const row = (await pool.query(`SELECT
     let cert; try { cert = verifyCertificateRaw(row.certificate_raw, hcvId); } catch (_) { return sendHtml(res, 422, legalShell('Certificato non valido', '<p>Il record esiste ma la firma o la catena HCV non risultano valide.</p>')); }
     const type = cert?.content?.type || 'unknown';
     const provenance = provenanceEnvelopeFromRow(row);
-    const registryV2 = provenance.status === 'SIGILLUM_REGISTRY_VERIFIED' && provenance.integrityValid === true;
+    const registryV2 = provenance.status === 'SIGILLUM_REGISTRY_VERIFIED' && provenance.integrityValid === true && provenance.identityVerified === true;
     const title = registryV2 ? 'SIGILLUM REGISTRY VERIFIED' : 'HCV INTEGRITY VERIFIED';
     const registryLine = registryV2
-      ? `<p><strong>Registry:</strong> provenienza v2 verificata</p><p><strong>Identità verificata:</strong> ${provenance.identityVerified ? 'sì' : 'no'}</p><p><strong>Dispositivo:</strong> …${String(provenance.deviceKeyFingerprint || '').slice(-12).toUpperCase()}</p><p><strong>Registrato:</strong> ${provenance.registeredAt}</p>`
-      : '<p><strong>Registry:</strong> record legacy; firma e integrità HCV valide, ma senza attestazione di provenienza v2.</p>';
+      ? `<p><strong>Registry:</strong> provenienza v2 verificata</p><p><strong>Identità verificata:</strong> sì</p><p><strong>Dispositivo:</strong> …${String(provenance.deviceKeyFingerprint || '').slice(-12).toUpperCase()}</p><p><strong>Registrato:</strong> ${provenance.registeredAt}</p>`
+      : '<p><strong>Registry:</strong> integrità HCV disponibile, ma attestazione di provenienza v2 non verificata.</p>';
     return sendHtml(res, 200, legalShell(title, `<div class=\"card\"><h2>Certificato HCV valido</h2><p><strong>HCV-ID:</strong> ${hcvId}</p><p><strong>Tipo:</strong> ${type}</p><p><strong>Firma:</strong> RSA-SHA256-HCV-V2</p>${registryLine}</div>`));
 """
 if old_verify in source:
@@ -162,6 +162,7 @@ required = [
     'provenance.contentSha256',
     'provenance.attestationSha256',
     'provenanceEnvelopeFromRow(row)',
+    'provenance.identityVerified === true',
     'SIGILLUM REGISTRY VERIFIED',
     'HCV INTEGRITY VERIFIED',
 ]
