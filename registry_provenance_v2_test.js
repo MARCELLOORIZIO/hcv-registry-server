@@ -1,6 +1,8 @@
 const assert = require('assert');
 const {
   buildRegistryProvenanceRecord,
+  canonicalProvenancePayload,
+  provenanceDigest,
   provenanceEnvelopeFromRow,
 } = require('./registry_provenance_v2');
 
@@ -63,6 +65,26 @@ const tampered = provenanceEnvelopeFromRow({
 assert.strictEqual(tampered.status, 'REGISTRY_ATTESTATION_INVALID');
 assert.strictEqual(tampered.integrityValid, false);
 
+const unverifiedRecord = canonicalProvenancePayload({
+  hcvId: provenance.hcvId,
+  certificateSha256: provenance.certificateSha256,
+  contentSha256: provenance.contentSha256,
+  accountSubjectHash: provenance.accountSubjectHash,
+  creatorId: provenance.creatorId,
+  deviceKeyFingerprint: provenance.deviceKeyFingerprint,
+  identityVerified: false,
+  registeredAt,
+  bindingVersion: 1,
+});
+const unverifiedEnvelope = provenanceEnvelopeFromRow({
+  ...row,
+  identity_verified: false,
+  registry_attestation_sha256: provenanceDigest(unverifiedRecord),
+});
+assert.strictEqual(unverifiedEnvelope.status, 'REGISTRY_IDENTITY_NOT_VERIFIED');
+assert.strictEqual(unverifiedEnvelope.identityVerified, false);
+assert.strictEqual(unverifiedEnvelope.integrityValid, true);
+
 const legacy = provenanceEnvelopeFromRow({
   hcv_id: 'HCV-0123456789ABCDEF',
   created_at: registeredAt,
@@ -83,6 +105,20 @@ assert.throws(
     registeredAt,
   }),
   /PROVENANCE_CONTENT_SHA256_INVALID/,
+);
+
+assert.throws(
+  () => buildRegistryProvenanceRecord({
+    hcvId: 'HCV-0123456789ABCDEF',
+    certificateRaw: raw,
+    certificate: JSON.parse(raw),
+    accountId: 'acc_test_subject',
+    creatorId: 'creator-test',
+    deviceKeyFingerprint: 'b'.repeat(64),
+    identityVerified: false,
+    registeredAt,
+  }),
+  /PROVENANCE_IDENTITY_NOT_VERIFIED/,
 );
 
 console.log('registry_provenance_v2_test: PASS');
