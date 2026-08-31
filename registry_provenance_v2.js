@@ -82,6 +82,9 @@ function buildRegistryProvenanceRecord({
   if (!record.creatorId || !record.registeredAt || record.bindingVersion < 1) {
     throw new Error('PROVENANCE_BINDING_INVALID');
   }
+  if (record.identityVerified !== true) {
+    throw new Error('PROVENANCE_IDENTITY_NOT_VERIFIED');
+  }
 
   return {
     status: 'SIGILLUM_REGISTRY_VERIFIED',
@@ -126,6 +129,15 @@ function provenanceEnvelopeFromRow(row) {
       hcvId: record.hcvId,
       registeredAt: record.registeredAt,
       integrityValid: false,
+    };
+  }
+
+  if (record.identityVerified !== true) {
+    return {
+      status: 'REGISTRY_IDENTITY_NOT_VERIFIED',
+      ...record,
+      attestationSha256: stored,
+      integrityValid: true,
     };
   }
 
