@@ -1,9 +1,12 @@
-name: Validate Phase D Registry Security
+name: Registry certificate security
 
 on:
   push:
     branches:
-      - phase-d-registry-provenance-20260902
+      - main
+  pull_request:
+    branches:
+      - main
 
 permissions:
   contents: read
