@@ -6,9 +6,10 @@
     "node": "20.x"
   },
   "scripts": {
-    "start": "node server.js",
-    "check": "node --check server.js && node --check auth_api.js && node --check kyc_proxy.js && node --check auth_proxy.js && node --check auth_smoke_test.js",
-    "smoke": "node auth_smoke_test.js"
+    "start": "node --require ./registry_http_guard.js server.js",
+    "check": "node --check server.js && node --check auth_api.js && node --check kyc_proxy.js && node --check auth_proxy.js && node --check auth_smoke_test.js && node --check registry_certificate_security.js && node --check registry_certificate_security_test.js && node --check registry_http_guard.js && node --check registry_http_guard_test.js",
+    "smoke": "node auth_smoke_test.js",
+    "test:registry-security": "node registry_certificate_security_test.js && node registry_http_guard_test.js"
   },
   "dependencies": {
     "better-sqlite3": "^11.9.1"
