@@ -22,14 +22,11 @@ jobs:
       - name: Install dependencies
         run: npm install --no-package-lock --ignore-scripts
 
-      - name: Apply production patch chain
-        run: npm run precheck
+      - name: Run production patch chain and backend checks
+        run: npm run check
 
       - name: Diff syntax guard
         run: git diff --check
-
-      - name: Run backend checks
-        run: npm run check
 
       - name: Explicit BUILD113 public legal gate
         run: node build113_public_legal_copy_test.js
