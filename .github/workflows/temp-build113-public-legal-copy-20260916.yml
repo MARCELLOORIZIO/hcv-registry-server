@@ -1,0 +1,44 @@
+name: TEMP BUILD113 public legal copy validation
+
+on:
+  push:
+    branches:
+      - fix/build113-public-legal-copy-20260916
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout backend candidate
+        uses: actions/checkout@v4
+        with:
+          ref: fix/build113-public-legal-copy-20260916
+          fetch-depth: 0
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Apply production patch chain
+        run: npm run precheck
+
+      - name: Diff syntax guard
+        run: git diff --check
+
+      - name: Run backend checks
+        run: npm run check
+
+      - name: Explicit BUILD113 public legal gate
+        run: node build113_public_legal_copy_test.js
+
+      - name: Verify scope isolation
+        run: |
+          node --check production_server.js
+          node --check legal_documents.js
+          node --check public_verify_copy.js
+          grep -q "2026-09-16" production_server.js
+          grep -q "audio track" legal_documents.js
+          ! grep -q "legalShell('HUMAN VERIFIED'" production_server.js
