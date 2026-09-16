@@ -45,35 +45,25 @@ if "require('./public_verify_copy')" not in server:
         raise RuntimeError('public verify import anchor missing')
     server = server.replace(import_anchor, import_line, 1)
 
-# Replace the old Italian-only public verification page. The page deliberately
-# states its scope: server-side certificate authenticity is not the same thing
-# as verifying an arbitrary external media file against signed hashes/fingerprints.
-pattern = re.compile(
-    r"  const verifyMatch = url\.pathname\.match\(\^\\/verify.*?\n  \}\n\n  return sendJson\(res, 404, \{ ok: false, error: 'ENDPOINT_NOT_FOUND' \}\);",
-    re.S,
-)
-match = pattern.search(server)
-if not match:
-    # Stable source uses the literal RegExp form below; match it less broadly but
-    # keep the final 404 as a hard boundary.
-    start = server.find("  const verifyMatch = url.pathname.match(/^\\/verify\\/(HCV-[A-Fa-f0-9]{16})$/);")
-    end_marker = "\n\n  return sendJson(res, 404, { ok: false, error: 'ENDPOINT_NOT_FOUND' });"
-    end = server.find(end_marker, start)
-    if start < 0 or end < 0:
-        raise RuntimeError('public verify route boundary missing')
-    route_end = end
-else:
-    start = match.start()
-    route_end = server.find("\n\n  return sendJson(res, 404, { ok: false, error: 'ENDPOINT_NOT_FOUND' });", start)
-    if route_end < 0:
-        raise RuntimeError('public verify final boundary missing')
+# Replace the public verification page created by the provenance-v2 patch. The
+# route keeps the provenance distinction and localizes it in IT/EN/ES/RU.
+start = server.find("  const verifyMatch = url.pathname.match(/^\\/verify\\/(HCV-[A-Fa-f0-9]{16})$/);")
+end_marker = "\n\n  return sendJson(res, 404, { ok: false, error: 'ENDPOINT_NOT_FOUND' });"
+end = server.find(end_marker, start)
+if start < 0 or end < 0:
+    raise RuntimeError('public verify route boundary missing')
 
 new_route = r'''  const verifyMatch = url.pathname.match(/^\/verify\/(HCV-[A-Fa-f0-9]{16})$/);
   if (req.method === 'GET' && verifyMatch) {
     const hcvId = safeHcvId(verifyMatch[1]);
     const lang = normalizePublicVerifyLanguage(url.searchParams.get('lang'));
     const copy = publicVerifyCopy(lang);
-    const row = (await pool.query('SELECT created_at,certificate_raw FROM certificates WHERE hcv_id=$1', [hcvId])).rows[0];
+    const row = (await pool.query(`SELECT
+      hcv_id,created_at,certificate_raw,certificate_sha256,
+      account_subject_hash,device_key_fingerprint,creator_id,binding_version,
+      content_sha256,identity_verified,registry_attested_at,provenance_version,
+      registry_attestation_sha256
+      FROM certificates WHERE hcv_id=$1`, [hcvId])).rows[0];
     if (!row) {
       return sendHtml(
         res,
@@ -96,22 +86,45 @@ new_route = r'''  const verifyMatch = url.pathname.match(/^\/verify\/(HCV-[A-Fa-
       .replaceAll('<', '&lt;')
       .replaceAll('>', '&gt;')
       .replaceAll('"', '&quot;');
+    const provenance = provenanceEnvelopeFromRow(row);
+    const registryV2 = provenance.status === 'SIGILLUM_REGISTRY_VERIFIED'
+      && provenance.integrityValid === true
+      && provenance.identityVerified === true;
+    const pageTitle = registryV2
+      ? copy.registryVerifiedTitle
+      : copy.integrityVerifiedTitle;
+    const provenanceBody = registryV2
+      ? copy.registryV2Body
+      : copy.integrityOnlyBody;
+    const registryValue = registryV2
+      ? copy.registryV2Value
+      : copy.registryIntegrityValue;
+    const registryDetails = registryV2
+      ? `<p><strong>${copy.identityVerified}:</strong> ${copy.yes}</p>`
+        + `<p><strong>${copy.device}:</strong> …${String(provenance.deviceKeyFingerprint || '').slice(-12).toUpperCase()}</p>`
+        + `<p><strong>${copy.registeredAt}:</strong> ${provenance.registeredAt || '-'}</p>`
+      : '';
     const body = `<div class="card"><h2>${copy.validHeading}</h2>`
       + `<p><strong>${copy.id}:</strong> ${hcvId}</p>`
       + `<p><strong>${copy.type}:</strong> ${type}</p>`
       + `<p><strong>${copy.signature}:</strong> RSA-SHA256-HCV-V2</p>`
-      + `<p>${copy.verifiedBody}</p></div>`
+      + `<p><strong>${copy.registryLabel}:</strong> ${registryValue}</p>`
+      + registryDetails
+      + `<p>${provenanceBody}</p></div>`
       + `<div class="card"><h2>${copy.scopeHeading}</h2><p>${copy.scopeBody}</p></div>`;
-    return sendHtml(res, 200, legalShell(copy.verifiedTitle, body, lang, url.pathname));
+    return sendHtml(res, 200, legalShell(pageTitle, body, lang, url.pathname));
   }'''
-server = server[:start] + new_route + server[route_end:]
+server = server[:start] + new_route + server[end:]
 
-# Guard the intended scope and ensure old overclaim is gone from the public route.
+# Guard intended scope and ensure old overclaim is gone from the public route.
 for token in [
     "require('./public_verify_copy')",
     "normalizePublicVerifyLanguage(url.searchParams.get('lang'))",
+    "provenanceEnvelopeFromRow(row)",
+    "copy.registryVerifiedTitle",
+    "copy.integrityVerifiedTitle",
     "copy.scopeBody",
-    "legalShell(copy.verifiedTitle, body, lang, url.pathname)",
+    "legalShell(pageTitle, body, lang, url.pathname)",
     "process.env.TERMS_VERSION || '2026-09-16'",
     "process.env.PRIVACY_VERSION || '2026-09-16'",
 ]:
