@@ -2,6 +2,7 @@ const assert = require('assert');
 const fs = require('fs');
 
 const source = fs.readFileSync('production_server.js', 'utf8');
+const publicCopy = fs.readFileSync('public_verify_copy.js', 'utf8');
 
 const required = [
   "require('./registry_provenance_v2')",
@@ -20,13 +21,17 @@ const required = [
   "status === 'SIGILLUM_REGISTRY_VERIFIED'",
   'provenance.identityVerified === true',
   "if (!account.legalIdentityVerified) throw publicError('IDENTITA_NON_VERIFICATA'",
-  'SIGILLUM REGISTRY VERIFIED',
-  'HCV INTEGRITY VERIFIED',
+  'copy.registryVerifiedTitle',
+  'copy.integrityVerifiedTitle',
 ];
 
 for (const token of required) {
   assert.ok(source.includes(token), `missing production provenance token: ${token}`);
 }
+
+assert.ok(publicCopy.includes('SIGILLUM Registry provenance verified'));
+assert.ok(publicCopy.includes('HCV certificate integrity verified'));
+assert.ok(!source.includes("legalShell('HUMAN VERIFIED'"));
 
 const uploadRoute = source.indexOf("url.pathname === '/api/certificate'");
 const provenanceBuild = source.indexOf('buildRegistryProvenanceRecord({');
