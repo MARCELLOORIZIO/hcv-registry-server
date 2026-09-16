@@ -30,13 +30,20 @@ for (const lang of SUPPORTED_LANGUAGES) {
   const privacyHtml = legalPage('/privacy', lang, versions);
   assert.ok(termsHtml.includes(`<html lang="${lang}">`));
   assert.ok(privacyHtml.includes(`<html lang="${lang}">`));
-  assert.ok(!publicVerifyCopy(lang).verifiedTitle.includes('HUMAN VERIFIED'));
-  assert.ok(publicVerifyCopy(lang).scopeBody.length > 80);
+  const copy = publicVerifyCopy(lang);
+  assert.ok(!copy.registryVerifiedTitle.includes('HUMAN VERIFIED'));
+  assert.ok(!copy.integrityVerifiedTitle.includes('HUMAN VERIFIED'));
+  assert.ok(copy.registryV2Body.length > 50);
+  assert.ok(copy.integrityOnlyBody.length > 50);
+  assert.ok(copy.scopeBody.length > 80);
 }
 
 const server = fs.readFileSync('production_server.js', 'utf8');
 assert.ok(server.includes("normalizePublicVerifyLanguage(url.searchParams.get('lang'))"));
-assert.ok(server.includes("legalShell(copy.verifiedTitle, body, lang, url.pathname)"));
+assert.ok(server.includes('const provenance = provenanceEnvelopeFromRow(row);'));
+assert.ok(server.includes('copy.registryVerifiedTitle'));
+assert.ok(server.includes('copy.integrityVerifiedTitle'));
+assert.ok(server.includes('legalShell(pageTitle, body, lang, url.pathname)'));
 assert.ok(!server.includes("legalShell('HUMAN VERIFIED'"));
 assert.ok(server.includes("process.env.TERMS_VERSION || '2026-09-16'"));
 assert.ok(server.includes("process.env.PRIVACY_VERSION || '2026-09-16'"));
