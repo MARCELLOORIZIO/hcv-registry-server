@@ -15,14 +15,18 @@ assert.strictEqual(normalizePublicVerifyLanguage('fr-FR'), 'en');
 for (const lang of SUPPORTED_LANGUAGES) {
   const copy = publicVerifyCopy(lang);
   for (const key of [
-    'verifiedTitle', 'validHeading', 'notFoundTitle', 'notFoundBody',
+    'registryVerifiedTitle', 'integrityVerifiedTitle', 'validHeading',
+    'registryV2Body', 'integrityOnlyBody', 'registryLabel',
+    'registryV2Value', 'registryIntegrityValue', 'identityVerified',
+    'device', 'registeredAt', 'yes', 'notFoundTitle', 'notFoundBody',
     'invalidTitle', 'invalidBody', 'id', 'type', 'signature',
-    'verifiedBody', 'scopeHeading', 'scopeBody',
+    'scopeHeading', 'scopeBody',
   ]) {
-    assert.ok(copy[key] && copy[key].length > 2, `${lang}:${key}`);
+    assert.ok(copy[key] && copy[key].length > 1, `${lang}:${key}`);
   }
-  assert.ok(!copy.verifiedTitle.includes('HUMAN VERIFIED'));
-  assert.ok(copy.scopeBody.toLowerCase().includes(lang === 'ru' ? 'файл' : lang === 'es' ? 'archivo' : lang === 'it' ? 'file' : 'file'));
+  assert.ok(!copy.registryVerifiedTitle.includes('HUMAN VERIFIED'));
+  assert.ok(!copy.integrityVerifiedTitle.includes('HUMAN VERIFIED'));
+  assert.ok(copy.scopeBody.toLowerCase().includes(lang === 'ru' ? 'файл' : lang === 'es' ? 'archivo' : 'file'));
 }
 
 console.log('Public certificate verification copy: PASS');
