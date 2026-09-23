@@ -636,7 +636,7 @@ const server = http.createServer(async (req, res) => {
           width: 72px;
           height: 72px;
           border-radius: 50%;
-          background: #36b24a;
+          background: #6d7178;
           color: white;
           font-size: 42px;
           line-height: 72px;
@@ -644,7 +644,7 @@ const server = http.createServer(async (req, res) => {
         }
         h1 {
           margin: 0;
-          color: #209b38;
+          color: #4d5560;
           font-size: 32px;
         }
         .sub {
@@ -684,9 +684,9 @@ const server = http.createServer(async (req, res) => {
     <body>
       <main class="wrap">
         <section class="card">
-          <div class="badge">OK</div>
-          <h1>HUMAN VERIFIED</h1>
-          <div class="sub">This media has an HCV registry certificate.</div>
+          <div class="badge">RECORD</div>
+          <h1>REGISTRY RECORD FOUND</h1>
+          <div class="sub">An HCV-ID is registered. This page does not accept or compare the media file, and does not verify that a separate photo or video is original or unedited.</div>
 
           <div class="grid">
             <div class="row">
@@ -721,7 +721,7 @@ const server = http.createServer(async (req, res) => {
           </div>
 
           <div class="footer">
-            SIGILLUM verifies provenance and integrity. Powered by HCV Protocol.
+            A certificate lookup alone is not a verification of the viewed file, its SHA-256, integrity, derivative status or depicted scene. To verify the original, check the actual file against the signed certificate.
           </div>
         </section>
       </main>
