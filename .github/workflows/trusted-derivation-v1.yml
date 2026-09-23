@@ -19,8 +19,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - name: FFmpeg installed
-        run: ffmpeg -version
+      - name: Install FFmpeg for real rendition and UFO regression
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg
+          ffmpeg -version
       - name: Install dependencies
         run: npm install --no-audit --no-fund
       - name: Syntax and all Registry security tests, including UFO edit
