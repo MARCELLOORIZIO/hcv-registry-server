@@ -136,6 +136,13 @@ function createTrustedVideoRendition({
   ).toString('base64');
   const manifest = { ...statement, signature };
   fs.writeFileSync(outputPath + '.hcvderivation.json', JSON.stringify(manifest, null, 2));
+  const publicKeyPem = crypto.createPublicKey(privateKey).export({
+    format: 'pem', type: 'spki',
+  });
+  persistTrustedDerivative({
+    db, manifest, outputBytes: output,
+    trustedKeys: { [keyId]: publicKeyPem },
+  });
   return manifest;
 }
 
@@ -187,7 +194,103 @@ function verifyTrustedDerivative({
   } catch (_) { return false; }
 }
 
+// Registry storage is append-only. Only the private trusted worker that
+// generated and hashed the real output can call this path; there is no public
+// POST for clients to assert they performed a non-editorial transcode.
+function persistTrustedDerivative({ db, manifest, outputBytes, trustedKeys }) {
+  const original = registryOriginal(db, manifest.hcvId);
+  if (!verifyTrustedDerivative({
+    manifest, outputBytes, certificateRaw: original.certificateRaw, trustedKeys,
+  })) fail('DERIVATION_ATTESTATION_INVALID');
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS trusted_derivations (
+      output_sha256 TEXT PRIMARY KEY,
+      hcv_id TEXT NOT NULL,
+      manifest_raw TEXT NOT NULL,
+      registered_at TEXT NOT NULL
+    )
+  `);
+  const raw = JSON.stringify(manifest);
+  const existing = db.prepare(
+    'SELECT hcv_id, manifest_raw FROM trusted_derivations WHERE output_sha256 = ?'
+  ).get(manifest.output.sha256);
+  if (existing) {
+    if (existing.hcv_id !== manifest.hcvId || existing.manifest_raw !== raw) {
+      fail('DERIVATION_IMMUTABLE_RECORD_CONFLICT');
+    }
+    return;
+  }
+  db.prepare(
+    'INSERT INTO trusted_derivations (output_sha256,hcv_id,manifest_raw,registered_at) VALUES (?,?,?,?)'
+  ).run(manifest.output.sha256, manifest.hcvId, raw, new Date().toISOString());
+}
+
+// Retrieval checks the current parent Registry status. A GET never vouches
+// for an external file: the app must verify actual selected bytes separately.
+function registryDerivativeRecord({ db, hcvId, outputSha256, trustedKeys }) {
+  if (!HCV_ID.test(hcvId) || !HASH.test(outputSha256)) return null;
+  const original = registryOriginal(db, hcvId);
+  let row;
+  try {
+    row = db.prepare(
+      'SELECT manifest_raw FROM trusted_derivations WHERE hcv_id = ? AND output_sha256 = ?'
+    ).get(hcvId, outputSha256);
+  } catch (_) { return null; }
+  if (!row) return null;
+  let manifest;
+  try { manifest = JSON.parse(row.manifest_raw); }
+  catch (_) { return null; }
+  if (!verifyManifestAttestation({
+    manifest, certificateRaw: original.certificateRaw, trustedKeys,
+  })) return null;
+  if (manifest.output.sha256 !== outputSha256) return null;
+  return { manifest, certificateRaw: original.certificateRaw };
+}
+
+function verifyManifestAttestation({ manifest, certificateRaw, trustedKeys }) {
+  try {
+    if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest) ||
+        !trustedKeys || manifest.schema !== SCHEMA ||
+        !HCV_ID.test(manifest.hcvId)) return false;
+    const { signature, ...statement } = manifest;
+    if (Object.keys(statement).length !== 8 ||
+        typeof signature !== 'string' || !signature) return false;
+    const verified = verifyCertificateRaw(certificateRaw, manifest.hcvId);
+    if (verified.certificate.content.type !== 'video' ||
+        statement.parent?.kind !== 'original' ||
+        statement.parent?.sha256 !== verified.contentSha256 ||
+        statement.parent?.signedCertificateDigest !== sha256Text(certificateRaw) ||
+        statement.output?.mediaType !== 'video' ||
+        !Number.isSafeInteger(statement.output?.byteLength) ||
+        statement.output.byteLength <= 0 ||
+        !HASH.test(statement.output?.sha256) ||
+        statement.output.sha256 === verified.contentSha256 ||
+        statement.transform?.operation !== OPERATION ||
+        statement.transform?.editorialImpact !== 'non_editorial' ||
+        statement.transform?.policyVersion !== 'SIGILLUM_NON_EDITORIAL_V1' ||
+        statement.issuer?.signatureAlgorithm !== SIGNATURE_ALGORITHM ||
+        typeof statement.issuer.keyId !== 'string' ||
+        !/^[A-Za-z0-9._-]{3,80}$/.test(statement.issuer.keyId) ||
+        typeof statement.nonce !== 'string' ||
+        !/^[0-9a-f-]{36}$/i.test(statement.nonce) ||
+        !Number.isFinite(Date.parse(statement.createdAt))) return false;
+    const pem = Object.prototype.hasOwnProperty.call(
+      trustedKeys, statement.issuer.keyId
+    ) ? trustedKeys[statement.issuer.keyId] : null;
+    if (!pem) return false;
+    const key = crypto.createPublicKey(pem);
+    if (key.asymmetricKeyType !== 'rsa' ||
+        key.asymmetricKeyDetails?.modulusLength < 2048) return false;
+    return crypto.verify(
+      'RSA-SHA256',
+      Buffer.from(JSON.stringify(statement), 'utf8'),
+      key, Buffer.from(signature, 'base64')
+    );
+  } catch (_) { return false; }
+}
+
 module.exports = {
   SCHEMA, OPERATION, registryOriginal, createTrustedVideoRendition,
-  verifyTrustedDerivative,
+  verifyTrustedDerivative, verifyManifestAttestation,
+  persistTrustedDerivative, registryDerivativeRecord,
 };
