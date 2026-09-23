@@ -1,0 +1,33 @@
+name: Signed derivative integrity V1
+
+on:
+  push:
+    branches: [feature/trusted-original-derivation-v1-20260923]
+  pull_request:
+    branches: [fix/public-verify-legacy-no-unverified-media-badge-20260923]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  trusted-derivative:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install FFmpeg for real rendition and UFO regression
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg
+          ffmpeg -version
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+      - name: Syntax and all Registry security tests, including UFO edit
+        run: |
+          npm run check
+          npm run test:registry-security
+          npm run smoke
