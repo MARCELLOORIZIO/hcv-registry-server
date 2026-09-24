@@ -1,0 +1,86 @@
+name: Deploy Verified Originals to Render production
+
+on:
+  push:
+    branches:
+      - release/reconciled-prelaunch-backend-clean-20260824
+    paths:
+      - '.github/workflows/deploy-verified-originals-render.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      HOOK_A: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+      HOOK_B: ${{ secrets.RENDER_PRODUCTION_DEPLOY_HOOK_URL }}
+      HOOK_C: ${{ secrets.RENDER_DEPLOY_HOOK_PRODUCTION }}
+      RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+      RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
+    steps:
+      - name: Trigger Render production deploy
+        shell: bash
+        run: |
+          set -euo pipefail
+          hook=""
+          for candidate in "$HOOK_A" "$HOOK_B" "$HOOK_C"; do
+            if [[ -n "$candidate" ]]; then
+              hook="$candidate"
+              break
+            fi
+          done
+
+          if [[ -n "$hook" ]]; then
+            curl --fail-with-body --silent --show-error --max-time 30 -X POST "$hook" > render-deploy-trigger.json
+            echo "RENDER_DEPLOY_TRIGGER=HOOK"
+            exit 0
+          fi
+
+          if [[ -n "$RENDER_API_KEY" && -n "$RENDER_SERVICE_ID" ]]; then
+            curl --fail-with-body --silent --show-error --max-time 30               -X POST "https://api.render.com/v1/services/$RENDER_SERVICE_ID/deploys"               -H "Authorization: Bearer $RENDER_API_KEY"               -H "Content-Type: application/json"               -d '{"clearCache":"do_not_clear"}'               > render-deploy-trigger.json
+            echo "RENDER_DEPLOY_TRIGGER=API"
+            exit 0
+          fi
+
+          echo "RENDER_DEPLOY_CREDENTIALS_MISSING"
+          exit 2
+
+      - name: Wait for production endpoint
+        if: success()
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE='https://sigillum-registry-production.onrender.com'
+          for i in $(seq 1 48); do
+            HEALTH="$(curl -fsS --max-time 20 "$BASE/health" || true)"
+            STATUS="$(curl -sS --max-time 20 -o availability.json -w '%{http_code}'               "$BASE/api/verified-originals/HCV-0000000000000000" || true)"
+            echo "probe=$i status=$STATUS"
+            echo "$HEALTH" > health.json
+            if [[ "$STATUS" == "200" ]]               && grep -q '"availability":"REFERENCE_NOT_AVAILABLE"' availability.json               && grep -q '"verifiedOriginals":true' health.json; then
+              if grep -q 'publicUrl' availability.json || grep -q 'platformPostId' availability.json; then
+                echo 'FREE_LOCATOR_LEAK=FAIL'
+                exit 1
+              fi
+              echo 'RENDER_VERIFIED_ORIGINALS_DEPLOY=PASS'
+              exit 0
+            fi
+            sleep 10
+          done
+          echo 'RENDER_VERIFIED_ORIGINALS_DEPLOY=TIMEOUT'
+          exit 1
+
+      - name: Upload deploy evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verified-originals-render-deploy-evidence
+          path: |
+            render-deploy-trigger.json
+            health.json
+            availability.json
+          if-no-files-found: ignore
+          retention-days: 7
