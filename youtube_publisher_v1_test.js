@@ -106,6 +106,10 @@ function mockYouTube({videoId, privacyStatus = 'public',
         }],
       });
     }
+    if (String(url).includes('/youtube/v3/videos?id=') &&
+        options.method === 'DELETE') {
+      return response(204, {});
+    }
     throw new Error('unexpected fetch: ' + url);
   };
   return {fetchImpl, calls};
@@ -119,6 +123,10 @@ async function run() {
   }));
   assert.equal(authUrl.hostname, 'accounts.google.com');
   assert.equal(authUrl.searchParams.get('access_type'), 'offline');
+  assert.equal(
+    authUrl.searchParams.get('scope'),
+    'https://www.googleapis.com/auth/youtube.force-ssl',
+  );
   assert.equal(authUrl.searchParams.get('state'), '0123456789abcdef0123456789abcdef');
   assert.equal(authUrl.searchParams.has('client_secret'), false);
 
@@ -160,6 +168,7 @@ async function run() {
   });
   assert.equal(privateResult.publicationReady, false);
   assert.equal(privateResult.reason, 'YOUTUBE_REFERENCE_NOT_PUBLIC');
+  assert.equal(privateResult.cleanupSucceeded, true);
   const privateReceipt = db.prepare(`
     SELECT * FROM verified_originals_platform_receipts
     WHERE platform='youtube' AND platform_post_id=?
