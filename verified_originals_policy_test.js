@@ -6,7 +6,7 @@ const {checkPublication, eligibleCertificate, publicReference} = require('./veri
 const id = 'HCV-0123456789ABCDEF';
 const hash = 'a'.repeat(64);
 const rendition = 'b'.repeat(64);
-const certificate = {certificate_raw:JSON.stringify({content:{hash}})};
+const certificate = {certificate_raw:JSON.stringify({content:{hash},meta:{identity:{creatorId:'creator-01'}}})};
 const provenance = {provenance_raw:JSON.stringify({
   type:'SIGILLUM_REGISTRY_PROVENANCE',version:2,
   status:'SIGILLUM_REGISTRY_VERIFIED',integrityValid:true
@@ -40,6 +40,8 @@ test('no publication without separate affirmative consent and rights', () => {
   assert.equal(checkPublication({...publication,consent:{...consent,publishReference:false}},
     certificate,provenance,null),'CONSENT_NOT_BOUND');
   assert.equal(checkPublication({...publication,consent:{...consent,hcvId:'HCV-FFFFFFFFFFFFFFFF'}},
+    certificate,provenance,null),'CONSENT_NOT_BOUND');
+  assert.equal(checkPublication({...publication,consent:{...consent,creatorSubject:'creator-02'}},
     certificate,provenance,null),'CONSENT_NOT_BOUND');
   assert.equal(checkPublication({...publication,consent:{...consent,monetize:null}},
     certificate,provenance,null),'MONETIZATION_CONSENT_MISSING');
