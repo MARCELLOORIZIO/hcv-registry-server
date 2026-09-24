@@ -24,7 +24,7 @@ const session={accountId:'account-01',creatorId:'creator-01',
 const consent={record_id:'consent-01',hcv_id:id,state:'ACTIVE'};
 const receipt={receipt_id:'receipt-01',hcv_id:id,platform:'youtube',
   platform_post_id:'AbCdEfGhI_1',uploaded_sha256:reference,
-  processing_status:'succeeded',visibility:'public'};
+  processing_status:'succeeded',visibility:'unlisted'};
 const pub={
   publication_id:'11111111-1111-4111-8111-111111111111',hcv_id:id,
   platform:'youtube',platform_post_id:'AbCdEfGhI_1',
