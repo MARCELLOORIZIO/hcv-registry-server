@@ -263,6 +263,7 @@ async function run() {
   const entitlementServer = http.createServer((req, res) => {
     const authorization = String(req.headers.authorization || '');
     res.setHeader('content-type', 'application/json');
+    res.setHeader('connection', 'close');
     if (authorization === 'Bearer ' + OWNER_TOKEN) {
       res.writeHead(200);
       res.end(JSON.stringify({
@@ -541,6 +542,7 @@ async function run() {
     );
   } finally {
     await new Promise(resolve => server.close(resolve));
+    entitlementServer.closeAllConnections?.();
     await new Promise(resolve => entitlementServer.close(resolve));
     fs.rmSync(tmp, {recursive: true, force: true});
   }
