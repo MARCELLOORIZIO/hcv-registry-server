@@ -259,6 +259,38 @@ async function call(base, method, pathname, {token, body} = {}) {
 
 async function run() {
   seed();
+
+  const entitlementServer = http.createServer((req, res) => {
+    const authorization = String(req.headers.authorization || '');
+    res.setHeader('content-type', 'application/json');
+    if (authorization === 'Bearer ' + OWNER_TOKEN) {
+      res.writeHead(200);
+      res.end(JSON.stringify({
+        status: 'active',
+        productId: 'com.sigillum.hcv.creator.monthly',
+        expiresAt: '2026-10-24T00:00:00Z',
+      }));
+      return;
+    }
+    if (authorization === 'Bearer ' + OTHER_TOKEN) {
+      res.writeHead(200);
+      res.end(JSON.stringify({status:'inactive'}));
+      return;
+    }
+    res.writeHead(401);
+    res.end(JSON.stringify({error:'AUTH_REQUIRED'}));
+  });
+  await new Promise(resolve =>
+    entitlementServer.listen(0, '127.0.0.1', resolve),
+  );
+  const entitlementAddress = entitlementServer.address();
+  process.env.SIGILLUM_ENTITLEMENT_STATUS_URL =
+    'http://127.0.0.1:' + entitlementAddress.port + '/api/billing/status';
+  process.env.SIGILLUM_VIEW_PRODUCT_IDS =
+    'com.sigillum.hcv.creator.weekly,' +
+    'com.sigillum.hcv.creator.monthly,' +
+    'com.sigillum.hcv.creator.annual';
+
   require('./verified_originals_v2_guard');
   const { recordVerifiedPlatformReceipt } =
     require('./verified_originals_platform_receipts');
@@ -418,7 +450,7 @@ async function run() {
       uploadedSha256: REFERENCE,
       uploadSessionHash: 'e'.repeat(64),
       processingStatus: 'succeeded',
-      visibility: 'public',
+      visibility: 'unlisted',
       publisherSubjectHash: 'f'.repeat(64),
       metadata: {uploadProtocol: 'resumable'},
     });
@@ -452,6 +484,40 @@ async function run() {
     assert.equal(active.status, 200);
     assert.equal(active.json.availability, 'REFERENCE_AVAILABLE');
     assert.equal(active.json.socialFileVerdict, 'NOT_VERIFIED');
+    assert.equal(active.json.viewAccess, 'SUBSCRIPTION_REQUIRED');
+    assert.equal(active.json.publicUrl, undefined);
+    assert.equal(active.json.platformPostId, undefined);
+
+    const history = await call(
+      base, 'GET', '/api/verified-originals/' + HCV_ID + '/publications',
+    );
+    assert.equal(history.status, 200);
+    assert.equal(history.json.publications.length, 1);
+    assert.equal(history.json.publications[0].platformPostId, undefined);
+    assert.equal(history.json.publications[0].publicUrl, undefined);
+
+    const anonymousView = await call(
+      base, 'GET', '/api/verified-originals/' + HCV_ID + '/view',
+    );
+    assert.equal(anonymousView.status, 401);
+
+    const freeView = await call(
+      base, 'GET', '/api/verified-originals/' + HCV_ID + '/view',
+      {token: OTHER_TOKEN},
+    );
+    assert.equal(freeView.status, 402);
+    assert.equal(freeView.json.error, 'SUBSCRIPTION_REQUIRED');
+
+    const paidView = await call(
+      base, 'GET', '/api/verified-originals/' + HCV_ID + '/view',
+      {token: OWNER_TOKEN},
+    );
+    assert.equal(paidView.status, 200);
+    assert.equal(paidView.json.access, 'ENTITLED');
+    assert.equal(
+      paidView.json.publicUrl,
+      'https://www.youtube.com/watch?v=AbCdEfGhI_1',
+    );
 
     const withdrawn = await call(
       base, 'POST', '/api/verified-originals/consents/' + HCV_ID + '/withdraw',
@@ -471,10 +537,11 @@ async function run() {
     assert.equal(fallback.text, 'fallback');
 
     console.log(
-      'verified_originals_v2_integration_test: PASS — ownership, consent, trusted derivation, upload receipt, canonical URL, withdrawal',
+      'verified_originals_v2_integration_test: PASS — ownership, consent, unlisted receipt, free lookup, paid view, canonical URL, withdrawal',
     );
   } finally {
     await new Promise(resolve => server.close(resolve));
+    await new Promise(resolve => entitlementServer.close(resolve));
     fs.rmSync(tmp, {recursive: true, force: true});
   }
 }
