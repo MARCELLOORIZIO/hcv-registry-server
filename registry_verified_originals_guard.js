@@ -164,6 +164,32 @@ async function handle(req, res) {
     res.end(referencePage(page[1], data));
     return true;
   }
+  const creatorConsentStatus =
+    /^\/api\/verified-originals\/consents\/(HCV-[A-F0-9]{16})$/.exec(url.pathname);
+  if (req.method === 'GET' && creatorConsentStatus) {
+    const session = authenticateRegistrySession(db, req.headers.authorization, new Date());
+    const id = creatorConsentStatus[1];
+    let p = null;
+    try { p = JSON.parse(provenance.get(id)?.provenance_raw || 'null'); }
+    catch (_) {}
+    const accountHash = crypto.createHash('sha256')
+      .update(String(session.accountId)).digest('hex');
+    if (!p || p.accountSubjectHash !== accountHash ||
+        p.creatorId !== session.creatorId) {
+      send(res,403,{error:'CREATOR_OWNERSHIP_NOT_VERIFIED'});return true;
+    }
+    const consent = latestConsent.get(id);
+    if (!consent || consent.account_subject_hash !== accountHash) {
+      send(res,200,{hcvId:id,consentState:'NONE'});return true;
+    }
+    const saved = JSON.parse(consent.consent_raw);
+    send(res,200,{hcvId:id,consentState:consent.state,
+      recordId:consent.record_id,publishReference:saved.publishReference,
+      monetize:saved.monetize,
+      platformTakedown:consent.state==='WITHDRAWN'
+        ? 'REQUIRES_OPERATOR_CONFIRMATION' : 'NOT_REQUESTED'});
+    return true;
+  }
   // Consent is written ONLY by the authenticated account that registered
   // the cryptographically validated original certificate.
   if (req.method === 'POST' && url.pathname === '/api/verified-originals/consents') {
