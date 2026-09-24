@@ -197,7 +197,7 @@ async function handle(req, res) {
     return true;
   }
   const creatorWithdraw =
-    /^\\/api\\/verified-originals\\/consents\\/(HCV-[A-F0-9]{16})\\/withdraw$/.exec(url.pathname);
+    /^\/api\/verified-originals\/consents\/(HCV-[A-F0-9]{16})\/withdraw$/.exec(url.pathname);
   if (req.method === 'POST' && creatorWithdraw) {
     const session = authenticateRegistrySession(db, req.headers.authorization, new Date());
     const id = creatorWithdraw[1];
