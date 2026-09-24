@@ -64,6 +64,28 @@ services:
         sync: false
       - key: SIGILLUM_KYC_RETURN_URL
         sync: false
+      - key: YOUTUBE_CLIENT_ID
+        sync: false
+      - key: YOUTUBE_CLIENT_SECRET
+        sync: false
+      - key: YOUTUBE_REFRESH_TOKEN
+        sync: false
+      - key: YOUTUBE_CHANNEL_ID
+        sync: false
+      - key: SIGILLUM_PUBLISHER_ID
+        value: "SIGILLUM_YOUTUBE_V1"
+      - key: SIGILLUM_DERIVATION_KEY_ID
+        value: "sigillum_derivation_prod_v1"
+      - key: SIGILLUM_DERIVATION_PRIVATE_KEY_PEM
+        sync: false
+      - key: SIGILLUM_DERIVATION_PUBLIC_KEYS_JSON
+        sync: false
+      - key: SIGILLUM_VERIFIED_ORIGINALS_MAX_BYTES
+        value: "536870912"
+      - key: YOUTUBE_PROCESSING_TIMEOUT_MS
+        value: "300000"
+      - key: YOUTUBE_PROCESSING_POLL_MS
+        value: "3000"
 
 databases:
   - name: sigillum-registry-db
