@@ -39,7 +39,8 @@ function checkPublication(payload, certificate, provenance, latestStatus) {
   if (!c || c.publishReference !== true || c.version !== 1 ||
       c.hcvId !== payload.hcvId || c.originalSha256 !== originalHash ||
       typeof c.creatorSubject !== 'string' || c.creatorSubject.length < 3 ||
-      c.creatorSubject.length > 128 || !Number.isFinite(Date.parse(c.grantedAt || '')) ||
+      c.creatorSubject.length > 128 ||
+      c.creatorSubject !== cert?.meta?.identity?.creatorId || !Number.isFinite(Date.parse(c.grantedAt || '')) ||
       typeof c.recordId !== 'string' || c.recordId.length < 12 || c.recordId.length > 128) {
     return 'CONSENT_NOT_BOUND';
   }
