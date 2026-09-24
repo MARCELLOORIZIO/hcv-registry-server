@@ -1,0 +1,29 @@
+name: Verified Originals registry security
+
+on:
+  push:
+    branches:
+      - feature/verified-originals-registry-20260924
+  pull_request:
+    paths:
+      - 'verified_originals_*'
+      - 'registry_verified_originals_guard.js'
+      - 'package.json'
+      - '.github/workflows/verified-originals-registry.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm install
+      - run: npm run check
+      - run: npm run test:registry-security
