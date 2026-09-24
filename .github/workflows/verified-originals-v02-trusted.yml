@@ -21,4 +21,27 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - run: npm install
       - run: npm run check
-      - run: npm run test:registry-security
+      - name: Baseline Registry security
+        run: node registry_certificate_security_test.js && node registry_http_guard_test.js && node registry_public_verify_guard_test.js && node registry_fallback_media_binding_test.js
+        timeout-minutes: 2
+      - name: Trusted derivation
+        run: node trusted_derivation_v1_test.js
+        timeout-minutes: 2
+      - name: Verified Originals policy
+        run: node verified_originals_v2_policy_test.js
+        timeout-minutes: 2
+      - name: Verified Originals route contracts
+        run: node verified_originals_v2_route_contract_test.js
+        timeout-minutes: 2
+      - name: Paid view entitlement
+        run: node verified_originals_entitlement_test.js
+        timeout-minutes: 2
+      - name: Verified Originals integration
+        run: node verified_originals_v2_integration_test.js
+        timeout-minutes: 2
+      - name: YouTube publisher
+        run: node youtube_publisher_v1_test.js
+        timeout-minutes: 2
+      - name: Secure ingest
+        run: node verified_originals_secure_ingest_test.js
+        timeout-minutes: 2
