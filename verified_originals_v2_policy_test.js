@@ -22,6 +22,9 @@ const prov = {registry_status:'ACTIVE',provenance_raw:JSON.stringify({
 const session={accountId:'account-01',creatorId:'creator-01',
   deviceKeyFingerprint:'c'.repeat(64)};
 const consent={record_id:'consent-01',hcv_id:id,state:'ACTIVE'};
+const receipt={receipt_id:'receipt-01',hcv_id:id,platform:'youtube',
+  platform_post_id:'AbCdEfGhI_1',uploaded_sha256:reference,
+  processing_status:'succeeded',visibility:'public'};
 const pub={
   publication_id:'11111111-1111-4111-8111-111111111111',hcv_id:id,
   platform:'youtube',platform_post_id:'AbCdEfGhI_1',
@@ -30,6 +33,7 @@ const pub={
   derived_from:original,derivation_type:'video_transcode_h264_aac_v1',
   created_at:'2026-09-24T10:00:00.000Z',published_at:'2026-09-24T10:01:00.000Z',
   publication_status:'PUBLISHED',consent_record_id:'consent-01',
+  platform_receipt_id:'receipt-01',
   consent_version:CONSENT_VERSION,monetization_consent:0
 };
 
@@ -74,13 +78,15 @@ test('publication requires a previously trusted derivative bound to same parent 
 
 test('public reference is fail closed on consent, state, hashes and URL',()=>{
   const e=registryEligibility(cert,prov,null);
-  const shown=publicPublication(pub,e,consent);
+  const shown=publicPublication(pub,e,consent,receipt);
   assert.equal(shown.publicUrl,pub.public_url);
   assert.equal(shown.socialFileVerdict,'NOT_VERIFIED');
   assert.equal(shown.certificateVerdict,'CERTIFICATE_RECORD_VERIFIED');
-  assert.equal(publicPublication({...pub,publication_status:'UNAVAILABLE'},e,consent),null);
-  assert.equal(publicPublication({...pub,reference_sha256:'x'},e,consent),null);
-  assert.equal(publicPublication({...pub,public_url:'https://evil.example'},e,consent),null);
-  assert.equal(publicPublication(pub,e,{...consent,state:'WITHDRAWN'}),null);
+  assert.equal(publicPublication({...pub,publication_status:'UNAVAILABLE'},e,consent,receipt),null);
+  assert.equal(publicPublication({...pub,reference_sha256:'x'},e,consent,receipt),null);
+  assert.equal(publicPublication({...pub,public_url:'https://evil.example'},e,consent,receipt),null);
+  assert.equal(publicPublication(pub,e,{...consent,state:'WITHDRAWN'},receipt),null);
+  assert.equal(publicPublication(pub,e,consent,null),null);
+  assert.equal(publicPublication(pub,e,consent,{...receipt,uploaded_sha256:'0'.repeat(64)}),null);
 });
 console.log('VERIFIED_ORIGINALS_V2_POLICY_TESTS_COMPLETE');
