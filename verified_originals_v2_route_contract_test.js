@@ -13,8 +13,8 @@ for (const required of [
   'CREATOR_OWNERSHIP_NOT_VERIFIED',
   'ACTIVE_CREATOR_CONSENT_REQUIRED',
   'MONETIZATION_NOT_AUTHORIZED',
-  'PUBLICATION_REVOKED',
-  'PUBLICATION_UNAVAILABLE',
+  "publication_status='REVOKED'",
+  "publication_status='PUBLISHED'",
   'socialFileVerdict',
   'NOT_VERIFIED',
 ]) {
