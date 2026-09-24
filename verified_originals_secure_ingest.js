@@ -73,34 +73,37 @@ function activeConsentForOwner(hcvId, consentRecordId, session) {
 }
 
 async function streamToFile(req, destination, expectedSize) {
-  const handle = fs.createWriteStream(destination, {
-    flags: 'wx',
-    mode: 0o600,
-  });
+  const handle = await fs.promises.open(destination, 'wx', 0o600);
   const hash = crypto.createHash('sha256');
   let received = 0;
+  let position = 0;
 
   try {
-    for await (const chunk of req) {
+    for await (const rawChunk of req) {
+      const chunk = Buffer.isBuffer(rawChunk)
+        ? rawChunk
+        : Buffer.from(rawChunk);
       received += chunk.length;
       if (received > MAX_BYTES || received > expectedSize) {
         fail('ORIGINAL_UPLOAD_TOO_LARGE', 413);
       }
       hash.update(chunk);
-      if (!handle.write(chunk)) {
-        await new Promise((resolve, reject) => {
-          handle.once('drain', resolve);
-          handle.once('error', reject);
-        });
+      let written = 0;
+      while (written < chunk.length) {
+        const result = await handle.write(
+          chunk,
+          written,
+          chunk.length - written,
+          position + written,
+        );
+        if (!result.bytesWritten) fail('ORIGINAL_UPLOAD_WRITE_FAILED', 500);
+        written += result.bytesWritten;
       }
+      position += chunk.length;
     }
-    await new Promise((resolve, reject) => {
-      handle.end(resolve);
-      handle.once('error', reject);
-    });
-  } catch (error) {
-    handle.destroy();
-    throw error;
+    await handle.sync();
+  } finally {
+    await handle.close();
   }
 
   if (received !== expectedSize) fail('ORIGINAL_UPLOAD_SIZE_MISMATCH', 400);
