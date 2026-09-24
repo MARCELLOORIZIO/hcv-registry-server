@@ -144,6 +144,12 @@ async function handle(req,res) {
     const renditionSha=assertSha(value.renditionSha256,'RENDITION_SHA256');
     if(p.contentSha256!==originalSha)error('ORIGINAL_SHA256_MISMATCH',409);
     const url=youtubeUrl(value.videoId);
+    const officialChannel=process.env.SIGILLUM_YOUTUBE_CHANNEL_HANDLE || '';
+    if (!officialChannel || value.channel !== officialChannel)
+      error('OFFICIAL_CHANNEL_NOT_CONFIGURED_OR_MISMATCH',403);
+    if (typeof value.monetizationEnabled !== 'boolean' ||
+        (value.monetizationEnabled && !c.allow_monetization))
+      error('MONETIZATION_NOT_AUTHORIZED',403);
     // Manually supplied rendition digest is NOT an attested transformation.
     if(typeof value.channel!=='string'||!/^@[A-Za-z0-9._-]{3,50}$/.test(value.channel))
       error('OFFICIAL_CHANNEL_INVALID',400);
