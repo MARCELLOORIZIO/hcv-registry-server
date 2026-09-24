@@ -162,10 +162,10 @@ function renderVerificationPage({ row, provenanceRow, latestStatus, originalRefe
     .join('');
 
   const originalReferenceBlock = originalReference
-    ? `<div class="reference"><strong>CONTENUTO CERTIFICATO DISPONIBILE</strong><br>` +
-      `<a href="${escapeHtml(originalReference.publicUrl)}" rel="noopener noreferrer">GUARDA IL CONTENUTO CERTIFICATO</a><br>` +
-      `<small>Questo riferimento ufficiale non prova che un file visto su un altro social sia identico.</small></div>`
-    : `<div class="reference"><strong>Nessun riferimento pubblico attivo.</strong></div>`;
+    ? `<div class="reference"><strong>ORIGINALE CERTIFICATO DISPONIBILE</strong><br>` +
+      `<small>La visualizzazione richiede un abbonamento SIGILLUM attivo e avviene dall’app. ` +
+      `La disponibilità del riferimento non prova che un file visto su un altro social sia identico.</small></div>`
+    : `<div class="reference"><strong>Nessun originale certificato attivo.</strong></div>`;
 
   return `<!doctype html>
 <html lang="en">
@@ -184,7 +184,7 @@ function renderVerificationPage({ row, provenanceRow, latestStatus, originalRefe
     .row{background:#f8faf8;border:1px solid #e5eae6;border-radius:12px;padding:12px 14px}
     .label{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:#6c756f}
     .value{margin-top:4px;font-size:14px;word-break:break-all}
-    .reference{margin-top:22px;padding:16px;border:1px solid #d8e5dc;border-radius:12px;background:#f7fbf8}.reference a{display:inline-block;margin-top:8px;font-weight:700}.reference small{display:inline-block;margin-top:8px;color:#667069}
+    .reference{margin-top:22px;padding:16px;border:1px solid #d8e5dc;border-radius:12px;background:#f7fbf8}.reference small{display:inline-block;margin-top:8px;color:#667069}
     .note{margin-top:24px;padding-top:18px;border-top:1px solid #e2e7e3;color:#667069;font-size:12px}
   </style>
 </head>
