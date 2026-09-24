@@ -1,0 +1,29 @@
+name: Live SIGILLUM backend probe
+on:
+  push:
+    branches:
+      - feature/verified-originals-v02-trusted-20260924
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Probe production endpoints
+        shell: bash
+        run: |
+          set -euo pipefail
+          probe() {
+            local base="$1"
+            echo "=== $base ==="
+            curl --fail-with-body --silent --show-error --max-time 30 "$base/health" || true
+            echo
+            code=$(curl --silent --show-error --max-time 30 -o response.json -w "%{http_code}"               "$base/api/verified-originals/HCV-0000000000000000" || true)
+            echo "verified-originals-http=$code"
+            cat response.json 2>/dev/null || true
+            echo
+          }
+          probe "https://sigillum-registry-production.onrender.com"
+          probe "https://hcv-registry-server.onrender.com"

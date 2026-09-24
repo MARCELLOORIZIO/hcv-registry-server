@@ -1,0 +1,56 @@
+name: Verified Originals v0.2 trusted binding
+on:
+  push:
+    branches: [feature/verified-originals-v02-trusted-20260924]
+  pull_request:
+    paths:
+      - 'verified_originals_*.js'
+      - 'registry_public_verify_guard.js'
+      - 'trusted_derivation_v1.js'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/verified-originals-v02-trusted.yml'
+jobs:
+  registry:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - run: npm install
+      - run: npm run check
+      - name: Certificate security
+        run: node registry_certificate_security_test.js
+        timeout-minutes: 1
+      - name: Registry HTTP guard
+        run: node registry_http_guard_test.js
+        timeout-minutes: 1
+      - name: Registry public verify
+        run: node registry_public_verify_guard_test.js
+        timeout-minutes: 1
+      - name: Registry fallback media binding
+        run: node registry_fallback_media_binding_test.js
+        timeout-minutes: 1
+      - name: Trusted derivation
+        run: node trusted_derivation_v1_test.js
+        timeout-minutes: 2
+      - name: Verified Originals policy
+        run: node verified_originals_v2_policy_test.js
+        timeout-minutes: 2
+      - name: Verified Originals route contracts
+        run: node verified_originals_v2_route_contract_test.js
+        timeout-minutes: 2
+      - name: Paid view entitlement
+        run: node verified_originals_entitlement_test.js
+        timeout-minutes: 2
+      - name: Verified Originals integration
+        run: node verified_originals_v2_integration_test.js
+        timeout-minutes: 2
+      - name: YouTube publisher
+        run: node youtube_publisher_v1_test.js
+        timeout-minutes: 2
+      - name: Secure ingest
+        run: node verified_originals_secure_ingest_test.js
+        timeout-minutes: 2

@@ -124,8 +124,28 @@ function seedDb() {
 }
 
 async function getText(baseUrl, pathname) {
-  const response = await fetch(`${baseUrl}${pathname}`);
-  return { status: response.status, text: await response.text() };
+  const target = new URL(pathname, baseUrl);
+  return new Promise((resolve, reject) => {
+    const request = http.request({
+      protocol: target.protocol,
+      hostname: target.hostname,
+      port: target.port,
+      path: target.pathname + target.search,
+      method: 'GET',
+      agent: false,
+      headers: {Connection: 'close'},
+    }, response => {
+      const chunks = [];
+      response.on('data', chunk => chunks.push(chunk));
+      response.on('end', () => resolve({
+        status: response.statusCode,
+        text: Buffer.concat(chunks).toString('utf8'),
+      }));
+    });
+    request.setTimeout(5000, () => request.destroy(new Error('TEST_HTTP_TIMEOUT')));
+    request.on('error', reject);
+    request.end();
+  });
 }
 
 async function run() {
@@ -172,6 +192,7 @@ async function run() {
 
     console.log('registry_public_verify_guard_test: PASS');
   } finally {
+    server.closeAllConnections?.();
     await new Promise(resolve => server.close(resolve));
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }

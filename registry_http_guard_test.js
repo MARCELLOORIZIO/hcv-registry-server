@@ -136,16 +136,41 @@ function buildCertificate(contentHash) {
 }
 
 async function requestJson(baseUrl, method, urlPath, { auth = true, body } = {}) {
-  const response = await fetch(`${baseUrl}${urlPath}`, {
-    method,
-    headers: {
-      ...(auth ? { Authorization: `Bearer ${token}` } : {}),
-      ...(body ? { 'Content-Type': 'application/json' } : {}),
-    },
-    ...(body ? { body: JSON.stringify(body) } : {}),
+  const target = new URL(urlPath, baseUrl);
+  const rawBody = body ? JSON.stringify(body) : null;
+  return new Promise((resolve, reject) => {
+    const request = http.request({
+      protocol: target.protocol,
+      hostname: target.hostname,
+      port: target.port,
+      path: target.pathname + target.search,
+      method,
+      agent: false,
+      headers: {
+        ...(auth ? {Authorization: `Bearer ${token}`} : {}),
+        ...(rawBody ? {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(rawBody),
+        } : {}),
+        Connection: 'close',
+      },
+    }, response => {
+      const chunks = [];
+      response.on('data', chunk => chunks.push(chunk));
+      response.on('end', () => {
+        try {
+          const decoded = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+          resolve({status: response.statusCode, body: decoded});
+        } catch (error) {
+          reject(error);
+        }
+      });
+    });
+    request.setTimeout(5000, () => request.destroy(new Error('TEST_HTTP_TIMEOUT')));
+    request.on('error', reject);
+    if (rawBody) request.write(rawBody);
+    request.end();
   });
-  const decoded = await response.json();
-  return { status: response.status, body: decoded };
 }
 
 async function run() {
@@ -221,6 +246,7 @@ async function run() {
 
     console.log('registry_http_guard_test: PASS');
   } finally {
+    server.closeAllConnections?.();
     await new Promise(resolve => server.close(resolve));
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
