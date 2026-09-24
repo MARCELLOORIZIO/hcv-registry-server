@@ -5,10 +5,61 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { Readable } = require('node:stream');
+const Database = require('better-sqlite3');
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sigillum-secure-ingest-'));
 process.env.SIGILLUM_VERIFIED_ORIGINALS_TMP = tmp;
 process.env.SIGILLUM_VERIFIED_ORIGINALS_MAX_BYTES = '64';
+process.env.DB_PATH = path.join(tmp, 'registry.db');
+
+const fixtureDb = new Database(process.env.DB_PATH);
+fixtureDb.exec(`
+  CREATE TABLE certificates (
+    hcv_id TEXT PRIMARY KEY,
+    created_at TEXT NOT NULL,
+    certificate_raw TEXT NOT NULL
+  );
+  CREATE TABLE registry_provenance (
+    hcv_id TEXT PRIMARY KEY,
+    registered_at TEXT NOT NULL,
+    certificate_sha256 TEXT NOT NULL,
+    provenance_raw TEXT NOT NULL,
+    source_commit TEXT,
+    app_version TEXT,
+    build_number TEXT,
+    registry_status TEXT NOT NULL DEFAULT 'ACTIVE'
+  );
+  CREATE TABLE certificate_status_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    hcv_id TEXT NOT NULL,
+    status TEXT NOT NULL,
+    reason_code TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    actor TEXT NOT NULL DEFAULT 'REGISTRY'
+  );
+  CREATE TABLE auth_accounts (
+    id TEXT PRIMARY KEY,
+    email_normalized TEXT NOT NULL UNIQUE,
+    email_display TEXT NOT NULL,
+    password_salt TEXT NOT NULL,
+    password_hash TEXT NOT NULL,
+    creator_name TEXT NOT NULL,
+    creator_id TEXT,
+    email_verified INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE TABLE auth_sessions (
+    token_hash TEXT PRIMARY KEY,
+    account_id TEXT NOT NULL,
+    device_key_fingerprint TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    last_seen_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    revoked_at TEXT
+  );
+`);
+fixtureDb.close();
 
 const { streamToFile } = require('./verified_originals_secure_ingest');
 
