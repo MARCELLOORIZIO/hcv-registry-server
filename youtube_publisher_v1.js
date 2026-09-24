@@ -186,7 +186,7 @@ async function startResumableUpload({
         'SIGILLUM Verified Original reference. HCV-ID: ' + hcvId,
     },
     status: {
-      privacyStatus: 'public',
+      privacyStatus: 'unlisted',
       embeddable: true,
     },
   };
@@ -347,7 +347,7 @@ async function publishTrustedVideoReference({
   }
 
   if (status.processingStatus !== 'succeeded' ||
-      status.privacyStatus !== 'public') {
+      status.privacyStatus !== 'unlisted') {
     let cleanupSucceeded = false;
     try {
       cleanupSucceeded = await deleteUploadedVideo({
@@ -364,8 +364,8 @@ async function publishTrustedVideoReference({
       referenceSha256: trusted.sha256,
       status,
       cleanupSucceeded,
-      reason: status.privacyStatus !== 'public'
-        ? 'YOUTUBE_REFERENCE_NOT_PUBLIC'
+      reason: status.privacyStatus !== 'unlisted'
+        ? 'YOUTUBE_REFERENCE_NOT_UNLISTED'
         : 'YOUTUBE_PROCESSING_NOT_SUCCEEDED',
     };
   }
