@@ -64,7 +64,7 @@ function response(status, json = {}, headers = {}) {
   };
 }
 
-function mockYouTube({videoId, privacyStatus = 'public',
+function mockYouTube({videoId, privacyStatus = 'unlisted',
   processingStatus = 'succeeded'}) {
   const calls = [];
   const uploadUrl =
@@ -80,7 +80,7 @@ function mockYouTube({videoId, privacyStatus = 'public',
     if (String(url).includes('uploadType=resumable') &&
         options.method === 'POST') {
       const metadata = JSON.parse(options.body);
-      assert.equal(metadata.status.privacyStatus, 'public');
+      assert.equal(metadata.status.privacyStatus, 'unlisted');
       assert.equal(metadata.snippet.title, 'SIGILLUM ' + HCV_ID);
       assert.equal(
         options.headers['x-upload-content-length'],
@@ -156,7 +156,7 @@ async function run() {
     WHERE platform='youtube' AND platform_post_id=?
   `).get('AbCdEfGhI_1');
   assert.equal(receipt.uploaded_sha256, outputSha);
-  assert.equal(receipt.visibility, 'public');
+  assert.equal(receipt.visibility, 'unlisted');
   assert.equal(receipt.processing_status, 'succeeded');
 
   const privateMock = mockYouTube({
@@ -167,7 +167,7 @@ async function run() {
     db, filePath, hcvId: HCV_ID, config, fetchImpl: privateMock.fetchImpl,
   });
   assert.equal(privateResult.publicationReady, false);
-  assert.equal(privateResult.reason, 'YOUTUBE_REFERENCE_NOT_PUBLIC');
+  assert.equal(privateResult.reason, 'YOUTUBE_REFERENCE_NOT_UNLISTED');
   assert.equal(privateResult.cleanupSucceeded, true);
   const privateReceipt = db.prepare(`
     SELECT * FROM verified_originals_platform_receipts
