@@ -24,8 +24,7 @@ jobs:
           for i in $(seq 1 36); do
             echo "probe=$i"
             HEALTH="$(curl -fsS --max-time 20 "$BASE/health" || true)"
-            printf '%s
-' "$HEALTH" | tee health.json
+            echo "$HEALTH" | tee health.json
             STATUS="$(curl -sS --max-time 20 -o availability.json -w '%{http_code}'               "$BASE/api/verified-originals/HCV-0000000000000000" || true)"
             echo "verified-originals-http=$STATUS"
             cat availability.json 2>/dev/null || true
