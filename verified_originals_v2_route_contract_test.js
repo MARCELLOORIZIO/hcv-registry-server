@@ -14,6 +14,9 @@ for (const required of [
   'CREATOR_OWNERSHIP_NOT_VERIFIED',
   'ACTIVE_CREATOR_CONSENT_REQUIRED',
   'MONETIZATION_NOT_AUTHORIZED',
+  '/api/verified-originals/',
+  '/view',
+  'SUBSCRIPTION_REQUIRED',
   "publication_status='REVOKED'",
   "publication_status='PUBLISHED'",
   'socialFileVerdict',
@@ -35,7 +38,8 @@ assert(source.includes('getVerifiedPlatformReceipt'),
 assert(source.includes("SIGILLUM_VERIFIED_ORIGINALS_ADMIN_TOKEN"),
   'publisher path must require server-side operator credential');
 
-assert(publicVerify.includes('GUARDA IL CONTENUTO CERTIFICATO'));
+assert(!publicVerify.includes('href="${escapeHtml(originalReference.publicUrl)}"'));
+assert(publicVerify.includes('abbonamento SIGILLUM attivo'));
 assert(publicVerify.includes('publicActiveReference'));
 assert(publicVerify.includes('non prova che un file visto su un altro social sia identico'));
 
