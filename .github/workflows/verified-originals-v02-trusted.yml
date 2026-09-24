@@ -21,9 +21,18 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - run: npm install
       - run: npm run check
-      - name: Baseline Registry security
-        run: node registry_certificate_security_test.js && node registry_http_guard_test.js && node registry_public_verify_guard_test.js && node registry_fallback_media_binding_test.js
-        timeout-minutes: 2
+      - name: Certificate security
+        run: node registry_certificate_security_test.js
+        timeout-minutes: 1
+      - name: Registry HTTP guard
+        run: node registry_http_guard_test.js
+        timeout-minutes: 1
+      - name: Registry public verify
+        run: node registry_public_verify_guard_test.js
+        timeout-minutes: 1
+      - name: Registry fallback media binding
+        run: node registry_fallback_media_binding_test.js
+        timeout-minutes: 1
       - name: Trusted derivation
         run: node trusted_derivation_v1_test.js
         timeout-minutes: 2
