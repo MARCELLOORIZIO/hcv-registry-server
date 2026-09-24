@@ -38,6 +38,9 @@ async function requireActiveViewEntitlement(
 
   const url = configuredStatusUrl(env);
   let response;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10000);
+  timeout.unref?.();
   try {
     response = await fetchImpl(url, {
       method: 'GET',
@@ -45,10 +48,12 @@ async function requireActiveViewEntitlement(
         authorization: token,
         accept: 'application/json',
       },
-      signal: AbortSignal.timeout(10000),
+      signal: controller.signal,
     });
   } catch (_) {
     throw entitlementError('ENTITLEMENT_SERVICE_UNAVAILABLE', 503);
+  } finally {
+    clearTimeout(timeout);
   }
 
   let payload = null;
