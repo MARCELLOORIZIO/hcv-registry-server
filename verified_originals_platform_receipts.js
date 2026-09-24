@@ -41,6 +41,11 @@ const getReceipt = db.prepare(`
 SELECT * FROM verified_originals_platform_receipts
 WHERE platform=? AND platform_post_id=?
 `);
+const invalidateReceipt = db.prepare(`
+UPDATE verified_originals_platform_receipts
+SET processing_status=?, visibility=?, verified_at=?
+WHERE platform=? AND platform_post_id=?
+`);
 
 function normalizeMetadata(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
@@ -121,7 +126,29 @@ function getVerifiedPlatformReceipt({
   return row;
 }
 
+
+function invalidatePlatformReceipt({
+  platform,
+  platformPostId,
+  reason = 'invalidated',
+  at = new Date().toISOString(),
+}) {
+  if (platform !== 'youtube' || !YOUTUBE_ID.test(platformPostId || '') ||
+      !Number.isFinite(Date.parse(at))) {
+    throw new Error('PLATFORM_RECEIPT_INVALIDATION_INVALID');
+  }
+  const changed = invalidateReceipt.run(
+    reason,
+    'unavailable',
+    at,
+    platform,
+    platformPostId,
+  );
+  return changed.changes === 1;
+}
+
 module.exports = {
   recordVerifiedPlatformReceipt,
   getVerifiedPlatformReceipt,
+  invalidatePlatformReceipt,
 };
