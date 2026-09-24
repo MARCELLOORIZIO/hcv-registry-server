@@ -63,7 +63,7 @@ jobs:
         timeout-minutes: 5
       - name: Start patched production server
         run: |
-          npm start > verified-originals-production.log 2>&1 &
+          node production_server.js > verified-originals-production.log 2>&1 &
           echo $! > verified-originals-production.pid
           for i in {1..40}; do
             if curl -fsS http://127.0.0.1:8080/health > health.json; then
