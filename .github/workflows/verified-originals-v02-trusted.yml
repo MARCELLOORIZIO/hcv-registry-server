@@ -1,0 +1,24 @@
+name: Verified Originals v0.2 trusted binding
+on:
+  push:
+    branches: [feature/verified-originals-v02-trusted-20260924]
+  pull_request:
+    paths:
+      - 'verified_originals_v2_*.js'
+      - 'registry_public_verify_guard.js'
+      - 'trusted_derivation_v1.js'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/verified-originals-v02-trusted.yml'
+jobs:
+  registry:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+      - run: npm run test:registry-security
