@@ -308,6 +308,103 @@ function referencePage(hcvId, reference) {
     '</main></html>';
 }
 
+function registerPublicationRecord({
+  hcvId,
+  consentRecordId,
+  trustedDerivativeSha256,
+  platform,
+  platformPostId,
+  monetizationEnabled,
+  auditMetadata = {},
+}) {
+  const normalizedHcvId = String(hcvId || '').toUpperCase();
+  if (!HCV_ID.test(normalizedHcvId)) fail('INVALID_HCV_ID', 400);
+  const e = eligibility(normalizedHcvId);
+  if (!e) fail('CERTIFICATE_NOT_ACTIVE_VERIFIED', 403);
+
+  const consent = consentById.get(String(consentRecordId || ''));
+  if (!consent || consent.hcv_id !== normalizedHcvId ||
+      consent.state !== 'ACTIVE' ||
+      consent.publication_consent !== 1 ||
+      consent.rights_confirmed !== 1) {
+    fail('ACTIVE_CREATOR_CONSENT_REQUIRED', 403);
+  }
+  if (monetizationEnabled !== true && monetizationEnabled !== false) {
+    fail('MONETIZATION_STATE_REQUIRED', 400);
+  }
+  if (monetizationEnabled && consent.monetization_consent !== 1) {
+    fail('MONETIZATION_NOT_AUTHORIZED', 403);
+  }
+
+  const trusted = trustedRow(
+    normalizedHcvId, String(trustedDerivativeSha256 || ''), e.originalHash,
+  );
+  if (!trusted) fail('TRUSTED_DERIVATION_REQUIRED', 422);
+
+  const ref = platformReference(
+    String(platform || ''), String(platformPostId || ''),
+  );
+  if (!ref) fail('PLATFORM_REFERENCE_INVALID_OR_UNSUPPORTED', 400);
+
+  const platformReceipt = getVerifiedPlatformReceipt({
+    hcvId: normalizedHcvId,
+    platform: ref.platform,
+    platformPostId: ref.platformPostId,
+    expectedSha256: trusted.manifest.output.sha256,
+  });
+  if (!platformReceipt) fail('PLATFORM_UPLOAD_RECEIPT_REQUIRED', 422);
+
+  const now = new Date().toISOString();
+  const publicationId = crypto.randomUUID();
+  const manifestRaw = JSON.stringify(trusted.manifest);
+  const manifestSha = hashText(manifestRaw);
+  const publisher =
+    String(process.env.SIGILLUM_PUBLISHER_ID || 'SIGILLUM_SERVER_V1');
+  const metadata = sanitizeAuditMetadata(auditMetadata);
+
+  try {
+    db.transaction(() => {
+      insertPublication.run(
+        publicationId, normalizedHcvId, ref.platform, ref.platformPostId,
+        ref.publicUrl, trusted.manifest.output.sha256, e.originalHash,
+        e.originalHash, trusted.manifest.transform.operation, manifestSha,
+        platformReceipt.receipt_id, trusted.manifest.createdAt,
+        consent.record_id, consent.consent_version,
+        monetizationEnabled ? 1 : 0, publisher, now,
+        JSON.stringify(metadata),
+      );
+      audit({
+        hcvId: normalizedHcvId,
+        publicationId,
+        eventType: 'PUBLICATION_REGISTERED',
+        actorType: 'SIGILLUM_PUBLISHER',
+        actorSubjectHash: adminSubject(),
+        metadata,
+        at: now,
+      });
+    })();
+  } catch (error) {
+    if (/UNIQUE constraint failed/i.test(String(error))) {
+      fail('PLATFORM_POST_ALREADY_REGISTERED', 409);
+    }
+    throw error;
+  }
+
+  return {
+    ok: true,
+    publicationId,
+    hcvId: normalizedHcvId,
+    platform: ref.platform,
+    publicUrl: ref.publicUrl,
+    publicationStatus: 'PUBLISHED',
+    originalContentSha256: e.originalHash,
+    referenceSha256: trusted.manifest.output.sha256,
+    derivedFrom: e.originalHash,
+    derivationType: trusted.manifest.transform.operation,
+    socialFileVerdict: 'NOT_VERIFIED',
+  };
+}
+
 async function handle(req, res) {
   const url = new URL(req.url, 'http://' + (req.headers.host || 'localhost'));
 
@@ -444,75 +541,16 @@ async function handle(req, res) {
   if (req.method === 'POST' && url.pathname === '/api/verified-originals/publications') {
     if (!adminAuthorized(req)) fail('PUBLISHER_NOT_AUTHORIZED', 403);
     const payload = await readJson(req);
-    const hcvId = String(payload.hcvId || '').toUpperCase();
-    if (!HCV_ID.test(hcvId)) fail('INVALID_HCV_ID', 400);
-    const e = eligibility(hcvId);
-    if (!e) fail('CERTIFICATE_NOT_ACTIVE_VERIFIED', 403);
-    const consent = consentById.get(String(payload.consentRecordId || ''));
-    if (!consent || consent.hcv_id !== hcvId || consent.state !== 'ACTIVE' ||
-        consent.publication_consent !== 1 || consent.rights_confirmed !== 1) {
-      fail('ACTIVE_CREATOR_CONSENT_REQUIRED', 403);
-    }
-    if (payload.monetizationEnabled !== true &&
-        payload.monetizationEnabled !== false) {
-      fail('MONETIZATION_STATE_REQUIRED', 400);
-    }
-    if (payload.monetizationEnabled && consent.monetization_consent !== 1) {
-      fail('MONETIZATION_NOT_AUTHORIZED', 403);
-    }
-    const trusted = trustedRow(
-      hcvId, String(payload.trustedDerivativeSha256 || ''), e.originalHash,
-    );
-    if (!trusted) fail('TRUSTED_DERIVATION_REQUIRED', 422);
-    const ref = platformReference(
-      String(payload.platform || ''), String(payload.platformPostId || ''),
-    );
-    if (!ref) fail('PLATFORM_REFERENCE_INVALID_OR_UNSUPPORTED', 400);
-    const platformReceipt = getVerifiedPlatformReceipt({
-      hcvId,
-      platform: ref.platform,
-      platformPostId: ref.platformPostId,
-      expectedSha256: trusted.manifest.output.sha256,
+    const result = registerPublicationRecord({
+      hcvId: payload.hcvId,
+      consentRecordId: payload.consentRecordId,
+      trustedDerivativeSha256: payload.trustedDerivativeSha256,
+      platform: payload.platform,
+      platformPostId: payload.platformPostId,
+      monetizationEnabled: payload.monetizationEnabled,
+      auditMetadata: payload.auditMetadata,
     });
-    if (!platformReceipt) fail('PLATFORM_UPLOAD_RECEIPT_REQUIRED', 422);
-    const now = new Date().toISOString();
-    const publicationId = crypto.randomUUID();
-    const manifestRaw = JSON.stringify(trusted.manifest);
-    const manifestSha = hashText(manifestRaw);
-    const publisher = String(process.env.SIGILLUM_PUBLISHER_ID || 'SIGILLUM_SERVER_V1');
-    const metadata = sanitizeAuditMetadata(payload.auditMetadata);
-    try {
-      db.transaction(() => {
-        insertPublication.run(
-          publicationId, hcvId, ref.platform, ref.platformPostId, ref.publicUrl,
-          trusted.manifest.output.sha256, e.originalHash, e.originalHash,
-          trusted.manifest.transform.operation, manifestSha,
-          platformReceipt.receipt_id, trusted.manifest.createdAt,
-          consent.record_id, consent.consent_version,
-          payload.monetizationEnabled ? 1 : 0, publisher, now,
-          JSON.stringify(metadata),
-        );
-        audit({
-          hcvId, publicationId, eventType:'PUBLICATION_REGISTERED',
-          actorType:'SIGILLUM_PUBLISHER', actorSubjectHash:adminSubject(),
-          metadata, at:now,
-        });
-      })();
-    } catch (error) {
-      if (/UNIQUE constraint failed/i.test(String(error))) {
-        fail('PLATFORM_POST_ALREADY_REGISTERED', 409);
-      }
-      throw error;
-    }
-    send(res, 201, {
-      ok:true, publicationId, hcvId, platform:ref.platform,
-      publicUrl:ref.publicUrl, publicationStatus:'PUBLISHED',
-      originalContentSha256:e.originalHash,
-      referenceSha256:trusted.manifest.output.sha256,
-      derivedFrom:e.originalHash,
-      derivationType:trusted.manifest.transform.operation,
-      socialFileVerdict:'NOT_VERIFIED',
-    });
+    send(res, 201, result);
     return true;
   }
 
@@ -573,5 +611,5 @@ http.createServer = function verifiedOriginalsV2CreateServer(listener) {
 };
 
 module.exports = {
-  handle, publicActiveReference, publicHistory,
+  handle, publicActiveReference, publicHistory, registerPublicationRecord,
 };
