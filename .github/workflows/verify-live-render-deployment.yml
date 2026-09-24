@@ -1,0 +1,54 @@
+name: Verify live Render deployment
+
+on:
+  push:
+    branches:
+      - release/reconciled-prelaunch-backend-clean-20260824
+    paths:
+      - '.github/workflows/verify-live-render-deployment.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe-live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Wait for Verified Originals live endpoint
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE='https://sigillum-registry-production.onrender.com'
+          for i in $(seq 1 36); do
+            echo "probe=$i"
+            HEALTH="$(curl -fsS --max-time 20 "$BASE/health" || true)"
+            printf '%s
+' "$HEALTH" | tee health.json
+            STATUS="$(curl -sS --max-time 20 -o availability.json -w '%{http_code}'               "$BASE/api/verified-originals/HCV-0000000000000000" || true)"
+            echo "verified-originals-http=$STATUS"
+            cat availability.json 2>/dev/null || true
+            if [[ "$STATUS" == "200" ]]               && grep -q '"availability":"REFERENCE_NOT_AVAILABLE"' availability.json               && grep -q '"verifiedOriginals":true' health.json; then
+              if grep -q 'publicUrl' availability.json || grep -q 'platformPostId' availability.json; then
+                echo 'FREE_LOCATOR_LEAK=FAIL'
+                exit 1
+              fi
+              echo 'LIVE_VERIFIED_ORIGINALS=PASS'
+              exit 0
+            fi
+            sleep 10
+          done
+          echo 'LIVE_VERIFIED_ORIGINALS=NOT_DEPLOYED'
+          exit 1
+
+      - name: Upload live probe
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verified-originals-live-render-probe
+          path: |
+            health.json
+            availability.json
+          if-no-files-found: ignore
+          retention-days: 7
