@@ -106,7 +106,7 @@ function publicPublication(row, eligibility, consentRow, platformReceipt) {
       platformReceipt.platform_post_id !== row.platform_post_id ||
       platformReceipt.uploaded_sha256 !== row.reference_sha256 ||
       platformReceipt.processing_status !== 'succeeded' ||
-      platformReceipt.visibility !== 'public') {
+      platformReceipt.visibility !== 'unlisted') {
     return null;
   }
   const reference = platformReference(row.platform, row.platform_post_id);
