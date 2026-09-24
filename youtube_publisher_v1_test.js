@@ -23,6 +23,7 @@ const bytes = Buffer.from('trusted derivative video bytes');
 fs.writeFileSync(filePath, bytes);
 const outputSha = crypto.createHash('sha256').update(bytes).digest('hex');
 const parentSha = 'a'.repeat(64);
+const channelId = 'UC0123456789ABCDEFGHIJKL';
 
 const db = new Database(dbPath);
 db.exec(`
@@ -76,6 +77,9 @@ function mockYouTube({videoId, privacyStatus = 'unlisted',
       assert.equal(body.get('grant_type'), 'refresh_token');
       assert.equal(body.get('client_secret'), 'server-secret');
       return response(200, {access_token: 'access-token', expires_in: 3600});
+    }
+    if (String(url).includes('/youtube/v3/channels?part=id&mine=true')) {
+      return response(200, {items:[{id:channelId}]});
     }
     if (String(url).includes('uploadType=resumable') &&
         options.method === 'POST') {
@@ -139,8 +143,34 @@ async function run() {
     clientSecret: 'server-secret',
     redirectUri: 'https://registry.example.test/oauth/youtube/callback',
     refreshToken: 'refresh-token',
+    channelId,
     publisherId: 'SIGILLUM_TEST_PUBLISHER',
   };
+
+  const mismatchMock = mockYouTube({videoId: 'NoUpload01_1'});
+  const mismatchFetch = async (url, options = {}) => {
+    if (String(url).includes('/youtube/v3/channels?part=id&mine=true')) {
+      return response(200, {items:[{id:'UCZZZZZZZZZZZZZZZZZZZZZZ'}]});
+    }
+    return mismatchMock.fetchImpl(url, options);
+  };
+  await assert.rejects(
+    publishTrustedVideoReference({
+      db,
+      filePath,
+      hcvId: HCV_ID,
+      config,
+      fetchImpl: mismatchFetch,
+    }),
+    /YOUTUBE_CHANNEL_ID_MISMATCH/,
+  );
+  assert.equal(
+    mismatchMock.calls.some(call =>
+      call.url.includes('uploadType=resumable') &&
+      call.options.method === 'POST',
+    ),
+    false,
+  );
 
   const publicMock = mockYouTube({videoId: 'AbCdEfGhI_1'});
   const published = await publishTrustedVideoReference({
