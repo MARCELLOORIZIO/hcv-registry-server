@@ -3,6 +3,8 @@
 const ID = /^HCV-[A-F0-9]{16}$/;
 const HASH = /^[a-f0-9]{64}$/;
 const VIDEO_ID = /^[A-Za-z0-9_-]{11}$/;
+const crypto = require('node:crypto');
+const ACCOUNT_HASH = /^[a-f0-9]{64}$/;
 
 function parseObject(value) {
   try {
@@ -22,7 +24,29 @@ function eligibleCertificate(cert, provenance, latestStatus) {
     status === 'ACTIVE';
 }
 
-function checkPublication(payload, certificate, provenance, latestStatus) {
+function checkCreatorConsentRequest(payload, certificate, provenance, latestStatus, session) {
+  if (!payload || !ID.test(payload.hcvId || '')) return 'INVALID_HCV_ID';
+  if (!eligibleCertificate(certificate, provenance, latestStatus)) return 'CERTIFICATE_NOT_ELIGIBLE';
+  const cert = parseObject(certificate.certificate_raw);
+  const p = parseObject(provenance.provenance_raw);
+  const accountHash = session?.accountId
+    ? crypto.createHash('sha256').update(String(session.accountId)).digest('hex') : '';
+  if (!ACCOUNT_HASH.test(accountHash) || accountHash !== p?.accountSubjectHash ||
+      !session?.creatorId || session.creatorId !== cert?.meta?.identity?.creatorId) {
+    return 'CREATOR_OWNERSHIP_NOT_VERIFIED';
+  }
+  if (payload.originalSha256 !== cert?.content?.hash ||
+      !HASH.test(payload.originalSha256 || '')) return 'ORIGINAL_HASH_MISMATCH';
+  if (payload.intent !== 'PUBLISH_VERIFIED_ORIGINAL' ||
+      payload.publishReference !== true) return 'EXPLICIT_PUBLICATION_CONSENT_REQUIRED';
+  if (payload.monetize !== true && payload.monetize !== false) {
+    return 'MONETIZATION_CONSENT_MISSING';
+  }
+  if (payload.rightsConfirmed !== true) return 'RIGHTS_NOT_CONFIRMED';
+  return null;
+}
+
+function checkPublication(payload, certificate, provenance, latestStatus, storedConsent) {
   if (!payload || !ID.test(payload.hcvId || '')) return 'INVALID_HCV_ID';
   if (!eligibleCertificate(certificate, provenance, latestStatus)) return 'CERTIFICATE_NOT_ELIGIBLE';
   const cert = parseObject(certificate.certificate_raw);
@@ -45,13 +69,29 @@ function checkPublication(payload, certificate, provenance, latestStatus) {
     return 'CONSENT_NOT_BOUND';
   }
   if (c.monetize !== true && c.monetize !== false) return 'MONETIZATION_CONSENT_MISSING';
+  // A publisher's JSON declaration is NEVER creator consent. It must match
+  // an active, server-issued consent registered under the creator's session.
+  const saved = parseObject(storedConsent?.consent_raw);
+  if (!storedConsent || storedConsent.state !== 'ACTIVE' ||
+      !saved || !ACCOUNT_HASH.test(storedConsent.account_subject_hash || '') ||
+      saved.recordId !== c.recordId || saved.hcvId !== c.hcvId ||
+      saved.originalSha256 !== c.originalSha256 ||
+      saved.creatorSubject !== c.creatorSubject ||
+      saved.grantedAt !== c.grantedAt ||
+      saved.publishReference !== true || saved.monetize !== c.monetize ||
+      saved.rightsConfirmed !== true ||
+      storedConsent.hcv_id !== c.hcvId ||
+      storedConsent.record_id !== c.recordId) return 'CREATOR_CONSENT_NOT_AUTHENTICATED';
+  const p = parseObject(provenance.provenance_raw);
+  if (p?.accountSubjectHash !== storedConsent.account_subject_hash ||
+      p?.creatorId !== saved.creatorSubject) return 'CREATOR_CONSENT_NOT_AUTHENTICATED';
   if (payload.rightsConfirmed !== true) return 'RIGHTS_NOT_CONFIRMED';
   if (typeof payload.pipelineAuditId !== 'string' || payload.pipelineAuditId.length < 12 ||
       payload.pipelineAuditId.length > 128) return 'AUDIT_MISSING';
   return null;
 }
 
-function publicReference(row, certificate, provenance, latestStatus) {
+function publicReference(row, certificate, provenance, latestStatus, storedConsent) {
   if (!row || row.state !== 'PUBLISHED' ||
       !eligibleCertificate(certificate, provenance, latestStatus)) return null;
   const cert = parseObject(certificate.certificate_raw);
@@ -60,6 +100,17 @@ function publicReference(row, certificate, provenance, latestStatus) {
   const consent = parseObject(row.consent_raw);
   if (!consent || consent.publishReference !== true ||
       consent.hcvId !== row.hcv_id || consent.originalSha256 !== row.original_sha256) return null;
+  const saved = parseObject(storedConsent?.consent_raw);
+  if (!storedConsent || storedConsent.state !== 'ACTIVE' ||
+      storedConsent.hcv_id !== row.hcv_id ||
+      storedConsent.record_id !== consent.recordId ||
+      !saved || saved.recordId !== consent.recordId ||
+      saved.hcvId !== row.hcv_id ||
+      saved.originalSha256 !== row.original_sha256 ||
+      saved.publishReference !== true || saved.rightsConfirmed !== true ||
+      saved.monetize !== consent.monetize ||
+      parseObject(provenance.provenance_raw)?.accountSubjectHash !==
+        storedConsent.account_subject_hash) return null;
   return {
     hcvId: row.hcv_id,
     availability: 'REFERENCE_AVAILABLE',
@@ -73,4 +124,4 @@ function publicReference(row, certificate, provenance, latestStatus) {
   };
 }
 
-module.exports = { checkPublication, eligibleCertificate, publicReference };
+module.exports = { checkCreatorConsentRequest, checkPublication, eligibleCertificate, publicReference };
