@@ -78,7 +78,7 @@ function recordVerifiedPlatformReceipt({
       !SHA256.test(uploadSessionHash || '') ||
       !SHA256.test(publisherSubjectHash || '') ||
       processingStatus !== 'succeeded' ||
-      visibility !== 'public' ||
+      visibility !== 'unlisted' ||
       !Number.isFinite(Date.parse(verifiedAt))) {
     throw new Error('PLATFORM_RECEIPT_NOT_VERIFIED');
   }
@@ -118,7 +118,7 @@ function getVerifiedPlatformReceipt({
       row.hcv_id !== hcvId ||
       row.uploaded_sha256 !== expectedSha256 ||
       row.processing_status !== 'succeeded' ||
-      row.visibility !== 'public' ||
+      row.visibility !== 'unlisted' ||
       !SHA256.test(row.upload_session_hash || '') ||
       !SHA256.test(row.publisher_subject_hash || '')) {
     return null;
