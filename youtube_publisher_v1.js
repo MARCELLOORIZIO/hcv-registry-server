@@ -380,6 +380,35 @@ async function publishTrustedVideoReference({
   };
 }
 
+
+async function deleteUploadedVideo({
+  fetchImpl = fetch,
+  config = requiredServerConfig(),
+  videoId,
+}) {
+  if (!YOUTUBE_ID.test(videoId || '')) {
+    throw new Error('YOUTUBE_DELETE_INPUT_INVALID');
+  }
+  const token = await refreshAccessToken({
+    fetchImpl,
+    clientId: config.clientId,
+    clientSecret: config.clientSecret,
+    refreshToken: config.refreshToken,
+  });
+  const response = await fetchImpl(
+    'https://www.googleapis.com/youtube/v3/videos?id=' +
+      encodeURIComponent(videoId),
+    {
+      method: 'DELETE',
+      headers: {authorization: 'Bearer ' + token.access_token},
+    },
+  );
+  if (response.status !== 204 && !response.ok) {
+    throw new Error('YOUTUBE_DELETE_FAILED');
+  }
+  return true;
+}
+
 function openRegistryDb(dbPath = process.env.DB_PATH ||
   path.join(__dirname, 'registry.db')) {
   const db = new Database(dbPath);
@@ -398,5 +427,6 @@ module.exports = {
   uploadResumableFile,
   fetchVideoStatus,
   publishTrustedVideoReference,
+  deleteUploadedVideo,
   openRegistryDb,
 };
