@@ -6,6 +6,7 @@ const crypto = require('crypto');
 const Database = require('better-sqlite3');
 const { authenticateRegistrySession } = require('./registry_certificate_security');
 const { verifyManifestAttestation } = require('./trusted_derivation_v1');
+const { requireActiveViewEntitlement } = require('./verified_originals_entitlement');
 const { getVerifiedPlatformReceipt } = require('./verified_originals_platform_receipts');
 const {
   HCV_ID, SHA256, CONSENT_VERSION, parseObject, hashText,
@@ -253,26 +254,43 @@ function publicActiveReference(hcvId) {
   return publicRow(activePublication.get(hcvId), e);
 }
 
+function publicAvailability(hcvId) {
+  const reference = publicActiveReference(hcvId);
+  if (!reference) {
+    return {
+      hcvId,
+      availability: 'REFERENCE_NOT_AVAILABLE',
+      socialFileVerdict: 'NOT_VERIFIED',
+    };
+  }
+  return {
+    hcvId,
+    availability: 'REFERENCE_AVAILABLE',
+    publicationStatus: 'PUBLISHED',
+    platform: reference.platform,
+    certificateVerdict: reference.certificateVerdict,
+    socialFileVerdict: 'NOT_VERIFIED',
+    viewAccess: 'SUBSCRIPTION_REQUIRED',
+  };
+}
+
 function publicHistory(hcvId) {
   const e = eligibility(hcvId);
   if (!e) return [];
-  return publicationsForHcv.all(hcvId).map((row) => {
-    const active = publicRow(row, e);
-    if (active) return active;
-    return {
-      publicationId: row.publication_id,
-      hcvId: row.hcv_id,
-      platform: row.platform,
-      platformPostId: row.platform_post_id,
-      publicationStatus: row.publication_status,
-      createdAt: row.created_at,
-      publishedAt: row.published_at,
-      revokedAt: row.revoked_at,
-      unavailableAt: row.unavailable_at,
-      publicUrl: null,
-      socialFileVerdict: 'NOT_VERIFIED',
-    };
-  });
+  return publicationsForHcv.all(hcvId).map((row) => ({
+    publicationId: row.publication_id,
+    hcvId: row.hcv_id,
+    platform: row.platform,
+    publicationStatus: row.publication_status,
+    createdAt: row.created_at,
+    publishedAt: row.published_at,
+    revokedAt: row.revoked_at,
+    unavailableAt: row.unavailable_at,
+    viewAccess: row.publication_status === 'PUBLISHED'
+      ? 'SUBSCRIPTION_REQUIRED'
+      : 'UNAVAILABLE',
+    socialFileVerdict: 'NOT_VERIFIED',
+  }));
 }
 
 function pinnedDerivationKeys() {
@@ -332,18 +350,19 @@ function trustedRow(hcvId, outputSha256, parentHash) {
 }
 
 function referencePage(hcvId, reference) {
-  const link = reference
-    ? '<p><a href="' + escapeHtml(reference.publicUrl) +
-      '" rel="noopener noreferrer">GUARDA IL CONTENUTO CERTIFICATO</a></p>'
-    : '<p>Nessun contenuto certificato pubblico è attualmente disponibile.</p>';
+  const availability = reference
+    ? '<p><strong>ORIGINALE CERTIFICATO DISPONIBILE</strong></p>' +
+      '<p>La visualizzazione richiede un abbonamento SIGILLUM attivo e avviene dall’app.</p>'
+    : '<p>Nessun originale certificato è attualmente disponibile.</p>';
   const state = reference ? 'CONTENUTO CERTIFICATO DISPONIBILE' : 'RIFERIMENTO NON DISPONIBILE';
   return '<!doctype html><html lang="it"><meta charset="utf-8">' +
     '<meta name="viewport" content="width=device-width,initial-scale=1">' +
     '<title>SIGILLUM Verified Originals</title>' +
     '<main style="max-width:720px;margin:40px auto;font:17px/1.5 sans-serif">' +
     '<h1>' + escapeHtml(state) + '</h1><p>HCV-ID: ' + escapeHtml(hcvId) + '</p>' +
-    link + '<p><a href="/verify/' + escapeHtml(hcvId) + '">VERIFICA CODICE E CERTIFICATO</a></p>' +
-    '<p>Il riferimento ufficiale non dimostra che un file visto su un altro social sia identico. ' +
+    availability +
+    '<p><a href="/verify/' + escapeHtml(hcvId) + '">VERIFICA CODICE E CERTIFICATO</a></p>' +
+    '<p>La presenza di un riferimento non dimostra che un file visto su un altro social sia identico. ' +
     'Un HCV-ID può essere copiato. La coincidenza esatta richiede una prova crittografica sui byte verificati.</p>' +
     '</main></html>';
 }
@@ -450,6 +469,7 @@ async function handle(req, res) {
 
   const compat = /^\/api\/verified-originals\/(HCV-[A-F0-9]{16})$/.exec(url.pathname);
   const active = /^\/api\/verified-originals\/(HCV-[A-F0-9]{16})\/active$/.exec(url.pathname);
+  const view = /^\/api\/verified-originals\/(HCV-[A-F0-9]{16})\/view$/.exec(url.pathname);
   const list = /^\/api\/verified-originals\/(HCV-[A-F0-9]{16})\/publications$/.exec(url.pathname);
   const consentStatus = /^\/api\/verified-originals\/consents\/(HCV-[A-F0-9]{16})$/.exec(url.pathname);
   const consentWithdraw = /^\/api\/verified-originals\/consents\/(HCV-[A-F0-9]{16})\/withdraw$/.exec(url.pathname);
@@ -458,25 +478,29 @@ async function handle(req, res) {
   const page = /^\/originals\/(HCV-[A-F0-9]{16})$/.exec(url.pathname);
 
   if (req.method === 'GET' && compat) {
-    const ref = publicActiveReference(compat[1]);
-    send(res, 200, ref ? {
-      hcvId: compat[1],
-      availability: 'REFERENCE_AVAILABLE',
-      ...ref,
-    } : {
-      hcvId: compat[1],
-      availability: 'REFERENCE_NOT_AVAILABLE',
-      socialFileVerdict: 'NOT_VERIFIED',
-    });
+    send(res, 200, publicAvailability(compat[1]));
     return true;
   }
 
   if (req.method === 'GET' && active) {
-    const ref = publicActiveReference(active[1]);
-    send(res, 200, ref || {
-      hcvId: active[1],
-      publicationStatus: 'NONE_ACTIVE',
-      socialFileVerdict: 'NOT_VERIFIED',
+    send(res, 200, publicAvailability(active[1]));
+    return true;
+  }
+
+  if (req.method === 'GET' && view) {
+    authenticateRegistrySession(
+      db,
+      req.headers.authorization,
+      new Date(),
+    );
+    await requireActiveViewEntitlement(req.headers.authorization);
+    const ref = publicActiveReference(view[1]);
+    if (!ref) fail('REFERENCE_NOT_AVAILABLE', 404);
+    send(res, 200, {
+      hcvId: view[1],
+      availability: 'REFERENCE_AVAILABLE',
+      access: 'ENTITLED',
+      ...ref,
     });
     return true;
   }
@@ -651,5 +675,5 @@ http.createServer = function verifiedOriginalsV2CreateServer(listener) {
 };
 
 module.exports = {
-  handle, publicActiveReference, publicHistory, registerPublicationRecord,
+  handle, publicActiveReference, publicAvailability, publicHistory, registerPublicationRecord,
 };
