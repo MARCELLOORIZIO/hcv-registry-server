@@ -30,7 +30,7 @@ const originalPath = path.join(tmp, 'original.mp4');
 execFileSync(ffmpegPath, [
   '-hide_banner', '-loglevel', 'error', '-nostdin', '-y',
   '-f', 'lavfi', '-i', 'color=c=black:s=320x240:d=1',
-  '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-an',
+  '-c:v', 'mpeg4', '-q:v', '5', '-pix_fmt', 'yuv420p', '-an',
   '-movflags', '+faststart', originalPath,
 ], {stdio:'pipe'});
 
