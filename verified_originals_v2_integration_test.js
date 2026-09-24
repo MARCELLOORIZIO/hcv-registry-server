@@ -24,9 +24,72 @@ const DEVICE = 'c'.repeat(64);
 const OWNER_TOKEN = 'owner-test-token';
 const OTHER_TOKEN = 'other-test-token';
 const ADMIN_TOKEN = process.env.SIGILLUM_VERIFIED_ORIGINALS_ADMIN_TOKEN;
+const DERIVATION_KEY_ID = 'sigillum_test_key';
+const derivativeKeys = crypto.generateKeyPairSync('rsa', {modulusLength: 2048});
+process.env.SIGILLUM_DERIVATION_PUBLIC_KEYS_JSON = JSON.stringify({
+  [DERIVATION_KEY_ID]: derivativeKeys.publicKey.export({
+    format: 'pem',
+    type: 'spki',
+  }),
+});
 
 function sha(value) {
   return crypto.createHash('sha256').update(value).digest('hex');
+}
+
+function signedCertificateRaw() {
+  const deviceKeys = crypto.generateKeyPairSync('rsa', {modulusLength: 2048});
+  const jwk = deviceKeys.publicKey.export({format: 'jwk'});
+  const certKey = {
+    modulus: Buffer.from(jwk.n, 'base64url').toString('base64'),
+    exponent: Buffer.from(jwk.e, 'base64url').toString('base64'),
+  };
+  const creatorName = 'Owner';
+  const deviceFingerprint = sha(JSON.stringify(certKey));
+  const chain = [];
+  let prev = 'GENESIS';
+  for (const type of ['START', 'CONTENT_BOUND', 'STOP']) {
+    const event = {type, timestamp: '2026-09-24T10:00:00.000Z', prev};
+    event.hash = sha(JSON.stringify(event));
+    chain.push(event);
+    prev = event.hash;
+  }
+  const payload = {
+    format: 'HCV_CERTIFICATE',
+    version: 2,
+    sessionId: 'integration-session',
+    createdAt: '2026-09-24T10:00:00.000Z',
+    meta: {
+      hcvId: HCV_ID,
+      identity: {
+        creatorId: CREATOR_ID,
+        creatorName,
+        devicePublicKeyFingerprint: deviceFingerprint,
+        identityFingerprint: sha(
+          CREATOR_ID + '|' + creatorName + '|' + deviceFingerprint,
+        ),
+      },
+    },
+    content: {
+      type: 'video',
+      hash: ORIGINAL,
+      size: 1234,
+      name: 'original.mp4',
+    },
+    claims: {},
+    rootHash: sha(JSON.stringify(chain)),
+    chain,
+  };
+  return JSON.stringify({
+    ...payload,
+    signatureAlgorithm: 'RSA-SHA256-HCV-V2',
+    signature: crypto.sign(
+      'RSA-SHA256',
+      Buffer.from(JSON.stringify(payload), 'utf8'),
+      deviceKeys.privateKey,
+    ).toString('base64'),
+    publicKey: certKey,
+  });
 }
 
 function seed() {
@@ -85,13 +148,7 @@ function seed() {
   `);
 
   const now = '2026-09-24T10:00:00.000Z';
-  const certificate = {
-    format: 'HCV_CERTIFICATE',
-    version: 2,
-    meta: {hcvId: HCV_ID, identity: {creatorId: CREATOR_ID}},
-    content: {type: 'video', hash: ORIGINAL, size: 1234, name: 'original.mp4'},
-  };
-  const raw = JSON.stringify(certificate);
+  const raw = signedCertificateRaw();
   db.prepare(
     'INSERT INTO certificates (hcv_id,created_at,certificate_raw) VALUES (?,?,?)',
   ).run(HCV_ID, now, raw);
@@ -149,10 +206,14 @@ function seed() {
     '2027-09-24T10:00:00.000Z',
   );
 
-  const manifest = {
+  const statement = {
     schema: 'SIGILLUM_TRUSTED_DERIVATION_V1',
     hcvId: HCV_ID,
-    parent: {kind: 'original', sha256: ORIGINAL},
+    parent: {
+      kind: 'original',
+      sha256: ORIGINAL,
+      signedCertificateDigest: sha(raw),
+    },
     output: {sha256: REFERENCE, byteLength: 1111, mediaType: 'video'},
     transform: {
       operation: 'video_transcode_h264_aac_v1',
@@ -160,12 +221,19 @@ function seed() {
       policyVersion: 'SIGILLUM_NON_EDITORIAL_V1',
     },
     issuer: {
-      keyId: 'sigillum_test_key',
+      keyId: DERIVATION_KEY_ID,
       signatureAlgorithm: 'RSA-SHA256-PKCS1V15',
     },
     createdAt: now,
     nonce: '11111111-1111-4111-8111-111111111111',
-    signature: 'x'.repeat(128),
+  };
+  const manifest = {
+    ...statement,
+    signature: crypto.sign(
+      'RSA-SHA256',
+      Buffer.from(JSON.stringify(statement), 'utf8'),
+      derivativeKeys.privateKey,
+    ).toString('base64'),
   };
   db.prepare(`
     INSERT INTO trusted_derivations
@@ -283,6 +351,37 @@ async function run() {
       }},
     );
     assert.equal(badPlatformId.status, 400);
+
+    const tamperedDb = new Database(dbPath);
+    const trustedRaw = tamperedDb.prepare(
+      'SELECT manifest_raw FROM trusted_derivations WHERE output_sha256=?',
+    ).get(REFERENCE).manifest_raw;
+    const tamperedManifest = JSON.parse(trustedRaw);
+    tamperedManifest.signature = 'forged';
+    tamperedDb.prepare(
+      'UPDATE trusted_derivations SET manifest_raw=? WHERE output_sha256=?',
+    ).run(JSON.stringify(tamperedManifest), REFERENCE);
+    tamperedDb.close();
+
+    const forgedDerivative = await call(
+      base, 'POST', '/api/verified-originals/publications',
+      {token: ADMIN_TOKEN, body: {
+        hcvId: HCV_ID,
+        consentRecordId: consentId,
+        trustedDerivativeSha256: REFERENCE,
+        platform: 'youtube',
+        platformPostId: 'AbCdEfGhI_1',
+        monetizationEnabled: false,
+      }},
+    );
+    assert.equal(forgedDerivative.status, 422);
+    assert.equal(forgedDerivative.json.error, 'TRUSTED_DERIVATION_REQUIRED');
+
+    const restoreDb = new Database(dbPath);
+    restoreDb.prepare(
+      'UPDATE trusted_derivations SET manifest_raw=? WHERE output_sha256=?',
+    ).run(trustedRaw, REFERENCE);
+    restoreDb.close();
 
     const noReceipt = await call(
       base, 'POST', '/api/verified-originals/publications',
