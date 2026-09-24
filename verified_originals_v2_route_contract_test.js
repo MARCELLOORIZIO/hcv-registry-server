@@ -10,6 +10,7 @@ for (const required of [
   '/api/verified-originals/publications',
   'trusted_derivations',
   'TRUSTED_DERIVATION_REQUIRED',
+  'PLATFORM_UPLOAD_RECEIPT_REQUIRED',
   'CREATOR_OWNERSHIP_NOT_VERIFIED',
   'ACTIVE_CREATOR_CONSENT_REQUIRED',
   'MONETIZATION_NOT_AUTHORIZED',
@@ -25,6 +26,8 @@ assert(!source.includes("payload.referenceSha256"), 'client must not assert refe
 assert(!source.includes("pipelineVerified"), 'request boolean must not stand in for trusted derivation');
 assert(source.includes("platformReference("), 'platform URL must be derived server-side');
 assert(source.includes("consentRecordId"), 'publication must bind explicit server consent');
+assert(source.includes('getVerifiedPlatformReceipt'),
+  'publication must require a server-verified platform upload receipt');
 assert(source.includes("SIGILLUM_VERIFIED_ORIGINALS_ADMIN_TOKEN"),
   'publisher path must require server-side operator credential');
 
