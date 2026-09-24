@@ -22,7 +22,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - run: npm install --ignore-scripts
+      - run: npm install
       - run: npm run check
       - run: npm run test:verified-originals
       - run: npm run test:registry-security
