@@ -8,9 +8,11 @@ that a particular Instagram/TikTok/YouTube download is byte-identical.
 
 1. Capture A: original HCVPACK remains with the creator; signed HCV certificate
    and ORIGINAL_SHA256 are in the Registry. No video automatically uploaded.
-2. A explicitly opts in to a public reference and separately chooses whether
-   SIGILLUM may monetize it. Rights in video, soundtrack and identifiable people
-   require appropriate clearance.
+2. A signs in to their Creator session and explicitly opts in to a public
+   reference; monetization remains a separate, default-off choice. The Registry
+   checks certificate ownership against the session and creates its own immutable
+   consent record. Rights in video, soundtrack and identifiable people require
+   appropriate clearance.
 3. A TRUSTED, authenticated SIGILLUM publishing worker must read the certified
    source media, verify source SHA256 against its HCV certificate, render the
    public copy, hash the actual bytes it uploads, and record the SHA256 and audit
@@ -21,12 +23,14 @@ that a particular Instagram/TikTok/YouTube download is byte-identical.
    the viewed rendition is available. The SHA256 of the UPLOADED file does NOT
    equal SHA256 of the transcoded video STREAMED by YouTube.
 5. Restricted internal POST registers HCV-ID, source hash, rendition hash,
-   YouTube ID, consent record, rights assertion and worker audit ID.
+   YouTube ID, existing SERVER-ISSUED creator consent record, rights assertion
+   and worker audit ID. Invented creator consent metadata is rejected.
 6. B searches HCV-ID: /verify/HCV-... handles certificate status; separate
    /api/verified-originals/HCV-... exposes the audiovisual reference (if eligible).
    /originals/HCV-... gives a public page without self-hosting the video.
-7. Withdrawal revokes the reference in SIGILLUM, but an operator must also
-   unpublish/delete the YouTube post and preserve a private audit event.
+7. Creator withdrawal immediately revokes the consent and hides the reference
+   in SIGILLUM. An operator must also unpublish/delete any YouTube post and
+   preserve a private audit event; the API reports takedown pending, not done.
    A revoked/disputed certificate hides the reference independently.
 8. None of these steps proves the truth of the scene or integrity of an
    arbitrary third-party social copy bearing a copied HCV-ID.
@@ -42,13 +46,17 @@ that a particular Instagram/TikTok/YouTube download is byte-identical.
 - The /api/certificate existing protocol stays unchanged.
 - Monetization permission is a separate affirmative TRUE/FALSE choice;
   never infer it from permission to display a reference.
-- Binding currently checks an operator-recorded consent subject equals the
-  creatorId in the signed certificate. The trusted publisher must verify a
-  creator-authenticated consent event (signature or logged authenticated
-  session). JSON metadata alone is NOT proof of human consent.
-- This extension DOES NOT include a YouTube OAuth integration, uploader,
-  consent-capture UI, automatic takedown or media-original verification
-  worker. Do not enter real publications before these exist and pass audit.
+- Creator consent is issued by the Registry ONLY after checking the Creator
+  session against signed certificate creatorId and accountSubjectHash in
+  cryptographically verified provenance. The publisher must submit the exact
+  stored consent record; forged metadata, mismatched monetization choice and
+  withdrawn consent are rejected. This is session-authenticated action, not a
+  guarantee about the participant's legal capacity or all depicted third parties.
+- Creator consent capture and withdrawal endpoints now exist on the DRAFT
+  Registry branch, with a matching app form on DRAFT app PR #119. This extension
+  STILL DOES NOT include a YouTube OAuth integration, uploader, automatic
+  takedown or byte-verified media-original processing worker. No real
+  publications before these exist and pass audit.
 - The publisher token authenticates the trusted pipeline only; it does not
   independently attest a rendition or its derivation. No byte-integrity
   "green" for the YouTube-streamed copy.
@@ -69,6 +77,20 @@ GET /originals/HCV-0123456789ABCDEF
   Public link to verified Registry page and YouTube reference.
   No untrusted user-supplied URLs.
 
+POST /api/verified-originals/consents
+Authorization: Bearer <creator session>
+{"hcvId":"HCV-0123456789ABCDEF","originalSha256":"<original hash>",
+ "intent":"PUBLISH_VERIFIED_ORIGINAL","publishReference":true,
+ "rightsConfirmed":true,"monetize":false}
+
+GET /api/verified-originals/consents/HCV-0123456789ABCDEF
+Authorization: Bearer <creator session>
+  {hcvId,consentState:"NONE|ACTIVE|WITHDRAWN",monetize,...}
+
+POST /api/verified-originals/consents/HCV-0123456789ABCDEF/withdraw
+Authorization: Bearer <creator session>
+  Hides public reference immediately; YouTube takedown is NOT automatic.
+
 POST /api/verified-originals (operator only; staged)
 {
   "hcvId":"HCV-0123456789ABCDEF",
@@ -87,7 +109,8 @@ POST /api/verified-originals (operator only; staged)
     "grantedAt":"2026-09-24T09:00:00Z",
     "recordId":"unique-consent-record-id",
     "publishReference":true,
-    "monetize":false
+    "monetize":false,
+    "rightsConfirmed":true
   }
 }
 
@@ -95,13 +118,15 @@ POST /api/verified-originals/HCV-0123456789ABCDEF/withdraw
 Authorization: Bearer <server-only operator token>
 {"auditId":"unique-withdrawal-audit-id"}
 
-No self-serve creator POST exists in this MVP. It must not be mistaken for a
-production consent solution. The write route remains disabled by default.
+The creator POST is limited to validated Creator sessions and does not publish
+media. The operator publisher POST remains disabled without its server-only
+secret. The server-issued consent is necessary but NOT sufficient to prove
+that a rendition came from the certified file; the trusted worker is missing.
 
 ## Next production gate
 
 YouTube channel creation/verification requires account-owner action; ChatGPT
-has not opened a channel or received OAuth credentials. Build consent capture,
-trusted upload and byte hashing, webhook/poll for completed processing,
+has not opened a channel or received OAuth credentials. Verify creator consent capture on devices, implement trusted upload and byte
+hashing, webhook/poll for completed processing,
 withdrawal/takedown, account confirmation, rights compliance, then run real
 end-to-end tests. PR remains draft; do not merge or deploy prematurely.
