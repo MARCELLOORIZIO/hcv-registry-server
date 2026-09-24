@@ -6,10 +6,11 @@
     "node": "20.x"
   },
   "scripts": {
-    "start": "node --require ./registry_http_guard.js --require ./registry_public_verify_guard.js server.js",
-    "check": "node --check server.js && node --check auth_api.js && node --check kyc_proxy.js && node --check auth_proxy.js && node --check auth_smoke_test.js && node --check registry_certificate_security.js && node --check registry_certificate_security_test.js && node --check registry_http_guard.js && node --check registry_http_guard_test.js && node --check registry_public_verify_guard.js && node --check registry_public_verify_guard_test.js && node --check registry_fallback_media_binding_test.js && node --check trusted_derivation_v1.js && node --check trusted_derivation_v1_test.js",
+    "start": "node --require ./registry_http_guard.js --require ./verified_originals_v2_guard.js --require ./registry_public_verify_guard.js server.js",
+    "check": "node --check server.js && node --check auth_api.js && node --check kyc_proxy.js && node --check auth_proxy.js && node --check auth_smoke_test.js && node --check registry_certificate_security.js && node --check registry_certificate_security_test.js && node --check registry_http_guard.js && node --check registry_http_guard_test.js && node --check registry_public_verify_guard.js && node --check registry_public_verify_guard_test.js && node --check registry_fallback_media_binding_test.js && node --check trusted_derivation_v1.js && node --check trusted_derivation_v1_test.js && node --check verified_originals_v2_policy.js && node --check verified_originals_v2_guard.js && node --check verified_originals_v2_policy_test.js && node --check verified_originals_v2_route_contract_test.js",
     "smoke": "node auth_smoke_test.js",
-    "test:registry-security": "node registry_certificate_security_test.js && node registry_http_guard_test.js && node registry_public_verify_guard_test.js && node registry_fallback_media_binding_test.js && node trusted_derivation_v1_test.js"
+    "test:registry-security": "node registry_certificate_security_test.js && node registry_http_guard_test.js && node registry_public_verify_guard_test.js && node registry_fallback_media_binding_test.js && node trusted_derivation_v1_test.js && node verified_originals_v2_policy_test.js && node verified_originals_v2_route_contract_test.js",
+    "test:verified-originals-v2": "node verified_originals_v2_policy_test.js && node verified_originals_v2_route_contract_test.js"
   },
   "dependencies": {
     "better-sqlite3": "^11.9.1"
