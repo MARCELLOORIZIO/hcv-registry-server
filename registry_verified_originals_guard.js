@@ -9,7 +9,10 @@ const http = require('http');
 const path = require('path');
 const crypto = require('crypto');
 const Database = require('better-sqlite3');
-const { checkPublication, publicReference } = require('./verified_originals_policy');
+const {
+  checkCreatorConsentRequest, checkPublication, publicReference,
+} = require('./verified_originals_policy');
+const { authenticateRegistrySession } = require('./registry_certificate_security');
 
 const ID = /^HCV-[A-F0-9]{16}$/;
 const db = new Database(process.env.DB_PATH || path.join(__dirname, 'registry.db'));
@@ -27,6 +30,27 @@ db.exec([
   'created_at TEXT NOT NULL',
   ');'
 ].join(' '));
+
+db.exec([
+  'CREATE TABLE IF NOT EXISTS verified_originals_consents (',
+  'record_id TEXT PRIMARY KEY, hcv_id TEXT NOT NULL,',
+  'account_subject_hash TEXT NOT NULL, consent_raw TEXT NOT NULL,',
+  'state TEXT NOT NULL, granted_at TEXT NOT NULL, withdrawn_at TEXT',
+  ');',
+  'CREATE INDEX IF NOT EXISTS verified_originals_consents_hcv_idx',
+  'ON verified_originals_consents(hcv_id, granted_at);'
+].join(' '));
+
+const consentById = db.prepare('SELECT * FROM verified_originals_consents WHERE record_id = ?');
+const latestConsent = db.prepare(
+  'SELECT * FROM verified_originals_consents WHERE hcv_id = ? ORDER BY granted_at DESC, rowid DESC LIMIT 1'
+);
+const insertConsent = db.prepare(
+  'INSERT INTO verified_originals_consents (record_id,hcv_id,account_subject_hash,consent_raw,state,granted_at,withdrawn_at) VALUES (?,?,?,?,?,?,NULL)'
+);
+const revokeConsent = db.prepare(
+  "UPDATE verified_originals_consents SET state='WITHDRAWN',withdrawn_at=? WHERE record_id=? AND state='ACTIVE'"
+);
 
 const certificate = db.prepare('SELECT * FROM certificates WHERE hcv_id = ?');
 const provenance = db.prepare('SELECT * FROM registry_provenance WHERE hcv_id = ?');
@@ -50,6 +74,11 @@ const save = db.transaction((p, at) => {
   audit.run(p.hcvId, 'PUBLISHED', p.pipelineAuditId, at);
 });
 const retract = db.transaction((id, at, why) => {
+  const current = existing.get(id);
+  if (current) {
+    const c = JSON.parse(current.consent_raw);
+    revokeConsent.run(at, c.recordId);
+  }
   withdraw.run(at, id);
   audit.run(id, 'WITHDRAWN', why, at);
 });
@@ -86,8 +115,17 @@ async function readJson(req) {
   return result;
 }
 function record(id) {
-  return publicReference(existing.get(id), certificate.get(id),
-    provenance.get(id), latestStatus.get(id));
+  const row = existing.get(id);
+  let saved = null;
+  if (row) {
+    try {
+      saved = consentById.get(JSON.parse(row.consent_raw).recordId);
+    } catch (_) {
+      return null;
+    }
+  }
+  return publicReference(row, certificate.get(id),
+    provenance.get(id), latestStatus.get(id), saved);
 }
 function escapeHtml(v) {
   return String(v).replaceAll('&','&amp;').replaceAll('<','&lt;')
@@ -126,13 +164,79 @@ async function handle(req, res) {
     res.end(referencePage(page[1], data));
     return true;
   }
+  // Consent is written ONLY by the authenticated account that registered
+  // the cryptographically validated original certificate.
+  if (req.method === 'POST' && url.pathname === '/api/verified-originals/consents') {
+    const session = authenticateRegistrySession(db, req.headers.authorization, new Date());
+    const payload = await readJson(req);
+    const id = payload.hcvId;
+    if (!ID.test(id || '')) {send(res,400,{error:'INVALID_HCV_ID'});return true;}
+    const cert = certificate.get(id);
+    const p = provenance.get(id);
+    const reason = checkCreatorConsentRequest(
+      payload, cert, p, latestStatus.get(id), session,
+    );
+    if (reason) {send(res,422,{error:reason});return true;}
+    const prior = latestConsent.get(id);
+    if (prior?.state === 'ACTIVE') {
+      send(res,409,{error:'ACTIVE_CONSENT_ALREADY_EXISTS'});return true;
+    }
+    const now = new Date().toISOString();
+    const accountHash = crypto.createHash('sha256')
+      .update(String(session.accountId)).digest('hex');
+    const consent = {
+      version:1,recordId:crypto.randomUUID(),hcvId:id,
+      originalSha256:payload.originalSha256,
+      creatorSubject:session.creatorId,grantedAt:now,
+      publishReference:true,monetize:payload.monetize,
+      rightsConfirmed:true,
+    };
+    insertConsent.run(consent.recordId,id,accountHash,JSON.stringify(consent),'ACTIVE',now);
+    audit.run(id,'CREATOR_CONSENT_GRANTED',consent.recordId,now);
+    send(res,201,{ok:true,hcvId:id,consent,publicationState:'NOT_PUBLISHED'});
+    return true;
+  }
+  const creatorWithdraw =
+    /^\\/api\\/verified-originals\\/consents\\/(HCV-[A-F0-9]{16})\\/withdraw$/.exec(url.pathname);
+  if (req.method === 'POST' && creatorWithdraw) {
+    const session = authenticateRegistrySession(db, req.headers.authorization, new Date());
+    const id = creatorWithdraw[1];
+    const p = provenance.get(id);
+    let parsed = null;
+    try {parsed=JSON.parse(p?.provenance_raw || 'null');}catch (_) {}
+    const accountHash = crypto.createHash('sha256')
+      .update(String(session.accountId)).digest('hex');
+    if (!parsed || parsed.accountSubjectHash !== accountHash ||
+        parsed.creatorId !== session.creatorId) {
+      send(res,403,{error:'CREATOR_OWNERSHIP_NOT_VERIFIED'});return true;
+    }
+    const current = latestConsent.get(id);
+    if (!current || current.state !== 'ACTIVE' ||
+        current.account_subject_hash !== accountHash) {
+      send(res,404,{error:'ACTIVE_CONSENT_NOT_FOUND'});return true;
+    }
+    const now = new Date().toISOString();
+    const retractCreator = db.transaction(() => {
+      revokeConsent.run(now,current.record_id);
+      const published = existing.get(id);
+      if (published && published.state === 'PUBLISHED') {
+        withdraw.run(now,id);
+      }
+      audit.run(id,'CREATOR_CONSENT_WITHDRAWN',current.record_id,now);
+    });
+    retractCreator();
+    send(res,200,{ok:true,hcvId:id,availability:'REFERENCE_NOT_AVAILABLE',
+      platformTakedown:'PENDING_OPERATOR_CONFIRMATION'});
+    return true;
+  }
   if (req.method === 'POST' && url.pathname === '/api/verified-originals') {
     if (!allowed(req)) { send(res, 403, {error:'PUBLISHER_NOT_AUTHORIZED'}); return true; }
     const payload = await readJson(req);
     const id = payload.hcvId;
     if (!ID.test(id || '')) {send(res, 400, {error:'INVALID_HCV_ID'});return true;}
+    const savedConsent = consentById.get(payload.consent?.recordId || '');
     const reason = checkPublication(payload, certificate.get(id),
-      provenance.get(id), latestStatus.get(id));
+      provenance.get(id), latestStatus.get(id), savedConsent);
     if (reason) {send(res, 422, {error:reason});return true;}
     const old = existing.get(id);
     if (old && old.state === 'PUBLISHED') {
