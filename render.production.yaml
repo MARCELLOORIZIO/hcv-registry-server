@@ -5,7 +5,7 @@ services:
     region: frankfurt
     plan: starter
     branch: release/reconciled-prelaunch-backend-clean-20260824
-    autoDeployTrigger: off
+    autoDeployTrigger: commit
     buildCommand: npm install
     startCommand: npm start
     healthCheckPath: /health
