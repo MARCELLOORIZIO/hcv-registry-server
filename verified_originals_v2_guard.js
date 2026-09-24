@@ -5,6 +5,7 @@ const path = require('path');
 const crypto = require('crypto');
 const Database = require('better-sqlite3');
 const { authenticateRegistrySession } = require('./registry_certificate_security');
+const { getVerifiedPlatformReceipt } = require('./verified_originals_platform_receipts');
 const {
   HCV_ID, SHA256, CONSENT_VERSION, parseObject, hashText,
   registryEligibility, creatorOwns, platformReference, trustedDerivation,
@@ -42,6 +43,7 @@ CREATE TABLE IF NOT EXISTS verified_originals_publications (
   derived_from TEXT NOT NULL,
   derivation_type TEXT NOT NULL,
   derivation_manifest_sha256 TEXT NOT NULL,
+  platform_receipt_id TEXT NOT NULL,
   created_at TEXT NOT NULL,
   publication_status TEXT NOT NULL
     CHECK(publication_status IN ('PUBLISHED','REVOKED','UNAVAILABLE')),
@@ -73,6 +75,14 @@ CREATE TABLE IF NOT EXISTS verified_originals_audit (
 CREATE INDEX IF NOT EXISTS verified_originals_audit_hcv_idx
   ON verified_originals_audit(hcv_id, id);
 `);
+
+const publicationColumns = new Set(
+  db.prepare('PRAGMA table_info(verified_originals_publications)').all()
+    .map(row => row.name),
+);
+if (!publicationColumns.has('platform_receipt_id')) {
+  db.exec('ALTER TABLE verified_originals_publications ADD COLUMN platform_receipt_id TEXT');
+}
 
 const certificate = db.prepare('SELECT * FROM certificates WHERE hcv_id = ?');
 const provenance = db.prepare('SELECT * FROM registry_provenance WHERE hcv_id = ?');
@@ -108,10 +118,10 @@ const insertPublication = db.prepare(`
 INSERT INTO verified_originals_publications
 (publication_id,hcv_id,platform,platform_post_id,public_url,reference_sha256,
  original_content_sha256,derived_from,derivation_type,derivation_manifest_sha256,
- created_at,publication_status,consent_record_id,consent_version,
+ platform_receipt_id,created_at,publication_status,consent_record_id,consent_version,
  monetization_consent,published_by,published_at,revoked_at,unavailable_at,
  audit_metadata_raw)
-VALUES (?,?,?,?,?,?,?,?,?,?,?,'PUBLISHED',?,?,?,?,?,NULL,NULL,?)
+VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'PUBLISHED',?,?,?,?,?,NULL,NULL,?)
 `);
 const setPublicationState = db.prepare(`
 UPDATE verified_originals_publications
@@ -227,7 +237,13 @@ function audit({hcvId, publicationId = null, eventType, actorType,
 function publicRow(row, e) {
   if (!row || !e) return null;
   const consent = consentById.get(row.consent_record_id);
-  return publicPublication(row, e, consent);
+  const receipt = getVerifiedPlatformReceipt({
+    hcvId: row.hcv_id,
+    platform: row.platform,
+    platformPostId: row.platform_post_id,
+    expectedSha256: row.reference_sha256,
+  });
+  return publicPublication(row, e, consent, receipt);
 }
 
 function publicActiveReference(hcvId) {
@@ -452,6 +468,13 @@ async function handle(req, res) {
       String(payload.platform || ''), String(payload.platformPostId || ''),
     );
     if (!ref) fail('PLATFORM_REFERENCE_INVALID_OR_UNSUPPORTED', 400);
+    const platformReceipt = getVerifiedPlatformReceipt({
+      hcvId,
+      platform: ref.platform,
+      platformPostId: ref.platformPostId,
+      expectedSha256: trusted.manifest.output.sha256,
+    });
+    if (!platformReceipt) fail('PLATFORM_UPLOAD_RECEIPT_REQUIRED', 422);
     const now = new Date().toISOString();
     const publicationId = crypto.randomUUID();
     const manifestRaw = JSON.stringify(trusted.manifest);
@@ -464,7 +487,8 @@ async function handle(req, res) {
           publicationId, hcvId, ref.platform, ref.platformPostId, ref.publicUrl,
           trusted.manifest.output.sha256, e.originalHash, e.originalHash,
           trusted.manifest.transform.operation, manifestSha,
-          trusted.manifest.createdAt, consent.record_id, consent.consent_version,
+          platformReceipt.receipt_id, trusted.manifest.createdAt,
+          consent.record_id, consent.consent_version,
           payload.monetizationEnabled ? 1 : 0, publisher, now,
           JSON.stringify(metadata),
         );
