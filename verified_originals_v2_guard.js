@@ -488,11 +488,6 @@ async function handle(req, res) {
   }
 
   if (req.method === 'GET' && view) {
-    authenticateRegistrySession(
-      db,
-      req.headers.authorization,
-      new Date(),
-    );
     await requireActiveViewEntitlement(req.headers.authorization);
     const ref = publicActiveReference(view[1]);
     if (!ref) fail('REFERENCE_NOT_AVAILABLE', 404);
