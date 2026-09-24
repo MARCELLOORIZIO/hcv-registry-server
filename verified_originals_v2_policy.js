@@ -91,14 +91,22 @@ function sanitizeAuditMetadata(value) {
   return allowed;
 }
 
-function publicPublication(row, eligibility, consentRow) {
+function publicPublication(row, eligibility, consentRow, platformReceipt) {
   if (!row || row.publication_status !== 'PUBLISHED' || !eligibility ||
       row.original_content_sha256 !== eligibility.originalHash ||
       row.derived_from !== eligibility.originalHash ||
       !SHA256.test(row.reference_sha256 || '') ||
       !consentRow || consentRow.state !== 'ACTIVE' ||
       consentRow.record_id !== row.consent_record_id ||
-      consentRow.hcv_id !== row.hcv_id) {
+      consentRow.hcv_id !== row.hcv_id ||
+      !platformReceipt ||
+      platformReceipt.receipt_id !== row.platform_receipt_id ||
+      platformReceipt.hcv_id !== row.hcv_id ||
+      platformReceipt.platform !== row.platform ||
+      platformReceipt.platform_post_id !== row.platform_post_id ||
+      platformReceipt.uploaded_sha256 !== row.reference_sha256 ||
+      platformReceipt.processing_status !== 'succeeded' ||
+      platformReceipt.visibility !== 'public') {
     return null;
   }
   const reference = platformReference(row.platform, row.platform_post_id);
