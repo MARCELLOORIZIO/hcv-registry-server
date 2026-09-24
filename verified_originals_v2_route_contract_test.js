@@ -4,6 +4,7 @@ const fs = require('node:fs');
 
 const source = fs.readFileSync(require.resolve('./verified_originals_v2_guard'),'utf8');
 const publicVerify = fs.readFileSync(require.resolve('./registry_public_verify_guard'),'utf8');
+const entitlement = fs.readFileSync(require.resolve('./verified_originals_entitlement'),'utf8');
 
 for (const required of [
   '/api/verified-originals/consents',
@@ -16,7 +17,6 @@ for (const required of [
   'MONETIZATION_NOT_AUTHORIZED',
   '/api/verified-originals/',
   '/view',
-  'SUBSCRIPTION_REQUIRED',
   "publication_status='REVOKED'",
   "publication_status='PUBLISHED'",
   'socialFileVerdict',
@@ -35,6 +35,8 @@ assert(source.includes('verifyManifestAttestation'),
   'trusted derivative signature must be cryptographically reverified');
 assert(source.includes('getVerifiedPlatformReceipt'),
   'publication must require a server-verified platform upload receipt');
+assert(entitlement.includes('SUBSCRIPTION_REQUIRED'));
+assert(entitlement.includes('SIGILLUM_ENTITLEMENT_STATUS_URL'));
 assert(source.includes("SIGILLUM_VERIFIED_ORIGINALS_ADMIN_TOKEN"),
   'publisher path must require server-side operator credential');
 
