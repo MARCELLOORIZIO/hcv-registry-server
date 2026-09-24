@@ -10,9 +10,10 @@ const Database = require('better-sqlite3');
 const { authenticateRegistrySession } = require('./registry_certificate_security');
 const { registryOriginal, createTrustedVideoRendition } =
   require('./trusted_derivation_v1');
-const { publishTrustedVideoReference, requiredServerConfig } =
+const { publishTrustedVideoReference, deleteUploadedVideo, requiredServerConfig } =
   require('./youtube_publisher_v1');
 const { registerPublicationRecord } = require('./verified_originals_v2_guard');
+const { invalidatePlatformReceipt } = require('./verified_originals_platform_receipts');
 
 const HCV_ID = /^HCV-[A-F0-9]{16}$/;
 const MAX_BYTES = Number(process.env.SIGILLUM_VERIFIED_ORIGINALS_MAX_BYTES || 536870912);
@@ -184,19 +185,36 @@ async function orchestrate(req, hcvId, url) {
       fail(published.reason || 'YOUTUBE_PUBLICATION_NOT_READY', 502);
     }
 
-    return registerPublicationRecord({
-      hcvId,
-      consentRecordId,
-      trustedDerivativeSha256: manifest.output.sha256,
-      platform: 'youtube',
-      platformPostId: published.platformPostId,
-      monetizationEnabled,
-      auditMetadata: {
-        workerVersion: 'secure_ingest_orchestrator_v1',
-        platformStatus: published.status.processingStatus,
-        platformVisibility: published.status.privacyStatus,
-      },
-    });
+    try {
+      return registerPublicationRecord({
+        hcvId,
+        consentRecordId,
+        trustedDerivativeSha256: manifest.output.sha256,
+        platform: 'youtube',
+        platformPostId: published.platformPostId,
+        monetizationEnabled,
+        auditMetadata: {
+          workerVersion: 'secure_ingest_orchestrator_v1',
+          platformStatus: published.status.processingStatus,
+          platformVisibility: published.status.privacyStatus,
+        },
+      });
+    } catch (registrationError) {
+      try {
+        await deleteUploadedVideo({
+          config: youtubeConfig,
+          videoId: published.platformPostId,
+        });
+      } catch (_) {}
+      try {
+        invalidatePlatformReceipt({
+          platform: 'youtube',
+          platformPostId: published.platformPostId,
+          reason: 'registration_failed',
+        });
+      } catch (_) {}
+      throw registrationError;
+    }
   } finally {
     await cleanup([manifestPath, derivedPath, originalPath]);
     try { await fs.promises.rmdir(jobDir); } catch (_) {}
