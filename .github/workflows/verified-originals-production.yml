@@ -1,0 +1,96 @@
+name: Verified Originals production PostgreSQL
+on:
+  push:
+    branches:
+      - feature/verified-originals-production-v1-20260924
+  pull_request:
+    paths:
+      - 'verified_originals_production.js'
+      - 'verified_originals_production_test.js'
+      - 'verified_originals_production_contract_test.js'
+      - 'tool/apply_verified_originals_production.py'
+      - 'production_server.js'
+      - 'package.json'
+      - 'render.production.yaml'
+      - '.github/workflows/verified-originals-production.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  production:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: sigillum
+          POSTGRES_PASSWORD: sigillum
+          POSTGRES_DB: sigillum
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U sigillum"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://sigillum:sigillum@127.0.0.1:5432/sigillum
+      NODE_ENV: test
+      PRODUCTION_LIVE: "false"
+      CERTIFICATE_WRITES_ENABLED: "true"
+      SUBSCRIPTIONS_ENFORCED: "true"
+      KYC_REQUIRES_SUBSCRIPTION: "true"
+      TEST_FIXED_CODE: "123456"
+      PG_SSL_REQUIRED: "false"
+      APPLE_BILLING_TEST_MODE: "true"
+      APPLE_BUNDLE_ID: com.sigillum.hcv
+      APPLE_MONTHLY_PRODUCT_ID: com.sigillum.hcv.creator.monthly
+      APPLE_ANNUAL_PRODUCT_ID: com.sigillum.hcv.creator.annual
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install dependencies
+        run: npm install
+      - name: Apply production patches and run safety suite
+        run: npm run check
+      - name: Run Verified Originals PostgreSQL end-to-end
+        run: node verified_originals_production_test.js
+        timeout-minutes: 5
+      - name: Start patched production server
+        run: |
+          npm start > verified-originals-production.log 2>&1 &
+          echo $! > verified-originals-production.pid
+          for i in {1..40}; do
+            if curl -fsS http://127.0.0.1:8080/health > health.json; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat verified-originals-production.log
+          exit 1
+      - name: Verify live routes are wired without exposing locator
+        run: |
+          cat health.json
+          grep -q '"verifiedOriginals":true' health.json
+          curl -fsS http://127.0.0.1:8080/api/verified-originals/HCV-0000000000000000 > availability.json
+          grep -q '"availability":"REFERENCE_NOT_AVAILABLE"' availability.json
+          if grep -q 'publicUrl' availability.json; then
+            echo "Free lookup leaked locator"
+            exit 1
+          fi
+      - name: Upload validation logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verified-originals-production-validation
+          path: |
+            health.json
+            availability.json
+            verified-originals-production.log
+          if-no-files-found: ignore
+          retention-days: 7
