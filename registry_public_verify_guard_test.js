@@ -124,7 +124,9 @@ function seedDb() {
 }
 
 async function getText(baseUrl, pathname) {
-  const response = await fetch(`${baseUrl}${pathname}`);
+  const response = await fetch(`${baseUrl}${pathname}`, {
+    headers: {Connection: 'close'},
+  });
   return { status: response.status, text: await response.text() };
 }
 
@@ -172,6 +174,7 @@ async function run() {
 
     console.log('registry_public_verify_guard_test: PASS');
   } finally {
+    server.closeAllConnections?.();
     await new Promise(resolve => server.close(resolve));
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
