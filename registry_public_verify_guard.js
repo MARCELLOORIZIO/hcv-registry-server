@@ -6,6 +6,7 @@
 const http = require('http');
 const path = require('path');
 const Database = require('better-sqlite3');
+const { publicActiveReference } = require('./verified_originals_v2_guard');
 
 const HCV_ID_PATTERN = /^HCV-[A-F0-9]{16}$/;
 const dbPath = process.env.DB_PATH || path.join(__dirname, 'registry.db');
@@ -109,7 +110,7 @@ function provenanceState(row, latestStatus) {
   };
 }
 
-function renderVerificationPage({ row, provenanceRow, latestStatus }) {
+function renderVerificationPage({ row, provenanceRow, latestStatus, originalReference = null }) {
   const certificate = parseJsonObject(row.certificate_raw) || {};
   const provenance = provenanceRow ? parseJsonObject(provenanceRow.provenance_raw) : null;
   const state = provenanceState(provenanceRow, latestStatus);
@@ -160,6 +161,12 @@ function renderVerificationPage({ row, provenanceRow, latestStatus }) {
     )
     .join('');
 
+  const originalReferenceBlock = originalReference
+    ? `<div class="reference"><strong>CONTENUTO CERTIFICATO DISPONIBILE</strong><br>` +
+      `<a href="${escapeHtml(originalReference.publicUrl)}" rel="noopener noreferrer">GUARDA IL CONTENUTO CERTIFICATO</a><br>` +
+      `<small>Questo riferimento ufficiale non prova che un file visto su un altro social sia identico.</small></div>`
+    : `<div class="reference"><strong>Nessun riferimento pubblico attivo.</strong></div>`;
+
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -177,6 +184,7 @@ function renderVerificationPage({ row, provenanceRow, latestStatus }) {
     .row{background:#f8faf8;border:1px solid #e5eae6;border-radius:12px;padding:12px 14px}
     .label{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:#6c756f}
     .value{margin-top:4px;font-size:14px;word-break:break-all}
+    .reference{margin-top:22px;padding:16px;border:1px solid #d8e5dc;border-radius:12px;background:#f7fbf8}.reference a{display:inline-block;margin-top:8px;font-weight:700}.reference small{display:inline-block;margin-top:8px;color:#667069}
     .note{margin-top:24px;padding-top:18px;border-top:1px solid #e2e7e3;color:#667069;font-size:12px}
   </style>
 </head>
@@ -187,6 +195,7 @@ function renderVerificationPage({ row, provenanceRow, latestStatus }) {
       <h1>${escapeHtml(state.heading)}</h1>
       <p class="summary">${escapeHtml(state.summary)}</p>
       <div class="grid">${rows}</div>
+      ${originalReferenceBlock}
       <div class="note">SIGILLUM reports technical certificate and Registry evidence. It does not assert the truth of the depicted scene and does not replace a forensic or legal expert assessment.</div>
     </section>
   </main>
@@ -232,10 +241,13 @@ function handlePublicVerify(req, res) {
     // certificate guard. Such a row is displayed conservatively as legacy.
   }
 
+  let originalReference = null;
+  try { originalReference = publicActiveReference(hcvId); } catch (_) {}
+
   sendHtml(
     res,
     200,
-    renderVerificationPage({ row, provenanceRow, latestStatus }),
+    renderVerificationPage({ row, provenanceRow, latestStatus, originalReference }),
   );
   return true;
 }
