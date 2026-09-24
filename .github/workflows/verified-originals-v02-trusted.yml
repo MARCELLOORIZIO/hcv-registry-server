@@ -4,7 +4,7 @@ on:
     branches: [feature/verified-originals-v02-trusted-20260924]
   pull_request:
     paths:
-      - 'verified_originals_v2_*.js'
+      - 'verified_originals_*.js'
       - 'registry_public_verify_guard.js'
       - 'trusted_derivation_v1.js'
       - 'package.json'
