@@ -26,6 +26,10 @@ assert(!source.includes("payload.referenceSha256"), 'client must not assert refe
 assert(!source.includes("pipelineVerified"), 'request boolean must not stand in for trusted derivation');
 assert(source.includes("platformReference("), 'platform URL must be derived server-side');
 assert(source.includes("consentRecordId"), 'publication must bind explicit server consent');
+assert(source.includes('SIGILLUM_DERIVATION_PUBLIC_KEYS_JSON'),
+  'trusted derivative verification must require server-pinned public keys');
+assert(source.includes('verifyManifestAttestation'),
+  'trusted derivative signature must be cryptographically reverified');
 assert(source.includes('getVerifiedPlatformReceipt'),
   'publication must require a server-verified platform upload receipt');
 assert(source.includes("SIGILLUM_VERIFIED_ORIGINALS_ADMIN_TOKEN"),
