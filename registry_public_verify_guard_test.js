@@ -124,10 +124,28 @@ function seedDb() {
 }
 
 async function getText(baseUrl, pathname) {
-  const response = await fetch(`${baseUrl}${pathname}`, {
-    headers: {Connection: 'close'},
+  const target = new URL(pathname, baseUrl);
+  return new Promise((resolve, reject) => {
+    const request = http.request({
+      protocol: target.protocol,
+      hostname: target.hostname,
+      port: target.port,
+      path: target.pathname + target.search,
+      method: 'GET',
+      agent: false,
+      headers: {Connection: 'close'},
+    }, response => {
+      const chunks = [];
+      response.on('data', chunk => chunks.push(chunk));
+      response.on('end', () => resolve({
+        status: response.statusCode,
+        text: Buffer.concat(chunks).toString('utf8'),
+      }));
+    });
+    request.setTimeout(5000, () => request.destroy(new Error('TEST_HTTP_TIMEOUT')));
+    request.on('error', reject);
+    request.end();
   });
-  return { status: response.status, text: await response.text() };
 }
 
 async function run() {
