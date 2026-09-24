@@ -141,6 +141,7 @@ async function requestJson(baseUrl, method, urlPath, { auth = true, body } = {})
     headers: {
       ...(auth ? { Authorization: `Bearer ${token}` } : {}),
       ...(body ? { 'Content-Type': 'application/json' } : {}),
+      Connection: 'close',
     },
     ...(body ? { body: JSON.stringify(body) } : {}),
   });
@@ -221,6 +222,7 @@ async function run() {
 
     console.log('registry_http_guard_test: PASS');
   } finally {
+    server.closeAllConnections?.();
     await new Promise(resolve => server.close(resolve));
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
