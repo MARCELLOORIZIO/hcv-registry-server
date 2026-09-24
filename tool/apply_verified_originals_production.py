@@ -38,16 +38,27 @@ if 'verifiedOriginals.handle(req, res, url)' not in source:
         raise RuntimeError('production URL anchor missing')
     source = source.replace(url_anchor, route_hook, 1)
 
-main_anchor = "  await initSchema();\n"
-main_extension = main_anchor + "  await verifiedOriginals.initSchema();\n"
 if 'await verifiedOriginals.initSchema();' not in source:
     main_idx = source.find('async function main()')
     if main_idx < 0:
         raise RuntimeError('production main anchor missing')
     tail = source[main_idx:]
-    if main_anchor not in tail:
-        raise RuntimeError('production initSchema anchor missing')
-    tail = tail.replace(main_anchor, main_extension, 1)
+    retry_anchor = "  await initSchemaWithRetry();\n"
+    direct_anchor = "  await initSchema();\n"
+    if retry_anchor in tail:
+        tail = tail.replace(
+            retry_anchor,
+            retry_anchor + "  await verifiedOriginals.initSchema();\n",
+            1,
+        )
+    elif direct_anchor in tail:
+        tail = tail.replace(
+            direct_anchor,
+            direct_anchor + "  await verifiedOriginals.initSchema();\n",
+            1,
+        )
+    else:
+        raise RuntimeError('production schema startup anchor missing')
     source = source[:main_idx] + tail
 
 if 'verifiedOriginals: true' not in source:
