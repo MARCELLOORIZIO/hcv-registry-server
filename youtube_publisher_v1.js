@@ -12,7 +12,7 @@ const {
 
 const YOUTUBE_ID = /^[A-Za-z0-9_-]{11}$/;
 const SHA256 = /^[a-f0-9]{64}$/;
-const OAUTH_SCOPE = 'https://www.googleapis.com/auth/youtube.upload';
+const OAUTH_SCOPE = 'https://www.googleapis.com/auth/youtube.force-ssl';
 const TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token';
 const UPLOAD_ENDPOINT =
   'https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status';
@@ -332,14 +332,30 @@ async function publishTrustedVideoReference({
     filePath,
     chunkSize,
   });
-  const status = await fetchVideoStatus({
-    fetchImpl,
-    accessToken,
-    videoId,
-  });
+  let status;
+  try {
+    status = await fetchVideoStatus({
+      fetchImpl,
+      accessToken,
+      videoId,
+    });
+  } catch (error) {
+    try {
+      await deleteUploadedVideo({fetchImpl, config, videoId});
+    } catch (_) {}
+    throw error;
+  }
 
   if (status.processingStatus !== 'succeeded' ||
       status.privacyStatus !== 'public') {
+    let cleanupSucceeded = false;
+    try {
+      cleanupSucceeded = await deleteUploadedVideo({
+        fetchImpl,
+        config,
+        videoId,
+      });
+    } catch (_) {}
     return {
       publicationReady: false,
       hcvId,
@@ -347,6 +363,7 @@ async function publishTrustedVideoReference({
       platformPostId: videoId,
       referenceSha256: trusted.sha256,
       status,
+      cleanupSucceeded,
       reason: status.privacyStatus !== 'public'
         ? 'YOUTUBE_REFERENCE_NOT_PUBLIC'
         : 'YOUTUBE_PROCESSING_NOT_SUCCEEDED',
