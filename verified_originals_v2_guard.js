@@ -5,6 +5,7 @@ const path = require('path');
 const crypto = require('crypto');
 const Database = require('better-sqlite3');
 const { authenticateRegistrySession } = require('./registry_certificate_security');
+const { verifyManifestAttestation } = require('./trusted_derivation_v1');
 const { getVerifiedPlatformReceipt } = require('./verified_originals_platform_receipts');
 const {
   HCV_ID, SHA256, CONSENT_VERSION, parseObject, hashText,
@@ -274,6 +275,33 @@ function publicHistory(hcvId) {
   });
 }
 
+function pinnedDerivationKeys() {
+  try {
+    const raw = String(process.env.SIGILLUM_DERIVATION_PUBLIC_KEYS_JSON || '');
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return null;
+    }
+    const result = {};
+    for (const [keyId, pem] of Object.entries(parsed)) {
+      if (!/^[A-Za-z0-9._-]{3,80}$/.test(keyId) ||
+          typeof pem !== 'string' || !pem) {
+        return null;
+      }
+      const key = crypto.createPublicKey(pem);
+      if (key.asymmetricKeyType !== 'rsa' ||
+          key.asymmetricKeyDetails?.modulusLength < 2048) {
+        return null;
+      }
+      result[keyId] = pem;
+    }
+    return Object.keys(result).length ? result : null;
+  } catch (_) {
+    return null;
+  }
+}
+
 function trustedRow(hcvId, outputSha256, parentHash) {
   if (!SHA256.test(outputSha256 || '')) return null;
   let row;
@@ -288,7 +316,19 @@ function trustedRow(hcvId, outputSha256, parentHash) {
   const manifest = trustedDerivation(
     row.manifest_raw, hcvId, outputSha256, parentHash,
   );
-  return manifest ? {row, manifest} : null;
+  if (!manifest) return null;
+
+  const certificateRow = certificate.get(hcvId);
+  const trustedKeys = pinnedDerivationKeys();
+  if (!certificateRow || !trustedKeys ||
+      !verifyManifestAttestation({
+        manifest,
+        certificateRaw: certificateRow.certificate_raw,
+        trustedKeys,
+      })) {
+    return null;
+  }
+  return {row, manifest};
 }
 
 function referencePage(hcvId, reference) {
