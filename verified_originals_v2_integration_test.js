@@ -192,6 +192,8 @@ async function call(base, method, pathname, {token, body} = {}) {
 async function run() {
   seed();
   require('./verified_originals_v2_guard');
+  const { recordVerifiedPlatformReceipt } =
+    require('./verified_originals_platform_receipts');
 
   const server = http.createServer((req, res) => {
     res.writeHead(418, {'content-type': 'text/plain'});
@@ -282,6 +284,47 @@ async function run() {
     );
     assert.equal(badPlatformId.status, 400);
 
+    const noReceipt = await call(
+      base, 'POST', '/api/verified-originals/publications',
+      {token: ADMIN_TOKEN, body: {
+        hcvId: HCV_ID,
+        consentRecordId: consentId,
+        trustedDerivativeSha256: REFERENCE,
+        platform: 'youtube',
+        platformPostId: 'AbCdEfGhI_1',
+        monetizationEnabled: false,
+      }},
+    );
+    assert.equal(noReceipt.status, 422);
+    assert.equal(noReceipt.json.error, 'PLATFORM_UPLOAD_RECEIPT_REQUIRED');
+
+    assert.throws(
+      () => recordVerifiedPlatformReceipt({
+        hcvId: HCV_ID,
+        platform: 'youtube',
+        platformPostId: 'AbCdEfGhI_1',
+        uploadedSha256: REFERENCE,
+        uploadSessionHash: 'e'.repeat(64),
+        processingStatus: 'succeeded',
+        visibility: 'private',
+        publisherSubjectHash: 'f'.repeat(64),
+      }),
+      /PLATFORM_RECEIPT_NOT_VERIFIED/,
+    );
+
+    const receipt = recordVerifiedPlatformReceipt({
+      hcvId: HCV_ID,
+      platform: 'youtube',
+      platformPostId: 'AbCdEfGhI_1',
+      uploadedSha256: REFERENCE,
+      uploadSessionHash: 'e'.repeat(64),
+      processingStatus: 'succeeded',
+      visibility: 'public',
+      publisherSubjectHash: 'f'.repeat(64),
+      metadata: {uploadProtocol: 'resumable'},
+    });
+    assert.equal(receipt.uploadedSha256, REFERENCE);
+
     const publication = await call(
       base, 'POST', '/api/verified-originals/publications',
       {token: ADMIN_TOKEN, body: {
@@ -329,7 +372,7 @@ async function run() {
     assert.equal(fallback.text, 'fallback');
 
     console.log(
-      'verified_originals_v2_integration_test: PASS — ownership, consent, trusted derivation, canonical URL, withdrawal',
+      'verified_originals_v2_integration_test: PASS — ownership, consent, trusted derivation, upload receipt, canonical URL, withdrawal',
     );
   } finally {
     await new Promise(resolve => server.close(resolve));
