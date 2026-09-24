@@ -11,6 +11,7 @@ const {
 } = require('./verified_originals_platform_receipts');
 
 const YOUTUBE_ID = /^[A-Za-z0-9_-]{11}$/;
+const YOUTUBE_CHANNEL_ID = /^UC[A-Za-z0-9_-]{22}$/;
 const SHA256 = /^[a-f0-9]{64}$/;
 const OAUTH_SCOPE = 'https://www.googleapis.com/auth/youtube.force-ssl';
 const TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token';
@@ -44,6 +45,7 @@ function requiredServerConfig(env = process.env) {
     clientSecret: String(env.YOUTUBE_CLIENT_SECRET || ''),
     redirectUri: String(env.YOUTUBE_REDIRECT_URI || ''),
     refreshToken: String(env.YOUTUBE_REFRESH_TOKEN || ''),
+    channelId: String(env.YOUTUBE_CHANNEL_ID || ''),
     publisherId: String(env.SIGILLUM_PUBLISHER_ID || ''),
   };
   for (const [key, value] of Object.entries(config)) {
@@ -302,6 +304,28 @@ async function fetchVideoStatus({
   };
 }
 
+
+async function verifyPublisherChannel({
+  fetchImpl = fetch,
+  accessToken,
+  expectedChannelId,
+}) {
+  if (!accessToken || !YOUTUBE_CHANNEL_ID.test(expectedChannelId || '')) {
+    throw new Error('YOUTUBE_CHANNEL_CONFIG_INVALID');
+  }
+  const response = await fetchImpl(
+    'https://www.googleapis.com/youtube/v3/channels?part=id&mine=true',
+    {headers: {authorization: 'Bearer ' + accessToken}},
+  );
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || !Array.isArray(payload.items) ||
+      payload.items.length !== 1 ||
+      payload.items[0]?.id !== expectedChannelId) {
+    throw new Error('YOUTUBE_CHANNEL_ID_MISMATCH');
+  }
+  return expectedChannelId;
+}
+
 async function publishTrustedVideoReference({
   db,
   filePath,
@@ -319,6 +343,11 @@ async function publishTrustedVideoReference({
     refreshToken: config.refreshToken,
   });
   const accessToken = token.access_token;
+  await verifyPublisherChannel({
+    fetchImpl,
+    accessToken,
+    expectedChannelId: config.channelId,
+  });
   const uploadUrl = await startResumableUpload({
     fetchImpl,
     accessToken,
@@ -443,6 +472,7 @@ module.exports = {
   startResumableUpload,
   uploadResumableFile,
   fetchVideoStatus,
+  verifyPublisherChannel,
   publishTrustedVideoReference,
   deleteUploadedVideo,
   openRegistryDb,
