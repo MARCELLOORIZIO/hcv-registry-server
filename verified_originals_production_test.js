@@ -212,12 +212,18 @@ async function fakeFetch(url, options = {}) {
   if (target === uploadUrl && options.method === 'PUT') {
     uploadPutCount += 1;
     uploadedBytes = Buffer.from(options.body);
-    return response(201,{id:VIDEO_ID});
+    const id = uploadMetadata?.snippet?.title === 'SIGILLUM '+PHOTO_HCV_ID
+      ? PHOTO_VIDEO_ID
+      : VIDEO_ID;
+    return response(201,{id});
   }
   if (target.includes('/youtube/v3/videos?part=status,processingDetails')) {
+    const id = target.includes(encodeURIComponent(PHOTO_VIDEO_ID))
+      ? PHOTO_VIDEO_ID
+      : VIDEO_ID;
     return response(200,{
       items:[{
-        id:VIDEO_ID,
+        id,
         etag:'etag-test',
         status:{privacyStatus:'unlisted',uploadStatus:'processed'},
         processingDetails:{processingStatus:'succeeded'},
@@ -314,8 +320,9 @@ async function requireCreatorAccess(req) {
 }
 
 function verifyCertificateRaw(_raw,expectedId) {
-  assert.equal(expectedId,HCV_ID);
-  return certificate;
+  if (expectedId === HCV_ID) return certificate;
+  if (expectedId === PHOTO_HCV_ID) return photoCertificate;
+  throw new Error('UNEXPECTED_HCV_ID '+expectedId);
 }
 
 function provenanceEnvelopeFromRow(row) {
@@ -368,7 +375,7 @@ async function resetDb() {
   ]);
 }
 
-async function request(base,method,pathname,{bearer,body,bytes}={}) {
+async function request(base,method,pathname,{bearer,body,bytes,contentType='video/mp4'}={}) {
   const target=new URL(pathname,base);
   const raw=body === undefined ? null : Buffer.from(JSON.stringify(body));
   const payload=bytes || raw;
@@ -382,7 +389,7 @@ async function request(base,method,pathname,{bearer,body,bytes}={}) {
       agent:false,
       headers:{
         ...(bearer?{authorization:'Bearer '+bearer}:{}),
-        ...(bytes?{'content-type':'video/mp4'}:{}),
+        ...(bytes?{'content-type':contentType}:{}),
         ...(raw?{'content-type':'application/json'}:{}),
         ...(payload?{'content-length':String(payload.length)}:{}),
         connection:'close',
