@@ -131,7 +131,8 @@ if "url.searchParams.get('lang')" not in source:
     replace_once(legal_call_old, legal_call_new, 'localized legal route')
 
 # Registration: server computes language and immutable hashes from the exact
-# localized documents it serves. Client-supplied versions are not authoritative.
+# localized documents it serves. Client-supplied versions and creator IDs are
+# not authoritative; runtime safety has already assigned serverCreatorId.
 reg_anchor = """    const creatorName = validateName(body.creatorName);
     if (body.acceptTerms !== true || body.acknowledgePrivacy !== true) throw publicError('TERMINI_NON_ACCETTATI', 400);
 """
@@ -146,8 +147,8 @@ reg_new = """    const creatorName = validateName(body.creatorName);
 if 'const termsDocumentSha256' not in source:
     replace_once(reg_anchor, reg_new, 'registration legal evidence')
 
-insert_sql_old = """`INSERT INTO accounts(id,email_normalized,email_display,password_salt,password_hash,creator_name,creator_id,terms_version,privacy_version,terms_accepted_at,privacy_ack_at,adult_confirmed_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$10,$10)`, [accountId, email, String(body.email).trim(), pw.salt, pw.passwordHash, creatorName, String(body.creatorId || ''), TERMS_VERSION, PRIVACY_VERSION, now]"""
-insert_sql_new = """`INSERT INTO accounts(id,email_normalized,email_display,password_salt,password_hash,creator_name,creator_id,terms_version,privacy_version,preferred_language,contract_language,terms_document_sha256,privacy_document_sha256,acceptance_method,terms_accepted_at,privacy_ack_at,adult_confirmed_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$10,$11,$12,'clickwrap',$13,$13,$13)`, [accountId, email, String(body.email).trim(), pw.salt, pw.passwordHash, creatorName, String(body.creatorId || ''), TERMS_VERSION, PRIVACY_VERSION, preferredLanguage, termsDocumentSha256, privacyDocumentSha256, now]"""
+insert_sql_old = """`INSERT INTO accounts(id,email_normalized,email_display,password_salt,password_hash,creator_name,creator_id,terms_version,privacy_version,terms_accepted_at,privacy_ack_at,adult_confirmed_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$10,$10)`, [accountId, email, String(body.email).trim(), pw.salt, pw.passwordHash, creatorName, serverCreatorId, TERMS_VERSION, PRIVACY_VERSION, now]"""
+insert_sql_new = """`INSERT INTO accounts(id,email_normalized,email_display,password_salt,password_hash,creator_name,creator_id,terms_version,privacy_version,preferred_language,contract_language,terms_document_sha256,privacy_document_sha256,acceptance_method,terms_accepted_at,privacy_ack_at,adult_confirmed_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$10,$11,$12,'clickwrap',$13,$13,$13)`, [accountId, email, String(body.email).trim(), pw.salt, pw.passwordHash, creatorName, serverCreatorId, TERMS_VERSION, PRIVACY_VERSION, preferredLanguage, termsDocumentSha256, privacyDocumentSha256, now]"""
 if "acceptance_method,terms_accepted_at" not in source:
     # The runtime-safety patch intentionally changes pool.query to client.query
     # inside a transaction. Replacing only the SQL+arguments preserves whichever
