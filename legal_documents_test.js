@@ -24,8 +24,10 @@ for (const lang of SUPPORTED_LANGUAGES) {
   assert.ok(terms.title.length > 5);
   assert.ok(terms.body.includes('2026-09-25'));
   assert.ok(terms.body.toLowerCase().includes('hcvpack'));
+  assert.ok(terms.body.includes('YouTube'));
   assert.ok(privacy.title.length > 5);
   assert.ok(privacy.body.includes('2026-09-25'));
+  assert.ok(privacy.body.includes('YouTube'));
   assert.ok(support.body.includes('marcelloorizio@legalmail.it'));
   assert.ok(deletion.body.length > 200);
 
