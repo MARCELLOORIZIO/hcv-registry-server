@@ -28,8 +28,9 @@ Companion app branch: MARCELLOORIZIO/sigillum-hcv:feature/build133-closed-chain-
 - 2026-09-25: HCVPACK SHA-256 is required, stored in publication/audit metadata and included in the YouTube reference description alongside original SHA-256 and Registry URL.
 - 2026-09-25: public /originals page localized for IT/EN/ES/RU.
 - 2026-09-25: contract/integration tests updated for camera provenance and HCVPACK binding.
-- 2026-09-25: added `.github/workflows/closed-chain-reference-v2-validation.yml`; validation pending.
-- Remaining before release: resolve checks; add full photo integration path test; legal/privacy version update; decide durable reference/withdrawal semantics; live YouTube compliance/upload test; no production deploy yet.
+- 2026-09-25: added `.github/workflows/closed-chain-reference-v2-validation.yml`.
+- 2026-09-25: backend validation run `36117377113` GREEN. Full backend checks and Verified Originals PostgreSQL integration test both passed.
+- Remaining before release: add/confirm full photo integration path coverage; legal/privacy version update; decide durable reference/withdrawal semantics; live YouTube compliance/upload test; no production deploy yet.
 
 ## Resume rule
 
