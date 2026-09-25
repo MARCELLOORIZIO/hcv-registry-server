@@ -17,13 +17,16 @@ const DATABASE_URL = process.env.DATABASE_URL;
 if (!DATABASE_URL) throw new Error('DATABASE_URL_REQUIRED');
 
 const HCV_ID = 'HCV-0123456789ABCDEF';
+const PHOTO_HCV_ID = 'HCV-FEDCBA9876543210';
 const CHANNEL_ID = 'UC0123456789ABCDEFGHIJKL';
 const VIDEO_ID = 'AbCdEfGhI_1';
+const PHOTO_VIDEO_ID = 'PhOtORef_01';
 const OWNER = 'acc-owner';
 const FREE = 'acc-free';
 const CREATOR_ID = 'creator-01';
 const DEVICE = 'a'.repeat(64);
 const HCVPACK_HASH = 'e'.repeat(64);
+const PHOTO_HCVPACK_HASH = '9'.repeat(64);
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sigillum-production-vo-'));
 const originalPath = path.join(tmp, 'original.mp4');
@@ -82,6 +85,63 @@ const certificate = {
       sessionId,
       pipelineVersion:'HCV_CAPTURE_BINDING_V1',
       event:provenanceEvent,
+    },
+  },
+};
+
+const photoPath = path.join(tmp, 'original.jpg');
+execFileSync(ffmpegPath, [
+  '-hide_banner', '-loglevel', 'error', '-nostdin', '-y',
+  '-f', 'lavfi', '-i', 'color=c=blue:s=640x480',
+  '-frames:v', '1', photoPath,
+], {stdio:'pipe'});
+const photoBytes = fs.readFileSync(photoPath);
+const photoHash = crypto.createHash('sha256').update(photoBytes).digest('hex');
+const photoCertificateRaw = JSON.stringify({test:'production-photo-verified-originals'});
+const photoSessionId = 'session-photo-closed-chain-test';
+const photoProvenanceEvent = {
+  type:'SIGILLUM_PROVENANCE_EVENT',
+  version:1,
+  sequence:0,
+  eventType:'CAPTURE_FINALIZED',
+  inputHash:photoHash,
+  timestamp:new Date().toISOString(),
+  deviceFingerprint:DEVICE,
+  sessionId:photoSessionId,
+  pipelineVersion:'HCV_CAPTURE_BINDING_V1',
+  nonce:'11223344556677889900aabbccddeeff',
+  parentEvent:'GENESIS',
+  metadata:{
+    hcvId:PHOTO_HCV_ID,
+    mediaType:'photo',
+    contentSize:photoBytes.length,
+    contentName:'original.jpg',
+    capturedAt:new Date().toISOString(),
+    captureSource:'HCV_CAMERA',
+  },
+  eventHash:'8'.repeat(64),
+  signatureAlgorithm:'RSA-SHA256-HCV-PROVENANCE-V1',
+  signature:'test-photo-signature',
+  publicKey:{modulus:'test',exponent:'AQAB'},
+};
+const photoCertificate = {
+  sessionId:photoSessionId,
+  meta:{hcvId:PHOTO_HCV_ID,identity:{creatorId:CREATOR_ID}},
+  content:{type:'photo',hash:photoHash,size:photoBytes.length,name:'original.jpg'},
+  claims:{
+    captureSource:'HCV_CAMERA',
+    liveCapture:true,
+    provenance:{
+      type:'SIGILLUM_CAPTURE_PROVENANCE_BINDING',
+      version:1,
+      status:'VERIFIED',
+      hcvId:PHOTO_HCV_ID,
+      eventHash:photoProvenanceEvent.eventHash,
+      inputHash:photoHash,
+      deviceFingerprint:DEVICE,
+      sessionId:photoSessionId,
+      pipelineVersion:'HCV_CAPTURE_BINDING_V1',
+      event:photoProvenanceEvent,
     },
   },
 };
