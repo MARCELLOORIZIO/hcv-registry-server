@@ -550,8 +550,68 @@ async function run() {
     assert.equal(rejected.json.error,'DERIVATION_ORIGINAL_SHA_MISMATCH');
     assert.equal(uploadSessionCount,uploadsBefore);
 
+    const photoConsent=await request(
+      base,'POST','/api/verified-originals/consents',
+      {
+        bearer:'owner-token',
+        body:{
+          hcvId:PHOTO_HCV_ID,
+          intent:'PUBLISH_VERIFIED_ORIGINAL',
+          publishReference:true,
+          rightsConfirmed:true,
+          monetizationConsent:false,
+        },
+      },
+    );
+    assert.equal(photoConsent.status,201,photoConsent.text);
+
+    const photoPublished=await request(
+      base,'POST',
+      '/api/verified-originals/publish/'+PHOTO_HCV_ID+
+        '?consentRecordId='+encodeURIComponent(photoConsent.json.recordId)+
+        '&monetizationEnabled=false'+
+        '&hcvpackSha256='+PHOTO_HCVPACK_HASH,
+      {
+        bearer:'owner-token',
+        bytes:photoBytes,
+        contentType:'image/jpeg',
+      },
+    );
+    assert.equal(photoPublished.status,201,photoPublished.text);
+    assert.equal(photoPublished.json.platform,'youtube');
+    assert.equal(
+      photoPublished.json.derivationType,
+      'photo_to_reference_video_v1',
+    );
+    assert.equal(photoPublished.json.hcvpackSha256,PHOTO_HCVPACK_HASH);
+    assert.equal(uploadMetadata.snippet.title,'SIGILLUM '+PHOTO_HCV_ID);
+    assert.ok(uploadedBytes && uploadedBytes.length > 1000);
+    assert.notDeepEqual(uploadedBytes,photoBytes);
+
+    const photoView=await request(
+      base,'GET','/api/verified-originals/'+PHOTO_HCV_ID+'/view',
+      {bearer:'owner-token'},
+    );
+    assert.equal(photoView.status,200,photoView.text);
+    assert.equal(
+      photoView.json.publicUrl,
+      'https://www.youtube.com/watch?v='+PHOTO_VIDEO_ID,
+    );
+    assert.equal(photoView.json.hcvpackSha256,PHOTO_HCVPACK_HASH);
+
+    const photoStored=await pool.query(
+      'SELECT derivation_type,hcvpack_sha256 FROM verified_originals_publications WHERE hcv_id=$1 AND publication_status=\'PUBLISHED\'',
+      [PHOTO_HCV_ID],
+    );
+    assert.equal(photoStored.rows.length,1);
+    assert.equal(
+      photoStored.rows[0].derivation_type,
+      'photo_to_reference_video_v1',
+    );
+    assert.equal(photoStored.rows[0].hcvpack_sha256,PHOTO_HCVPACK_HASH);
+
     console.log(
-      'verified_originals_production_test: PASS — PostgreSQL, exact original, unlisted YouTube, free/paid, withdrawal, tamper stop',
+      'verified_originals_production_test: PASS — PostgreSQL, video/photo exact originals, unlisted YouTube, free/paid, withdrawal, tamper stop',
     );
   } finally {
     server.closeAllConnections?.();
