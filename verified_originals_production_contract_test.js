@@ -32,6 +32,10 @@ for (const token of [
   'SIGILLUM_DERIVATION_PUBLIC_KEYS_JSON',
   'verified_originals_platform_receipts',
   'verified_originals_publications',
+  'HCVPACK_BINDING_SIGNATURE_INVALID',
+  'X-Sigillum-Hcvpack-Signature'.toLowerCase(),
+  'retryPendingTakedowns',
+  "processing_status='takedown_pending'",
 ]) {
   assert(feature.includes(token), 'feature missing invariant: '+token);
 }

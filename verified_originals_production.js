@@ -45,6 +45,28 @@ function strictBoolean(value) {
   return null;
 }
 
+function certificateRsaPublicKey(certificate) {
+  const publicKey = certificate?.publicKey;
+  const modulus = String(publicKey?.modulus || '');
+  const exponent = String(publicKey?.exponent || '');
+  if (!modulus || !exponent) return null;
+  try {
+    const key = crypto.createPublicKey({
+      key: {
+        kty: 'RSA',
+        n: Buffer.from(modulus, 'base64').toString('base64url'),
+        e: Buffer.from(exponent, 'base64').toString('base64url'),
+      },
+      format: 'jwk',
+    });
+    if (key.asymmetricKeyType !== 'rsa' ||
+        key.asymmetricKeyDetails?.modulusLength < 2048) return null;
+    return key;
+  } catch (_) {
+    return null;
+  }
+}
+
 function sleepMs(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -178,6 +200,40 @@ function createVerifiedOriginalsProduction({
     throw publicError(code, status, message);
   };
 
+  let takedownTimer = null;
+
+  function verifyHcvpackBindingSignature(req, original, hcvId, hcvpackSha256) {
+    if (String(req.headers['x-sigillum-hcvpack-binding-version'] || '') !== '1') {
+      return false;
+    }
+    const signature = String(req.headers['x-sigillum-hcvpack-signature'] || '');
+    if (!signature) return false;
+    const publicKey = certificateRsaPublicKey(original.certificate);
+    if (!publicKey) return false;
+    const statement =
+      'SIGILLUM_HCVPACK_BINDING_V1|' + hcvId + '|' +
+      original.contentHash + '|' + hcvpackSha256;
+    try {
+      return crypto.verify(
+        'RSA-SHA256',
+        Buffer.from(statement, 'utf8'),
+        publicKey,
+        Buffer.from(signature, 'base64'),
+      );
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function youtubeServiceConfigured() {
+    return Boolean(
+      process.env.YOUTUBE_CLIENT_ID &&
+      process.env.YOUTUBE_CLIENT_SECRET &&
+      process.env.YOUTUBE_REFRESH_TOKEN &&
+      YOUTUBE_CHANNEL_ID.test(String(process.env.YOUTUBE_CHANNEL_ID || '')),
+    );
+  }
+
   async function initSchema() {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS verified_originals_consents (
@@ -266,6 +322,7 @@ function createVerifiedOriginalsProduction({
       CREATE INDEX IF NOT EXISTS verified_originals_audit_hcv_idx
         ON verified_originals_audit(hcv_id, id DESC);
     `);
+    startTakedownWorker();
   }
 
   async function certificateRow(hcvId) {
@@ -731,7 +788,7 @@ function createVerifiedOriginalsProduction({
       'https://www.googleapis.com/youtube/v3/videos?id=' + encodeURIComponent(videoId),
       { method: 'DELETE', headers: { authorization: 'Bearer ' + accessToken } },
     );
-    return response.status === 204 || response.ok;
+    return response.status === 204 || response.status === 404 || response.ok;
   }
 
   async function waitYoutubeReady(accessToken, videoId) {
@@ -984,6 +1041,9 @@ function createVerifiedOriginalsProduction({
     const monetizationEnabled = strictBoolean(url.searchParams.get('monetizationEnabled'));
     const hcvpackSha256 = String(url.searchParams.get('hcvpackSha256') || '').toLowerCase();
     if (!consentRecordId || monetizationEnabled === null || !SHA256.test(hcvpackSha256)) fail('PUBLISH_REQUEST_INVALID', 400);
+    if (!verifyHcvpackBindingSignature(req, original, hcvId, hcvpackSha256)) {
+      fail('HCVPACK_BINDING_SIGNATURE_INVALID', 422);
+    }
     const consent = (await pool.query(`
       SELECT * FROM verified_originals_consents
       WHERE record_id=$1 AND hcv_id=$2 AND account_id=$3 AND state='ACTIVE'
@@ -1050,12 +1110,90 @@ function createVerifiedOriginalsProduction({
     }
   }
 
+  async function attemptTakedowns(publications) {
+    if (!publications.length) return 'COMPLETED';
+    try {
+      const config = youtubeConfig();
+      const accessToken = await oauthAccessToken(config);
+      await verifyYoutubeChannel(accessToken, config.channelId);
+      let allDeleted = true;
+      for (const publication of publications) {
+        if (publication.processing_status === 'withdrawn') continue;
+        const deleted = await deleteYoutubeVideo(
+          accessToken,
+          publication.platform_post_id,
+        );
+        allDeleted = allDeleted && deleted;
+        if (deleted) {
+          await pool.query(`
+            UPDATE verified_originals_platform_receipts
+            SET processing_status='withdrawn',visibility='unavailable',verified_at=NOW()
+            WHERE receipt_id=$1
+          `, [publication.platform_receipt_id]);
+        }
+      }
+      return allDeleted ? 'COMPLETED' : 'PARTIAL';
+    } catch (_) {
+      return 'PENDING';
+    }
+  }
+
+  async function retryPendingTakedowns() {
+    if (!youtubeServiceConfigured()) return { attempted: 0, completed: 0 };
+    const rows = (await pool.query(`
+      SELECT p.hcv_id,p.publication_id,p.platform_post_id,p.platform_receipt_id,
+             r.processing_status
+      FROM verified_originals_publications p
+      JOIN verified_originals_platform_receipts r
+        ON r.receipt_id=p.platform_receipt_id
+      WHERE p.publication_status='REVOKED'
+        AND r.processing_status<>'withdrawn'
+      ORDER BY p.revoked_at ASC NULLS LAST
+      LIMIT 100
+    `)).rows;
+    let completed = 0;
+    for (const row of rows) {
+      const status = await attemptTakedowns([row]);
+      if (status === 'COMPLETED') {
+        completed += 1;
+        try {
+          await audit({
+            hcvId: row.hcv_id,
+            publicationId: row.publication_id,
+            eventType: 'PLATFORM_TAKEDOWN_COMPLETED',
+            actorType: 'SIGILLUM_PUBLISHER',
+            actorSubjectHash: hashString(
+              String(process.env.SIGILLUM_PUBLISHER_ID || 'SIGILLUM_SERVER_V1'),
+            ),
+            metadata: { retryWorker: true },
+          });
+        } catch (_) {}
+      }
+    }
+    return { attempted: rows.length, completed };
+  }
+
+  function startTakedownWorker() {
+    if (takedownTimer || !youtubeServiceConfigured()) return;
+    const intervalMs = Math.max(
+      60_000,
+      Number(process.env.SIGILLUM_TAKEDOWN_RETRY_MS || 300_000),
+    );
+    takedownTimer = setInterval(() => {
+      retryPendingTakedowns().catch(error => {
+        console.error('SIGILLUM_TAKEDOWN_RETRY_FAILED', error?.message || error);
+      });
+    }, intervalMs);
+    if (typeof takedownTimer.unref === 'function') takedownTimer.unref();
+  }
+
   async function withdrawConsent(req, hcvId) {
     const session = await authenticate(req);
     await ownedOriginal(hcvId, session);
     const client = await pool.connect();
     let publications = [];
     let consent;
+    let newlyWithdrawn = false;
     try {
       await client.query('BEGIN');
       consent = (await client.query(`
@@ -1063,22 +1201,60 @@ function createVerifiedOriginalsProduction({
         WHERE hcv_id=$1 AND account_id=$2 AND state='ACTIVE'
         ORDER BY consented_at DESC LIMIT 1 FOR UPDATE
       `, [hcvId, session.account_id])).rows[0];
-      if (!consent) fail('ACTIVE_CONSENT_NOT_FOUND', 404);
-      publications = (await client.query(`
-        SELECT publication_id,platform_post_id,platform_receipt_id
-        FROM verified_originals_publications
-        WHERE hcv_id=$1 AND consent_record_id=$2 AND publication_status='PUBLISHED'
-      `, [hcvId, consent.record_id])).rows;
-      await client.query("UPDATE verified_originals_consents SET state='WITHDRAWN',withdrawn_at=NOW() WHERE record_id=$1", [consent.record_id]);
-      await client.query("UPDATE verified_originals_publications SET publication_status='REVOKED',revoked_at=NOW() WHERE hcv_id=$1 AND consent_record_id=$2 AND publication_status='PUBLISHED'", [hcvId, consent.record_id]);
-      await audit({
-        hcvId,
-        eventType: 'CREATOR_CONSENT_WITHDRAWN',
-        actorType: 'CREATOR',
-        actorSubjectHash: hashString(session.account_id),
-        metadata: { platformStatus: 'TAKEDOWN_REQUESTED' },
-        client,
-      });
+
+      if (consent) {
+        newlyWithdrawn = true;
+        publications = (await client.query(`
+          SELECT p.publication_id,p.platform_post_id,p.platform_receipt_id,
+                 r.processing_status
+          FROM verified_originals_publications p
+          JOIN verified_originals_platform_receipts r
+            ON r.receipt_id=p.platform_receipt_id
+          WHERE p.hcv_id=$1 AND p.consent_record_id=$2
+            AND p.publication_status='PUBLISHED'
+        `, [hcvId, consent.record_id])).rows;
+        await client.query(
+          "UPDATE verified_originals_consents SET state='WITHDRAWN',withdrawn_at=NOW() WHERE record_id=$1",
+          [consent.record_id],
+        );
+        await client.query(
+          "UPDATE verified_originals_publications SET publication_status='REVOKED',revoked_at=NOW() WHERE hcv_id=$1 AND consent_record_id=$2 AND publication_status='PUBLISHED'",
+          [hcvId, consent.record_id],
+        );
+        for (const publication of publications) {
+          await client.query(`
+            UPDATE verified_originals_platform_receipts
+            SET processing_status='takedown_pending',verified_at=NOW()
+            WHERE receipt_id=$1 AND processing_status<>'withdrawn'
+          `, [publication.platform_receipt_id]);
+          publication.processing_status = 'takedown_pending';
+        }
+        await audit({
+          hcvId,
+          eventType: 'CREATOR_CONSENT_WITHDRAWN',
+          actorType: 'CREATOR',
+          actorSubjectHash: hashString(session.account_id),
+          metadata: { platformStatus: 'TAKEDOWN_REQUESTED' },
+          client,
+        });
+      } else {
+        consent = (await client.query(`
+          SELECT * FROM verified_originals_consents
+          WHERE hcv_id=$1 AND account_id=$2 AND state='WITHDRAWN'
+          ORDER BY withdrawn_at DESC NULLS LAST, consented_at DESC
+          LIMIT 1
+        `, [hcvId, session.account_id])).rows[0];
+        if (!consent) fail('WITHDRAWN_CONSENT_NOT_FOUND', 404);
+        publications = (await client.query(`
+          SELECT p.publication_id,p.platform_post_id,p.platform_receipt_id,
+                 r.processing_status
+          FROM verified_originals_publications p
+          JOIN verified_originals_platform_receipts r
+            ON r.receipt_id=p.platform_receipt_id
+          WHERE p.hcv_id=$1 AND p.consent_record_id=$2
+            AND p.publication_status='REVOKED'
+        `, [hcvId, consent.record_id])).rows;
+      }
       await client.query('COMMIT');
     } catch (error) {
       try { await client.query('ROLLBACK'); } catch (_) {}
@@ -1087,27 +1263,29 @@ function createVerifiedOriginalsProduction({
       client.release();
     }
 
-    let takedown = 'PENDING';
-    try {
-      const config = youtubeConfig();
-      const accessToken = await oauthAccessToken(config);
-      await verifyYoutubeChannel(accessToken, config.channelId);
-      let allDeleted = true;
-      for (const publication of publications) {
-        const deleted = await deleteYoutubeVideo(accessToken, publication.platform_post_id);
-        allDeleted = allDeleted && deleted;
-        if (deleted) {
-          await pool.query(`
-            UPDATE verified_originals_platform_receipts
-            SET processing_status='withdrawn',visibility='unavailable',verified_at=NOW()
-            WHERE receipt_id=$1
-          `, [publication.platform_receipt_id]);
-        }      }
-      takedown = allDeleted ? 'COMPLETED' : 'PARTIAL';
-    } catch (_) {
-      takedown = 'PENDING';
+    const takedown = await attemptTakedowns(publications);
+    if (takedown === 'COMPLETED' && publications.length) {
+      try {
+        await audit({
+          hcvId,
+          eventType: 'PLATFORM_TAKEDOWN_COMPLETED',
+          actorType: newlyWithdrawn ? 'CREATOR' : 'SIGILLUM_PUBLISHER',
+          actorSubjectHash: hashString(
+            newlyWithdrawn
+              ? session.account_id
+              : String(process.env.SIGILLUM_PUBLISHER_ID || 'SIGILLUM_SERVER_V1'),
+          ),
+          metadata: { retry: !newlyWithdrawn },
+        });
+      } catch (_) {}
     }
-    return { ok: true, hcvId, consentState: 'WITHDRAWN', referenceAvailable: false, platformTakedown: takedown };
+    return {
+      ok: true,
+      hcvId,
+      consentState: 'WITHDRAWN',
+      referenceAvailable: false,
+      platformTakedown: takedown,
+    };
   }
 
   async function handle(req, res, url) {

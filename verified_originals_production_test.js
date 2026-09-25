@@ -28,6 +28,25 @@ const DEVICE = 'a'.repeat(64);
 const HCVPACK_HASH = 'e'.repeat(64);
 const PHOTO_HCVPACK_HASH = '9'.repeat(64);
 
+const deviceKeys = crypto.generateKeyPairSync('rsa', {modulusLength:2048});
+const deviceJwk = deviceKeys.publicKey.export({format:'jwk'});
+const devicePublicKey = {
+  modulus: Buffer.from(deviceJwk.n, 'base64url').toString('base64'),
+  exponent: Buffer.from(deviceJwk.e, 'base64url').toString('base64'),
+};
+function packageHeaders(hcvId, mediaHash, packHash) {
+  const statement =
+    'SIGILLUM_HCVPACK_BINDING_V1|' + hcvId + '|' + mediaHash + '|' + packHash;
+  return {
+    'x-sigillum-hcvpack-binding-version': '1',
+    'x-sigillum-hcvpack-signature': crypto.sign(
+      'RSA-SHA256',
+      Buffer.from(statement, 'utf8'),
+      deviceKeys.privateKey,
+    ).toString('base64'),
+  };
+}
+
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sigillum-production-vo-'));
 const originalPath = path.join(tmp, 'original.mp4');
 
@@ -69,6 +88,7 @@ const provenanceEvent = {
 };
 const certificate = {
   sessionId,
+  publicKey:devicePublicKey,
   meta:{hcvId:HCV_ID,identity:{creatorId:CREATOR_ID}},
   content:{type:'video',hash:originalHash,size:originalBytes.length,name:'original.mp4'},
   claims:{
@@ -126,6 +146,7 @@ const photoProvenanceEvent = {
 };
 const photoCertificate = {
   sessionId:photoSessionId,
+  publicKey:devicePublicKey,
   meta:{hcvId:PHOTO_HCV_ID,identity:{creatorId:CREATOR_ID}},
   content:{type:'photo',hash:photoHash,size:photoBytes.length,name:'original.jpg'},
   claims:{
@@ -188,6 +209,7 @@ function response(status, payload = {}, headers = {}) {
 let uploadSessionCount = 0;
 let uploadPutCount = 0;
 let deleteCount = 0;
+let deleteFailuresRemaining = 0;
 let uploadMetadata = null;
 let uploadedBytes = null;
 const uploadUrl =
@@ -231,6 +253,10 @@ async function fakeFetch(url, options = {}) {
     });
   }
   if (target.includes('/youtube/v3/videos?id=') && options.method === 'DELETE') {
+    if (deleteFailuresRemaining > 0) {
+      deleteFailuresRemaining -= 1;
+      throw new Error('SIMULATED_YOUTUBE_DELETE_NETWORK_FAILURE');
+    }
     deleteCount += 1;
     return response(204,{});
   }
@@ -386,7 +412,7 @@ async function resetDb() {
   ]);
 }
 
-async function request(base,method,pathname,{bearer,body,bytes,contentType='video/mp4'}={}) {
+async function request(base,method,pathname,{bearer,body,bytes,contentType='video/mp4',headers={}}={}) {
   const target=new URL(pathname,base);
   const raw=body === undefined ? null : Buffer.from(JSON.stringify(body));
   const payload=bytes || raw;
@@ -403,6 +429,7 @@ async function request(base,method,pathname,{bearer,body,bytes,contentType='vide
         ...(bytes?{'content-type':contentType}:{}),
         ...(raw?{'content-type':'application/json'}:{}),
         ...(payload?{'content-length':String(payload.length)}:{}),
+        ...headers,
         connection:'close',
       },
     },res=>{
@@ -477,7 +504,7 @@ async function run() {
         '?consentRecordId='+encodeURIComponent(consentId)+
         '&monetizationEnabled=false'+
         '&hcvpackSha256='+HCVPACK_HASH,
-      {bearer:'owner-token',bytes:originalBytes},
+      {bearer:'owner-token',bytes:originalBytes,headers:packageHeaders(HCV_ID,originalHash,HCVPACK_HASH)},
     );
     assert.equal(published.status,201,published.text);
     assert.equal(published.json.platform,'youtube');
@@ -544,7 +571,7 @@ async function run() {
         '?consentRecordId='+encodeURIComponent(consent2.json.recordId)+
         '&monetizationEnabled=false'+
         '&hcvpackSha256='+HCVPACK_HASH,
-      {bearer:'owner-token',bytes:altered},
+      {bearer:'owner-token',bytes:altered,headers:packageHeaders(HCV_ID,originalHash,HCVPACK_HASH)},
     );
     assert.equal(rejected.status,422,rejected.text);
     assert.equal(rejected.json.error,'DERIVATION_ORIGINAL_SHA_MISMATCH');
@@ -575,6 +602,7 @@ async function run() {
         bearer:'owner-token',
         bytes:photoBytes,
         contentType:'image/jpeg',
+        headers:packageHeaders(PHOTO_HCV_ID,photoHash,PHOTO_HCVPACK_HASH),
       },
     );
     assert.equal(photoPublished.status,201,photoPublished.text);
@@ -609,6 +637,23 @@ async function run() {
       'photo_to_reference_video_v1',
     );
     assert.equal(photoStored.rows[0].hcvpack_sha256,PHOTO_HCVPACK_HASH);
+
+    deleteFailuresRemaining = 1;
+    const photoWithdrawalPending=await request(
+      base,'POST','/api/verified-originals/consents/'+PHOTO_HCV_ID+'/withdraw',
+      {bearer:'owner-token'},
+    );
+    assert.equal(photoWithdrawalPending.status,200,photoWithdrawalPending.text);
+    assert.equal(photoWithdrawalPending.json.referenceAvailable,false);
+    assert.equal(photoWithdrawalPending.json.platformTakedown,'PENDING');
+
+    const photoWithdrawalRetry=await request(
+      base,'POST','/api/verified-originals/consents/'+PHOTO_HCV_ID+'/withdraw',
+      {bearer:'owner-token'},
+    );
+    assert.equal(photoWithdrawalRetry.status,200,photoWithdrawalRetry.text);
+    assert.equal(photoWithdrawalRetry.json.platformTakedown,'COMPLETED');
+    assert.equal(deleteCount,2);
 
     console.log(
       'verified_originals_production_test: PASS — PostgreSQL, video/photo exact originals, unlisted YouTube, free/paid, withdrawal, tamper stop',

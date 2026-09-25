@@ -37,6 +37,8 @@ Companion app branch: MARCELLOORIZIO/sigillum-hcv:feature/build133-closed-chain-
 - 2026-09-25: YouTube Data API video insert/update does not expose a per-video switch that disables comments. Comments-off must therefore be configured in YouTube Studio/channel upload defaults (and verified on the controlled live upload), not falsely represented as enforced by `verified_originals_production.js`.
 - 2026-09-25: draft PR `#35` opened into `release/reconciled-prelaunch-backend-clean-20260824`; intentionally not merged or deployed.\n- Remaining before release: live YouTube compliance/upload test; confirm channel comments-off default; align production TERMS_VERSION and PRIVACY_VERSION with 2026-09-25 before deployment; no production deploy yet.
 
+- 2026-09-25: post-audit backend hardening applied. Runtime registration now assigns Creator IDs server-side rather than trusting a device-carried ID; LIVE readiness requires YouTube credentials, compliance approval, confirmed unlisted upload capability and derivation signing material; HCVPACK publication hash now requires a device-key signature; withdrawal is idempotent/retryable, records `takedown_pending`, treats already-deleted YouTube objects as success, and includes a periodic retry worker so a transient YouTube failure cannot be reported as permanently complete. No merge/deploy.
+
 ## Resume rule
 
 Resume from this file and the app checkpoint. Do not re-design already locked decisions unless a failing test or external platform constraint forces a change.
