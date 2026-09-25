@@ -32,7 +32,8 @@ Companion app branch: MARCELLOORIZIO/sigillum-hcv:feature/build133-closed-chain-
 - 2026-09-25: backend validation run `36117377113` GREEN. Full backend checks and Verified Originals PostgreSQL integration test both passed.
 - 2026-09-25: legal documents updated in IT/EN/ES/RU for encrypted local originals, temporary reference processing and YouTube hosting; legal revision is now 2026-09-25 and CI run 36119439169 passed.
 - 2026-09-25: withdrawal semantics confirmed: the active reference is taken down while HCV/Registry verification remains available.
-- Remaining before release: add/confirm full photo integration path coverage; live YouTube compliance/upload test; align production TERMS_VERSION and PRIVACY_VERSION with 2026-09-25 before deployment; no production deploy yet.
+- 2026-09-25: full PostgreSQL photo publication path added to `verified_originals_production_test.js`; canonical JPEG is verified, converted to `photo_to_reference_video_v1`, uploaded through the mocked unlisted YouTube path, stored with HCVPACK SHA-256, and exposed through the paid `/view` route. CI run `36120172433` GREEN.
+- Remaining before release: live YouTube compliance/upload test; align production TERMS_VERSION and PRIVACY_VERSION with 2026-09-25 before deployment; no production deploy yet.
 
 ## Resume rule
 
