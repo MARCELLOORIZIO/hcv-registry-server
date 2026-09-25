@@ -23,6 +23,12 @@ for (const token of [
   "viewAccess: 'SUBSCRIPTION_REQUIRED'",
   "subscriptionStatus !== 'active'",
   'DERIVATION_ORIGINAL_SHA_MISMATCH',
+  "claims?.captureSource === 'HCV_CAMERA'",
+  "claims?.liveCapture === true",
+  "CAPTURE_PROVENANCE_TYPE",
+  "CAPTURE_PROVENANCE_PIPELINE",
+  "PHOTO_DERIVATION_OPERATION",
+  "hcvpackSha256",
   'SIGILLUM_DERIVATION_PUBLIC_KEYS_JSON',
   'verified_originals_platform_receipts',
   'verified_originals_publications',
@@ -31,6 +37,13 @@ for (const token of [
 }
 
 assert(!feature.includes("privacyStatus: 'public'"));
+assert(!feature.includes("displayRiskDecision === 'NO_DISPLAY_EVIDENCE'"));
+assert(feature.includes("new Set(['image/jpeg', 'image/png'])"));
+assert(feature.includes("Original SHA-256: "));
+assert(feature.includes("HCVPACK SHA-256: "));
+for (const language of ["it","en","es","ru"]) {
+  assert(feature.includes(language + ": {"), 'missing originals web copy: '+language);
+}
 assert(!feature.includes("payload.publicUrl"));
 assert(!feature.includes("payload.platformPostId"));
 
