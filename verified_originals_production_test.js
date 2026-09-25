@@ -17,12 +17,35 @@ const DATABASE_URL = process.env.DATABASE_URL;
 if (!DATABASE_URL) throw new Error('DATABASE_URL_REQUIRED');
 
 const HCV_ID = 'HCV-0123456789ABCDEF';
+const PHOTO_HCV_ID = 'HCV-FEDCBA9876543210';
 const CHANNEL_ID = 'UC0123456789ABCDEFGHIJKL';
 const VIDEO_ID = 'AbCdEfGhI_1';
+const PHOTO_VIDEO_ID = 'PhOtORef_01';
 const OWNER = 'acc-owner';
 const FREE = 'acc-free';
 const CREATOR_ID = 'creator-01';
 const DEVICE = 'a'.repeat(64);
+const HCVPACK_HASH = 'e'.repeat(64);
+const PHOTO_HCVPACK_HASH = '9'.repeat(64);
+
+const deviceKeys = crypto.generateKeyPairSync('rsa', {modulusLength:2048});
+const deviceJwk = deviceKeys.publicKey.export({format:'jwk'});
+const devicePublicKey = {
+  modulus: Buffer.from(deviceJwk.n, 'base64url').toString('base64'),
+  exponent: Buffer.from(deviceJwk.e, 'base64url').toString('base64'),
+};
+function packageHeaders(hcvId, mediaHash, packHash) {
+  const statement =
+    'SIGILLUM_HCVPACK_BINDING_V1|' + hcvId + '|' + mediaHash + '|' + packHash;
+  return {
+    'x-sigillum-hcvpack-binding-version': '1',
+    'x-sigillum-hcvpack-signature': crypto.sign(
+      'RSA-SHA256',
+      Buffer.from(statement, 'utf8'),
+      deviceKeys.privateKey,
+    ).toString('base64'),
+  };
+}
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sigillum-production-vo-'));
 const originalPath = path.join(tmp, 'original.mp4');
@@ -37,9 +60,111 @@ execFileSync(ffmpegPath, [
 const originalBytes = fs.readFileSync(originalPath);
 const originalHash = crypto.createHash('sha256').update(originalBytes).digest('hex');
 const certificateRaw = JSON.stringify({test:'production-verified-originals'});
+const sessionId = 'session-closed-chain-test';
+const provenanceEvent = {
+  type:'SIGILLUM_PROVENANCE_EVENT',
+  version:1,
+  sequence:0,
+  eventType:'CAPTURE_FINALIZED',
+  inputHash:originalHash,
+  timestamp:new Date().toISOString(),
+  deviceFingerprint:DEVICE,
+  sessionId,
+  pipelineVersion:'HCV_CAPTURE_BINDING_V1',
+  nonce:'00112233445566778899aabbccddeeff',
+  parentEvent:'GENESIS',
+  metadata:{
+    hcvId:HCV_ID,
+    mediaType:'video',
+    contentSize:originalBytes.length,
+    contentName:'original.mp4',
+    capturedAt:new Date().toISOString(),
+    captureSource:'HCV_CAMERA',
+  },
+  eventHash:'d'.repeat(64),
+  signatureAlgorithm:'RSA-SHA256-HCV-PROVENANCE-V1',
+  signature:'test-signature',
+  publicKey:{modulus:'test',exponent:'AQAB'},
+};
 const certificate = {
+  sessionId,
+  publicKey:devicePublicKey,
   meta:{hcvId:HCV_ID,identity:{creatorId:CREATOR_ID}},
   content:{type:'video',hash:originalHash,size:originalBytes.length,name:'original.mp4'},
+  claims:{
+    captureSource:'HCV_CAMERA',
+    liveCapture:true,
+    provenance:{
+      type:'SIGILLUM_CAPTURE_PROVENANCE_BINDING',
+      version:1,
+      status:'VERIFIED',
+      hcvId:HCV_ID,
+      eventHash:provenanceEvent.eventHash,
+      inputHash:originalHash,
+      deviceFingerprint:DEVICE,
+      sessionId,
+      pipelineVersion:'HCV_CAPTURE_BINDING_V1',
+      event:provenanceEvent,
+    },
+  },
+};
+
+const photoPath = path.join(tmp, 'original.jpg');
+execFileSync(ffmpegPath, [
+  '-hide_banner', '-loglevel', 'error', '-nostdin', '-y',
+  '-f', 'lavfi', '-i', 'color=c=blue:s=640x480',
+  '-frames:v', '1', photoPath,
+], {stdio:'pipe'});
+const photoBytes = fs.readFileSync(photoPath);
+const photoHash = crypto.createHash('sha256').update(photoBytes).digest('hex');
+const photoCertificateRaw = JSON.stringify({test:'production-photo-verified-originals'});
+const photoSessionId = 'session-photo-closed-chain-test';
+const photoProvenanceEvent = {
+  type:'SIGILLUM_PROVENANCE_EVENT',
+  version:1,
+  sequence:0,
+  eventType:'CAPTURE_FINALIZED',
+  inputHash:photoHash,
+  timestamp:new Date().toISOString(),
+  deviceFingerprint:DEVICE,
+  sessionId:photoSessionId,
+  pipelineVersion:'HCV_CAPTURE_BINDING_V1',
+  nonce:'11223344556677889900aabbccddeeff',
+  parentEvent:'GENESIS',
+  metadata:{
+    hcvId:PHOTO_HCV_ID,
+    mediaType:'photo',
+    contentSize:photoBytes.length,
+    contentName:'original.jpg',
+    capturedAt:new Date().toISOString(),
+    captureSource:'HCV_CAMERA',
+  },
+  eventHash:'8'.repeat(64),
+  signatureAlgorithm:'RSA-SHA256-HCV-PROVENANCE-V1',
+  signature:'test-photo-signature',
+  publicKey:{modulus:'test',exponent:'AQAB'},
+};
+const photoCertificate = {
+  sessionId:photoSessionId,
+  publicKey:devicePublicKey,
+  meta:{hcvId:PHOTO_HCV_ID,identity:{creatorId:CREATOR_ID}},
+  content:{type:'photo',hash:photoHash,size:photoBytes.length,name:'original.jpg'},
+  claims:{
+    captureSource:'HCV_CAMERA',
+    liveCapture:true,
+    provenance:{
+      type:'SIGILLUM_CAPTURE_PROVENANCE_BINDING',
+      version:1,
+      status:'VERIFIED',
+      hcvId:PHOTO_HCV_ID,
+      eventHash:photoProvenanceEvent.eventHash,
+      inputHash:photoHash,
+      deviceFingerprint:DEVICE,
+      sessionId:photoSessionId,
+      pipelineVersion:'HCV_CAPTURE_BINDING_V1',
+      event:photoProvenanceEvent,
+    },
+  },
 };
 
 const keys = crypto.generateKeyPairSync('rsa', {modulusLength:2048});
@@ -84,6 +209,7 @@ function response(status, payload = {}, headers = {}) {
 let uploadSessionCount = 0;
 let uploadPutCount = 0;
 let deleteCount = 0;
+let deleteFailuresRemaining = 0;
 let uploadMetadata = null;
 let uploadedBytes = null;
 const uploadUrl =
@@ -108,12 +234,18 @@ async function fakeFetch(url, options = {}) {
   if (target === uploadUrl && options.method === 'PUT') {
     uploadPutCount += 1;
     uploadedBytes = Buffer.from(options.body);
-    return response(201,{id:VIDEO_ID});
+    const id = uploadMetadata?.snippet?.title === 'SIGILLUM '+PHOTO_HCV_ID
+      ? PHOTO_VIDEO_ID
+      : VIDEO_ID;
+    return response(201,{id});
   }
   if (target.includes('/youtube/v3/videos?part=status,processingDetails')) {
+    const id = target.includes(encodeURIComponent(PHOTO_VIDEO_ID))
+      ? PHOTO_VIDEO_ID
+      : VIDEO_ID;
     return response(200,{
       items:[{
-        id:VIDEO_ID,
+        id,
         etag:'etag-test',
         status:{privacyStatus:'unlisted',uploadStatus:'processed'},
         processingDetails:{processingStatus:'succeeded'},
@@ -121,6 +253,10 @@ async function fakeFetch(url, options = {}) {
     });
   }
   if (target.includes('/youtube/v3/videos?id=') && options.method === 'DELETE') {
+    if (deleteFailuresRemaining > 0) {
+      deleteFailuresRemaining -= 1;
+      throw new Error('SIMULATED_YOUTUBE_DELETE_NETWORK_FAILURE');
+    }
     deleteCount += 1;
     return response(204,{});
   }
@@ -210,8 +346,9 @@ async function requireCreatorAccess(req) {
 }
 
 function verifyCertificateRaw(_raw,expectedId) {
-  assert.equal(expectedId,HCV_ID);
-  return certificate;
+  if (expectedId === HCV_ID) return certificate;
+  if (expectedId === PHOTO_HCV_ID) return photoCertificate;
+  throw new Error('UNEXPECTED_HCV_ID '+expectedId);
 }
 
 function provenanceEnvelopeFromRow(row) {
@@ -262,9 +399,20 @@ async function resetDb() {
     HCV_ID,OWNER,certificateRaw,sha(certificateRaw),sha(OWNER),DEVICE,
     CREATOR_ID,originalHash,'c'.repeat(64),
   ]);
+  await pool.query(`
+    INSERT INTO certificates(
+      hcv_id,account_id,certificate_raw,certificate_sha256,
+      account_subject_hash,device_key_fingerprint,creator_id,binding_version,
+      content_sha256,identity_verified,registry_attested_at,provenance_version,
+      registry_attestation_sha256
+    ) VALUES($1,$2,$3,$4,$5,$6,$7,1,$8,TRUE,NOW(),2,$9)
+  `,[
+    PHOTO_HCV_ID,OWNER,photoCertificateRaw,sha(photoCertificateRaw),sha(OWNER),
+    DEVICE,CREATOR_ID,photoHash,'6'.repeat(64),
+  ]);
 }
 
-async function request(base,method,pathname,{bearer,body,bytes}={}) {
+async function request(base,method,pathname,{bearer,body,bytes,contentType='video/mp4',headers={}}={}) {
   const target=new URL(pathname,base);
   const raw=body === undefined ? null : Buffer.from(JSON.stringify(body));
   const payload=bytes || raw;
@@ -278,9 +426,10 @@ async function request(base,method,pathname,{bearer,body,bytes}={}) {
       agent:false,
       headers:{
         ...(bearer?{authorization:'Bearer '+bearer}:{}),
-        ...(bytes?{'content-type':'video/mp4'}:{}),
+        ...(bytes?{'content-type':contentType}:{}),
         ...(raw?{'content-type':'application/json'}:{}),
         ...(payload?{'content-length':String(payload.length)}:{}),
+        ...headers,
         connection:'close',
       },
     },res=>{
@@ -353,8 +502,9 @@ async function run() {
       base,'POST',
       '/api/verified-originals/publish/'+HCV_ID+
         '?consentRecordId='+encodeURIComponent(consentId)+
-        '&monetizationEnabled=false',
-      {bearer:'owner-token',bytes:originalBytes},
+        '&monetizationEnabled=false'+
+        '&hcvpackSha256='+HCVPACK_HASH,
+      {bearer:'owner-token',bytes:originalBytes,headers:packageHeaders(HCV_ID,originalHash,HCVPACK_HASH)},
     );
     assert.equal(published.status,201,published.text);
     assert.equal(published.json.platform,'youtube');
@@ -364,6 +514,9 @@ async function run() {
     assert.ok(uploadedBytes && uploadedBytes.length > 0);
     assert.equal(uploadMetadata.status.privacyStatus,'unlisted');
     assert.equal(uploadMetadata.snippet.title,'SIGILLUM '+HCV_ID);
+    assert.ok(uploadMetadata.snippet.description.includes('Original SHA-256: '+originalHash));
+    assert.ok(uploadMetadata.snippet.description.includes('HCVPACK SHA-256: '+HCVPACK_HASH));
+    assert.equal(published.json.hcvpackSha256,HCVPACK_HASH);
 
     const freeLookup=await request(base,'GET','/api/verified-originals/'+HCV_ID);
     assert.equal(freeLookup.status,200);
@@ -416,15 +569,94 @@ async function run() {
       base,'POST',
       '/api/verified-originals/publish/'+HCV_ID+
         '?consentRecordId='+encodeURIComponent(consent2.json.recordId)+
-        '&monetizationEnabled=false',
-      {bearer:'owner-token',bytes:altered},
+        '&monetizationEnabled=false'+
+        '&hcvpackSha256='+HCVPACK_HASH,
+      {bearer:'owner-token',bytes:altered,headers:packageHeaders(HCV_ID,originalHash,HCVPACK_HASH)},
     );
     assert.equal(rejected.status,422,rejected.text);
     assert.equal(rejected.json.error,'DERIVATION_ORIGINAL_SHA_MISMATCH');
     assert.equal(uploadSessionCount,uploadsBefore);
 
+    const photoConsent=await request(
+      base,'POST','/api/verified-originals/consents',
+      {
+        bearer:'owner-token',
+        body:{
+          hcvId:PHOTO_HCV_ID,
+          intent:'PUBLISH_VERIFIED_ORIGINAL',
+          publishReference:true,
+          rightsConfirmed:true,
+          monetizationConsent:false,
+        },
+      },
+    );
+    assert.equal(photoConsent.status,201,photoConsent.text);
+
+    const photoPublished=await request(
+      base,'POST',
+      '/api/verified-originals/publish/'+PHOTO_HCV_ID+
+        '?consentRecordId='+encodeURIComponent(photoConsent.json.recordId)+
+        '&monetizationEnabled=false'+
+        '&hcvpackSha256='+PHOTO_HCVPACK_HASH,
+      {
+        bearer:'owner-token',
+        bytes:photoBytes,
+        contentType:'image/jpeg',
+        headers:packageHeaders(PHOTO_HCV_ID,photoHash,PHOTO_HCVPACK_HASH),
+      },
+    );
+    assert.equal(photoPublished.status,201,photoPublished.text);
+    assert.equal(photoPublished.json.platform,'youtube');
+    assert.equal(
+      photoPublished.json.derivationType,
+      'photo_to_reference_video_v1',
+    );
+    assert.equal(photoPublished.json.hcvpackSha256,PHOTO_HCVPACK_HASH);
+    assert.equal(uploadMetadata.snippet.title,'SIGILLUM '+PHOTO_HCV_ID);
+    assert.ok(uploadedBytes && uploadedBytes.length > 1000);
+    assert.notDeepEqual(uploadedBytes,photoBytes);
+
+    const photoView=await request(
+      base,'GET','/api/verified-originals/'+PHOTO_HCV_ID+'/view',
+      {bearer:'owner-token'},
+    );
+    assert.equal(photoView.status,200,photoView.text);
+    assert.equal(
+      photoView.json.publicUrl,
+      'https://www.youtube.com/watch?v='+PHOTO_VIDEO_ID,
+    );
+    assert.equal(photoView.json.hcvpackSha256,PHOTO_HCVPACK_HASH);
+
+    const photoStored=await pool.query(
+      'SELECT derivation_type,hcvpack_sha256 FROM verified_originals_publications WHERE hcv_id=$1 AND publication_status=\'PUBLISHED\'',
+      [PHOTO_HCV_ID],
+    );
+    assert.equal(photoStored.rows.length,1);
+    assert.equal(
+      photoStored.rows[0].derivation_type,
+      'photo_to_reference_video_v1',
+    );
+    assert.equal(photoStored.rows[0].hcvpack_sha256,PHOTO_HCVPACK_HASH);
+
+    deleteFailuresRemaining = 1;
+    const photoWithdrawalPending=await request(
+      base,'POST','/api/verified-originals/consents/'+PHOTO_HCV_ID+'/withdraw',
+      {bearer:'owner-token'},
+    );
+    assert.equal(photoWithdrawalPending.status,200,photoWithdrawalPending.text);
+    assert.equal(photoWithdrawalPending.json.referenceAvailable,false);
+    assert.equal(photoWithdrawalPending.json.platformTakedown,'PENDING');
+
+    const photoWithdrawalRetry=await request(
+      base,'POST','/api/verified-originals/consents/'+PHOTO_HCV_ID+'/withdraw',
+      {bearer:'owner-token'},
+    );
+    assert.equal(photoWithdrawalRetry.status,200,photoWithdrawalRetry.text);
+    assert.equal(photoWithdrawalRetry.json.platformTakedown,'COMPLETED');
+    assert.equal(deleteCount,2);
+
     console.log(
-      'verified_originals_production_test: PASS — PostgreSQL, exact original, unlisted YouTube, free/paid, withdrawal, tamper stop',
+      'verified_originals_production_test: PASS — PostgreSQL, video/photo exact originals, unlisted YouTube, free/paid, withdrawal, tamper stop',
     );
   } finally {
     server.closeAllConnections?.();

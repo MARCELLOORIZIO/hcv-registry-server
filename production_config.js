@@ -1,5 +1,7 @@
 'use strict';
 
+const crypto = require('crypto');
+
 function isTrue(value) {
   return String(value || '').toLowerCase() === 'true';
 }
@@ -38,6 +40,50 @@ function isProductionSender(value) {
   return true;
 }
 
+function validateDerivationKeys(env, invalid) {
+  const keyId = String(env.SIGILLUM_DERIVATION_KEY_ID || '').trim();
+  const privatePem = String(env.SIGILLUM_DERIVATION_PRIVATE_KEY_PEM || '')
+    .replace(/\\n/g, '\n')
+    .trim();
+  const pinnedRaw = String(env.SIGILLUM_DERIVATION_PUBLIC_KEYS_JSON || '').trim();
+  if (!keyId || !privatePem || !pinnedRaw) return;
+
+  try {
+    const privateKey = crypto.createPrivateKey(privatePem);
+    const modulusLength = Number(
+      privateKey.asymmetricKeyDetails?.modulusLength || 0,
+    );
+    if (privateKey.asymmetricKeyType !== 'rsa' || modulusLength < 2048) {
+      throw new Error('DERIVATION_PRIVATE_KEY_NOT_RSA_2048');
+    }
+
+    const pinnedMap = JSON.parse(pinnedRaw);
+    if (!pinnedMap || typeof pinnedMap !== 'object' || Array.isArray(pinnedMap)) {
+      throw new Error('DERIVATION_PUBLIC_KEYS_INVALID');
+    }
+    const pinnedPem = pinnedMap[keyId];
+    if (typeof pinnedPem !== 'string' || !pinnedPem.trim()) {
+      throw new Error('DERIVATION_PIN_MISSING');
+    }
+
+    const derivedPublic = crypto
+      .createPublicKey(privateKey)
+      .export({ format: 'pem', type: 'spki' })
+      .toString()
+      .trim();
+    const pinnedPublic = crypto
+      .createPublicKey(pinnedPem)
+      .export({ format: 'pem', type: 'spki' })
+      .toString()
+      .trim();
+    if (derivedPublic !== pinnedPublic) {
+      throw new Error('DERIVATION_KEY_PIN_MISMATCH');
+    }
+  } catch (_) {
+    invalid.push('SIGILLUM_DERIVATION_KEYS=matching-rsa-2048');
+  }
+}
+
 function validateProductionConfig(env = process.env) {
   const live = isTrue(env.PRODUCTION_LIVE);
   if (!live) return { live: false, ready: false, missing: [], invalid: [] };
@@ -58,6 +104,13 @@ function validateProductionConfig(env = process.env) {
     'APPLE_IAP_KEY_ID',
     'TERMS_VERSION',
     'PRIVACY_VERSION',
+    'YOUTUBE_CLIENT_ID',
+    'YOUTUBE_CLIENT_SECRET',
+    'YOUTUBE_REFRESH_TOKEN',
+    'YOUTUBE_CHANNEL_ID',
+    'SIGILLUM_DERIVATION_KEY_ID',
+    'SIGILLUM_DERIVATION_PRIVATE_KEY_PEM',
+    'SIGILLUM_DERIVATION_PUBLIC_KEYS_JSON',
   ];
 
   for (const key of required) {
@@ -104,6 +157,21 @@ function validateProductionConfig(env = process.env) {
   if (present(env.PRIVACY_EMAIL) && !validEmail(env.PRIVACY_EMAIL)) {
     invalid.push('PRIVACY_EMAIL=email');
   }
+  if (present(env.YOUTUBE_CHANNEL_ID) &&
+      !/^UC[A-Za-z0-9_-]{22}$/.test(String(env.YOUTUBE_CHANNEL_ID))) {
+    invalid.push('YOUTUBE_CHANNEL_ID=channel-id');
+  }
+  if (!isTrue(env.YOUTUBE_COMPLIANCE_APPROVED)) {
+    invalid.push('YOUTUBE_COMPLIANCE_APPROVED=true');
+  }
+  if (!isTrue(env.YOUTUBE_UNLISTED_UPLOAD_CONFIRMED)) {
+    invalid.push('YOUTUBE_UNLISTED_UPLOAD_CONFIRMED=true');
+  }
+  if (present(env.SIGILLUM_DERIVATION_KEY_ID) &&
+      !/^[A-Za-z0-9._-]{3,80}$/.test(String(env.SIGILLUM_DERIVATION_KEY_ID))) {
+    invalid.push('SIGILLUM_DERIVATION_KEY_ID=format');
+  }
+  validateDerivationKeys(env, invalid);
 
   return {
     live: true,

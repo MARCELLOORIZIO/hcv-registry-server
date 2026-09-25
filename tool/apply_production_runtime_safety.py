@@ -68,8 +68,9 @@ old_register = """    await pool.query('BEGIN');
       await pool.query('COMMIT');
     } catch (err) { await pool.query('ROLLBACK'); throw err; }
 """
-new_register = """    await withTransaction(async (client) => {
-      await client.query(`INSERT INTO accounts(id,email_normalized,email_display,password_salt,password_hash,creator_name,creator_id,terms_version,privacy_version,terms_accepted_at,privacy_ack_at,adult_confirmed_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$10,$10)`, [accountId, email, String(body.email).trim(), pw.salt, pw.passwordHash, creatorName, String(body.creatorId || ''), TERMS_VERSION, PRIVACY_VERSION, now]);
+new_register = """    const serverCreatorId = crypto.randomUUID();
+    await withTransaction(async (client) => {
+      await client.query(`INSERT INTO accounts(id,email_normalized,email_display,password_salt,password_hash,creator_name,creator_id,terms_version,privacy_version,terms_accepted_at,privacy_ack_at,adult_confirmed_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$10,$10)`, [accountId, email, String(body.email).trim(), pw.salt, pw.passwordHash, creatorName, serverCreatorId, TERMS_VERSION, PRIVACY_VERSION, now]);
       await client.query('INSERT INTO account_devices(account_id,device_key_fingerprint,public_key_json) VALUES($1,$2,$3)', [accountId, proof.fingerprint, proof.normalized]);
     });
 """
@@ -181,6 +182,8 @@ for token in [
     'const KYC_REQUIRES_SUBSCRIPTION',
     "enforceRate(req, 'kyc-start'",
     "!['active', 'grace'].includes(account.subscriptionStatus)",
+    'const serverCreatorId = crypto.randomUUID();',
+    'creatorName, serverCreatorId, TERMS_VERSION',
 ]:
     if token not in source:
         raise RuntimeError(f'KYC production safety token missing: {token}')

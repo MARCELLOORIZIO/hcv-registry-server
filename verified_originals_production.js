@@ -15,8 +15,11 @@ const YOUTUBE_ID = /^[A-Za-z0-9_-]{11}$/;
 const YOUTUBE_CHANNEL_ID = /^UC[A-Za-z0-9_-]{22}$/;
 const DERIVATION_SCHEMA = 'SIGILLUM_TRUSTED_DERIVATION_V1';
 const DERIVATION_OPERATION = 'video_transcode_h264_aac_v1';
+const PHOTO_DERIVATION_OPERATION = 'photo_to_reference_video_v1';
+const CAPTURE_PROVENANCE_TYPE = 'SIGILLUM_CAPTURE_PROVENANCE_BINDING';
+const CAPTURE_PROVENANCE_PIPELINE = 'HCV_CAPTURE_BINDING_V1';
 const DERIVATION_SIGNATURE_ALGORITHM = 'RSA-SHA256-PKCS1V15';
-const CONSENT_VERSION = 'SIGILLUM_VERIFIED_ORIGINALS_CONSENT_2026-09-24_V1';
+const CONSENT_VERSION = 'SIGILLUM_VERIFIED_ORIGINALS_CONSENT_2026-09-25_V2';
 const YOUTUBE_SCOPE = 'https://www.googleapis.com/auth/youtube.force-ssl';
 
 function hashBytes(value) {
@@ -40,6 +43,28 @@ function strictBoolean(value) {
   if (value === true || value === 'true') return true;
   if (value === false || value === 'false') return false;
   return null;
+}
+
+function certificateRsaPublicKey(certificate) {
+  const publicKey = certificate?.publicKey;
+  const modulus = String(publicKey?.modulus || '');
+  const exponent = String(publicKey?.exponent || '');
+  if (!modulus || !exponent) return null;
+  try {
+    const key = crypto.createPublicKey({
+      key: {
+        kty: 'RSA',
+        n: Buffer.from(modulus, 'base64').toString('base64url'),
+        e: Buffer.from(exponent, 'base64').toString('base64url'),
+      },
+      format: 'jwk',
+    });
+    if (key.asymmetricKeyType !== 'rsa' ||
+        key.asymmetricKeyDetails?.modulusLength < 2048) return null;
+    return key;
+  } catch (_) {
+    return null;
+  }
 }
 
 function sleepMs(ms) {
@@ -94,7 +119,13 @@ function verifyDerivationManifest({
 
     const certificate = verifyCertificateRaw(certificateRaw, manifest.hcvId);
     const contentHash = String(certificate?.content?.hash || '').toLowerCase();
-    if (certificate?.content?.type !== 'video' ||
+    const contentType = String(certificate?.content?.type || '');
+    const expectedOperation = contentType === 'video'
+      ? DERIVATION_OPERATION
+      : contentType === 'photo'
+        ? PHOTO_DERIVATION_OPERATION
+        : null;
+    if (!expectedOperation ||
         !SHA256.test(contentHash) ||
         statement.parent?.kind !== 'original' ||
         statement.parent?.sha256 !== contentHash ||
@@ -104,7 +135,7 @@ function verifyDerivationManifest({
         statement.output.byteLength <= 0 ||
         !SHA256.test(statement.output?.sha256 || '') ||
         statement.output.sha256 === contentHash ||
-        statement.transform?.operation !== DERIVATION_OPERATION ||
+        statement.transform?.operation !== expectedOperation ||
         statement.transform?.editorialImpact !== 'non_editorial' ||
         statement.transform?.policyVersion !== 'SIGILLUM_NON_EDITORIAL_V1' ||
         statement.issuer?.signatureAlgorithm !== DERIVATION_SIGNATURE_ALGORITHM ||
@@ -168,6 +199,40 @@ function createVerifiedOriginalsProduction({
   const fail = (code, status = 400, message) => {
     throw publicError(code, status, message);
   };
+
+  let takedownTimer = null;
+
+  function verifyHcvpackBindingSignature(req, original, hcvId, hcvpackSha256) {
+    if (String(req.headers['x-sigillum-hcvpack-binding-version'] || '') !== '1') {
+      return false;
+    }
+    const signature = String(req.headers['x-sigillum-hcvpack-signature'] || '');
+    if (!signature) return false;
+    const publicKey = certificateRsaPublicKey(original.certificate);
+    if (!publicKey) return false;
+    const statement =
+      'SIGILLUM_HCVPACK_BINDING_V1|' + hcvId + '|' +
+      original.contentHash + '|' + hcvpackSha256;
+    try {
+      return crypto.verify(
+        'RSA-SHA256',
+        Buffer.from(statement, 'utf8'),
+        publicKey,
+        Buffer.from(signature, 'base64'),
+      );
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function youtubeServiceConfigured() {
+    return Boolean(
+      process.env.YOUTUBE_CLIENT_ID &&
+      process.env.YOUTUBE_CLIENT_SECRET &&
+      process.env.YOUTUBE_REFRESH_TOKEN &&
+      YOUTUBE_CHANNEL_ID.test(String(process.env.YOUTUBE_CHANNEL_ID || '')),
+    );
+  }
 
   async function initSchema() {
     await pool.query(`
@@ -239,6 +304,8 @@ function createVerifiedOriginalsProduction({
         audit_metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb,
         UNIQUE(platform, platform_post_id)
       );
+      ALTER TABLE verified_originals_publications
+        ADD COLUMN IF NOT EXISTS hcvpack_sha256 TEXT NOT NULL DEFAULT '';
       CREATE INDEX IF NOT EXISTS verified_originals_publications_hcv_idx
         ON verified_originals_publications(hcv_id, published_at DESC);
 
@@ -255,6 +322,7 @@ function createVerifiedOriginalsProduction({
       CREATE INDEX IF NOT EXISTS verified_originals_audit_hcv_idx
         ON verified_originals_audit(hcv_id, id DESC);
     `);
+    startTakedownWorker();
   }
 
   async function certificateRow(hcvId) {
@@ -270,6 +338,52 @@ function createVerifiedOriginalsProduction({
     `, [hcvId])).rows[0] || null;
   }
 
+  function cameraCaptureBinding(certificate, row, hcvId) {
+    const content = certificate?.content;
+    const claims = certificate?.claims;
+    const binding = claims?.provenance;
+    const event = binding?.event;
+    const metadata = event?.metadata;
+    const contentType = String(content?.type || '');
+    const contentHash = String(content?.hash || '').toLowerCase();
+    const contentSize = Number(content?.size);
+    const sessionId = String(certificate?.sessionId || '');
+
+    const valid =
+      (contentType === 'video' || contentType === 'photo') &&
+      claims?.captureSource === 'HCV_CAMERA' &&
+      claims?.liveCapture === true &&
+      binding?.type === CAPTURE_PROVENANCE_TYPE &&
+      binding?.version === 1 &&
+      binding?.status === 'VERIFIED' &&
+      binding?.hcvId === hcvId &&
+      binding?.inputHash === contentHash &&
+      binding?.deviceFingerprint === String(row?.device_key_fingerprint || '').toLowerCase() &&
+      binding?.sessionId === sessionId &&
+      binding?.pipelineVersion === CAPTURE_PROVENANCE_PIPELINE &&
+      binding?.eventHash === event?.eventHash &&
+      event?.type === 'SIGILLUM_PROVENANCE_EVENT' &&
+      event?.version === 1 &&
+      event?.sequence === 0 &&
+      event?.eventType === 'CAPTURE_FINALIZED' &&
+      event?.inputHash === contentHash &&
+      event?.deviceFingerprint === String(row?.device_key_fingerprint || '').toLowerCase() &&
+      event?.sessionId === sessionId &&
+      event?.pipelineVersion === CAPTURE_PROVENANCE_PIPELINE &&
+      event?.parentEvent === 'GENESIS' &&
+      metadata?.hcvId === hcvId &&
+      metadata?.captureSource === 'HCV_CAMERA' &&
+      metadata?.mediaType === contentType &&
+      Number(metadata?.contentSize) === contentSize;
+
+    return {
+      valid,
+      contentType,
+      contentHash,
+      contentSize,
+    };
+  }
+
   async function verifiedOriginal(hcvId) {
     const row = await certificateRow(hcvId);
     if (!row) return null;
@@ -280,9 +394,11 @@ function createVerifiedOriginalsProduction({
       return null;
     }
     const provenance = provenanceEnvelopeFromRow(row);
-    const contentHash = String(certificate?.content?.hash || '').toLowerCase();
-    const contentSize = Number(certificate?.content?.size);
-    if (provenance?.status !== 'SIGILLUM_REGISTRY_VERIFIED' ||
+    const capture = cameraCaptureBinding(certificate, row, hcvId);
+    const contentHash = capture.contentHash;
+    const contentSize = capture.contentSize;
+    if (!capture.valid ||
+        provenance?.status !== 'SIGILLUM_REGISTRY_VERIFIED' ||
         provenance.integrityValid !== true ||
         provenance.identityVerified !== true ||
         provenance.contentSha256 !== contentHash ||
@@ -292,7 +408,7 @@ function createVerifiedOriginalsProduction({
         contentSize <= 0) {
       return null;
     }
-    return { row, certificate, provenance, contentHash, contentSize };
+    return { row, certificate, provenance, contentHash, contentSize, contentType: capture.contentType };
   }
 
   async function ownedOriginal(hcvId, session) {
@@ -393,6 +509,7 @@ function createVerifiedOriginalsProduction({
       publicUrl: row.public_url,
       referenceSha256: row.reference_sha256,
       originalContentSha256: row.original_content_sha256,
+      hcvpackSha256: row.hcvpack_sha256,
       derivedFrom: row.derived_from,
       derivationType: row.derivation_type,
       publicationStatus: row.publication_status,
@@ -412,6 +529,7 @@ function createVerifiedOriginalsProduction({
       availability: 'REFERENCE_AVAILABLE',
       publicationStatus: 'PUBLISHED',
       platform: 'youtube',
+      hcvpackSha256: reference.hcvpackSha256,
       certificateVerdict: 'CERTIFICATE_RECORD_VERIFIED',
       socialFileVerdict: 'NOT_VERIFIED',
       viewAccess: 'SUBSCRIPTION_REQUIRED',
@@ -566,7 +684,7 @@ function createVerifiedOriginalsProduction({
     }
   }
 
-  async function startYoutubeUpload({ accessToken, hcvId, size }) {
+  async function startYoutubeUpload({ accessToken, hcvId, size, originalSha256, hcvpackSha256 }) {
     const endpoint = 'https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status';
     const response = await fetchImpl(endpoint, {
       method: 'POST',
@@ -579,7 +697,13 @@ function createVerifiedOriginalsProduction({
       body: JSON.stringify({
         snippet: {
           title: 'SIGILLUM ' + hcvId,
-          description: 'SIGILLUM Certified Original reference. HCV-ID: ' + hcvId,
+          description: [
+            'SIGILLUM VERIFIED ORIGINAL',
+            'HCV-ID: ' + hcvId,
+            'Original SHA-256: ' + originalSha256,
+            'HCVPACK SHA-256: ' + hcvpackSha256,
+            'Registry: https://sigillum-hcv.com/originals/' + hcvId,
+          ].join('\n'),
         },
         status: {
           privacyStatus: 'unlisted',
@@ -664,7 +788,7 @@ function createVerifiedOriginalsProduction({
       'https://www.googleapis.com/youtube/v3/videos?id=' + encodeURIComponent(videoId),
       { method: 'DELETE', headers: { authorization: 'Bearer ' + accessToken } },
     );
-    return response.status === 204 || response.ok;
+    return response.status === 204 || response.status === 404 || response.ok;
   }
 
   async function waitYoutubeReady(accessToken, videoId) {
@@ -702,11 +826,11 @@ function createVerifiedOriginalsProduction({
     return receiptId;
   }
 
-  async function youtubePublish({ hcvId, filePath, referenceSha256, size }) {
+  async function youtubePublish({ hcvId, filePath, referenceSha256, size, originalSha256, hcvpackSha256 }) {
     const config = youtubeConfig();
     const accessToken = await oauthAccessToken(config);
     await verifyYoutubeChannel(accessToken, config.channelId);
-    const uploadUrl = await startYoutubeUpload({ accessToken, hcvId, size });
+    const uploadUrl = await startYoutubeUpload({ accessToken, hcvId, size, originalSha256, hcvpackSha256 });
     const videoId = await uploadYoutubeFile({ accessToken, uploadUrl, filePath, size });
     let status;
     try {
@@ -763,17 +887,35 @@ function createVerifiedOriginalsProduction({
     const publicFromPrivate = crypto.createPublicKey(privateKey).export({ format: 'pem', type: 'spki' }).toString();
     const pinned = crypto.createPublicKey(trustedKeys[keyId]).export({ format: 'pem', type: 'spki' }).toString();
     if (publicFromPrivate !== pinned) fail('DERIVATION_KEY_PIN_MISMATCH', 503);
-    if (original.certificate?.content?.type !== 'video') fail('DERIVATION_VIDEO_ONLY', 415);
+    const contentType = original.contentType || original.certificate?.content?.type;
+    const derivationOperation = contentType === 'video'
+      ? DERIVATION_OPERATION
+      : contentType === 'photo'
+        ? PHOTO_DERIVATION_OPERATION
+        : null;
+    if (!derivationOperation) fail('DERIVATION_MEDIA_TYPE_UNSUPPORTED', 415);
 
-    await execFileAsync(ffmpegPath, [
-      '-hide_banner', '-loglevel', 'error', '-nostdin', '-y',
-      '-i', originalPath,
-      '-map', '0:v:0', '-map', '0:a?',
-      '-map_metadata', '-1', '-map_chapters', '-1',
-      '-c:v', 'libx264', '-preset', 'medium', '-crf', '23',
-      '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '160k',
-      '-movflags', '+faststart', outputPath,
-    ], { timeout: 180000, maxBuffer: 4 * 1024 * 1024 });
+    const ffmpegArgs = contentType === 'video'
+      ? [
+          '-hide_banner', '-loglevel', 'error', '-nostdin', '-y',
+          '-i', originalPath,
+          '-map', '0:v:0', '-map', '0:a?',
+          '-map_metadata', '-1', '-map_chapters', '-1',
+          '-c:v', 'libx264', '-preset', 'medium', '-crf', '23',
+          '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '160k',
+          '-movflags', '+faststart', outputPath,
+        ]
+      : [
+          '-hide_banner', '-loglevel', 'error', '-nostdin', '-y',
+          '-loop', '1', '-i', originalPath,
+          '-t', '5', '-r', '30',
+          '-vf', 'scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2:color=black,format=yuv420p',
+          '-map_metadata', '-1', '-map_chapters', '-1',
+          '-c:v', 'libx264', '-preset', 'medium', '-crf', '20',
+          '-an', '-movflags', '+faststart', outputPath,
+        ];
+
+    await execFileAsync(ffmpegPath, ffmpegArgs, { timeout: 180000, maxBuffer: 4 * 1024 * 1024 });
 
     const output = await fs.promises.readFile(outputPath);
     if (!output.length) fail('DERIVATION_OUTPUT_INVALID', 500);
@@ -790,7 +932,7 @@ function createVerifiedOriginalsProduction({
       },
       output: { sha256: outputHash, byteLength: output.length, mediaType: 'video' },
       transform: {
-        operation: DERIVATION_OPERATION,
+        operation: derivationOperation,
         editorialImpact: 'non_editorial',
         policyVersion: 'SIGILLUM_NON_EDITORIAL_V1',
       },
@@ -817,7 +959,7 @@ function createVerifiedOriginalsProduction({
     return { manifest, outputHash, outputSize: output.length };
   }
 
-  async function registerPublication({ hcvId, consentRecordId, original, derivation, youtube, monetizationEnabled }) {
+  async function registerPublication({ hcvId, consentRecordId, original, derivation, youtube, monetizationEnabled, hcvpackSha256 }) {
     const client = await pool.connect();
     const publicationId = crypto.randomUUID();
     try {
@@ -839,8 +981,8 @@ function createVerifiedOriginalsProduction({
           publication_id,hcv_id,platform,platform_post_id,public_url,
           reference_sha256,original_content_sha256,derived_from,derivation_type,
           derivation_manifest_sha256,platform_receipt_id,created_at,publication_status,
-          consent_record_id,consent_version,monetization_consent,published_by
-        ) VALUES($1,$2,'youtube',$3,$4,$5,$6,$6,$7,$8,$9,$10,'PUBLISHED',$11,$12,$13,$14)
+          consent_record_id,consent_version,monetization_consent,published_by,hcvpack_sha256
+        ) VALUES($1,$2,'youtube',$3,$4,$5,$6,$6,$7,$8,$9,$10,'PUBLISHED',$11,$12,$13,$14,$15)
       `, [
         publicationId,
         hcvId,
@@ -848,7 +990,7 @@ function createVerifiedOriginalsProduction({
         youtube.publicUrl,
         derivation.outputHash,
         original.contentHash,
-        DERIVATION_OPERATION,
+        derivation.manifest.transform.operation,
         hashString(manifestRaw),
         youtube.receiptId,
         derivation.manifest.createdAt,
@@ -856,6 +998,7 @@ function createVerifiedOriginalsProduction({
         consent.consent_version,
         monetizationEnabled,
         String(process.env.SIGILLUM_PUBLISHER_ID || 'SIGILLUM_SERVER_V1'),
+        hcvpackSha256,
       ]);
       await audit({
         hcvId,
@@ -866,7 +1009,8 @@ function createVerifiedOriginalsProduction({
         metadata: {
           platformStatus: youtube.status.processingStatus,
           platformVisibility: youtube.status.privacyStatus,
-          workerVersion: 'verified_originals_production_v1',
+          workerVersion: 'verified_originals_production_v2',
+          hcvpackSha256,
         },
         client,
       });
@@ -883,7 +1027,11 @@ function createVerifiedOriginalsProduction({
   async function publishOriginal(req, hcvId, url) {
     const access = await creatorAccess(req);
     const original = await ownedOriginal(hcvId, access.session);
-    if (String(req.headers['content-type'] || '').split(';')[0] !== 'video/mp4') fail('ORIGINAL_MEDIA_TYPE_UNSUPPORTED', 415);
+    const requestMediaType = String(req.headers['content-type'] || '').split(';')[0].toLowerCase();
+    const allowedMediaTypes = original.contentType === 'video'
+      ? new Set(['video/mp4'])
+      : new Set(['image/jpeg', 'image/png']);
+    if (!allowedMediaTypes.has(requestMediaType)) fail('ORIGINAL_MEDIA_TYPE_UNSUPPORTED', 415);
     const contentLength = Number(req.headers['content-length']);
     const maxBytes = Math.max(1, Number(process.env.SIGILLUM_VERIFIED_ORIGINALS_MAX_BYTES || 536870912));
     if (!Number.isSafeInteger(contentLength) || contentLength <= 0 || contentLength > maxBytes) fail('ORIGINAL_CONTENT_LENGTH_INVALID', 411);
@@ -891,7 +1039,11 @@ function createVerifiedOriginalsProduction({
 
     const consentRecordId = String(url.searchParams.get('consentRecordId') || '');
     const monetizationEnabled = strictBoolean(url.searchParams.get('monetizationEnabled'));
-    if (!consentRecordId || monetizationEnabled === null) fail('PUBLISH_REQUEST_INVALID', 400);
+    const hcvpackSha256 = String(url.searchParams.get('hcvpackSha256') || '').toLowerCase();
+    if (!consentRecordId || monetizationEnabled === null || !SHA256.test(hcvpackSha256)) fail('PUBLISH_REQUEST_INVALID', 400);
+    if (!verifyHcvpackBindingSignature(req, original, hcvId, hcvpackSha256)) {
+      fail('HCVPACK_BINDING_SIGNATURE_INVALID', 422);
+    }
     const consent = (await pool.query(`
       SELECT * FROM verified_originals_consents
       WHERE record_id=$1 AND hcv_id=$2 AND account_id=$3 AND state='ACTIVE'
@@ -902,17 +1054,29 @@ function createVerifiedOriginalsProduction({
     const tmpRoot = String(process.env.SIGILLUM_VERIFIED_ORIGINALS_TMP || path.join(os.tmpdir(), 'sigillum-verified-originals'));
     await fs.promises.mkdir(tmpRoot, { recursive: true, mode: 0o700 });
     const jobDir = await fs.promises.mkdtemp(path.join(tmpRoot, 'job-'));
-    const originalPath = path.join(jobDir, 'original.mp4');
+    const originalExtension = original.contentType === 'video'
+      ? '.mp4'
+      : requestMediaType === 'image/png'
+        ? '.png'
+        : '.jpg';
+    const originalPath = path.join(jobDir, 'original' + originalExtension);
     const outputPath = path.join(jobDir, 'reference.mp4');
 
     try {
       const uploaded = await streamToFile(req, originalPath, original.contentSize);
       if (uploaded.sha256 !== original.contentHash) fail('DERIVATION_ORIGINAL_SHA_MISMATCH', 422);
       const derivation = await createTrustedDerivative({ hcvId, original, originalPath, outputPath });
-      const youtube = await youtubePublish({ hcvId, filePath: outputPath, referenceSha256: derivation.outputHash, size: derivation.outputSize });
+      const youtube = await youtubePublish({
+        hcvId,
+        filePath: outputPath,
+        referenceSha256: derivation.outputHash,
+        size: derivation.outputSize,
+        originalSha256: original.contentHash,
+        hcvpackSha256,
+      });
       let publicationId;
       try {
-        publicationId = await registerPublication({ hcvId, consentRecordId, original, derivation, youtube, monetizationEnabled });
+        publicationId = await registerPublication({ hcvId, consentRecordId, original, derivation, youtube, monetizationEnabled, hcvpackSha256 });
       } catch (error) {
         try { await deleteYoutubeVideo(youtube.accessToken, youtube.videoId); } catch (_) {}
         try {
@@ -934,7 +1098,8 @@ function createVerifiedOriginalsProduction({
         originalContentSha256: original.contentHash,
         referenceSha256: derivation.outputHash,
         derivedFrom: original.contentHash,
-        derivationType: DERIVATION_OPERATION,
+        derivationType: derivation.manifest.transform.operation,
+        hcvpackSha256,
         socialFileVerdict: 'NOT_VERIFIED',
       };
     } finally {
@@ -945,12 +1110,90 @@ function createVerifiedOriginalsProduction({
     }
   }
 
+  async function attemptTakedowns(publications) {
+    if (!publications.length) return 'COMPLETED';
+    try {
+      const config = youtubeConfig();
+      const accessToken = await oauthAccessToken(config);
+      await verifyYoutubeChannel(accessToken, config.channelId);
+      let allDeleted = true;
+      for (const publication of publications) {
+        if (publication.processing_status === 'withdrawn') continue;
+        const deleted = await deleteYoutubeVideo(
+          accessToken,
+          publication.platform_post_id,
+        );
+        allDeleted = allDeleted && deleted;
+        if (deleted) {
+          await pool.query(`
+            UPDATE verified_originals_platform_receipts
+            SET processing_status='withdrawn',visibility='unavailable',verified_at=NOW()
+            WHERE receipt_id=$1
+          `, [publication.platform_receipt_id]);
+        }
+      }
+      return allDeleted ? 'COMPLETED' : 'PARTIAL';
+    } catch (_) {
+      return 'PENDING';
+    }
+  }
+
+  async function retryPendingTakedowns() {
+    if (!youtubeServiceConfigured()) return { attempted: 0, completed: 0 };
+    const rows = (await pool.query(`
+      SELECT p.hcv_id,p.publication_id,p.platform_post_id,p.platform_receipt_id,
+             r.processing_status
+      FROM verified_originals_publications p
+      JOIN verified_originals_platform_receipts r
+        ON r.receipt_id=p.platform_receipt_id
+      WHERE p.publication_status='REVOKED'
+        AND r.processing_status<>'withdrawn'
+      ORDER BY p.revoked_at ASC NULLS LAST
+      LIMIT 100
+    `)).rows;
+    let completed = 0;
+    for (const row of rows) {
+      const status = await attemptTakedowns([row]);
+      if (status === 'COMPLETED') {
+        completed += 1;
+        try {
+          await audit({
+            hcvId: row.hcv_id,
+            publicationId: row.publication_id,
+            eventType: 'PLATFORM_TAKEDOWN_COMPLETED',
+            actorType: 'SIGILLUM_PUBLISHER',
+            actorSubjectHash: hashString(
+              String(process.env.SIGILLUM_PUBLISHER_ID || 'SIGILLUM_SERVER_V1'),
+            ),
+            metadata: { retryWorker: true },
+          });
+        } catch (_) {}
+      }
+    }
+    return { attempted: rows.length, completed };
+  }
+
+  function startTakedownWorker() {
+    if (takedownTimer || !youtubeServiceConfigured()) return;
+    const intervalMs = Math.max(
+      60_000,
+      Number(process.env.SIGILLUM_TAKEDOWN_RETRY_MS || 300_000),
+    );
+    takedownTimer = setInterval(() => {
+      retryPendingTakedowns().catch(error => {
+        console.error('SIGILLUM_TAKEDOWN_RETRY_FAILED', error?.message || error);
+      });
+    }, intervalMs);
+    if (typeof takedownTimer.unref === 'function') takedownTimer.unref();
+  }
+
   async function withdrawConsent(req, hcvId) {
     const session = await authenticate(req);
     await ownedOriginal(hcvId, session);
     const client = await pool.connect();
     let publications = [];
     let consent;
+    let newlyWithdrawn = false;
     try {
       await client.query('BEGIN');
       consent = (await client.query(`
@@ -958,22 +1201,60 @@ function createVerifiedOriginalsProduction({
         WHERE hcv_id=$1 AND account_id=$2 AND state='ACTIVE'
         ORDER BY consented_at DESC LIMIT 1 FOR UPDATE
       `, [hcvId, session.account_id])).rows[0];
-      if (!consent) fail('ACTIVE_CONSENT_NOT_FOUND', 404);
-      publications = (await client.query(`
-        SELECT publication_id,platform_post_id,platform_receipt_id
-        FROM verified_originals_publications
-        WHERE hcv_id=$1 AND consent_record_id=$2 AND publication_status='PUBLISHED'
-      `, [hcvId, consent.record_id])).rows;
-      await client.query("UPDATE verified_originals_consents SET state='WITHDRAWN',withdrawn_at=NOW() WHERE record_id=$1", [consent.record_id]);
-      await client.query("UPDATE verified_originals_publications SET publication_status='REVOKED',revoked_at=NOW() WHERE hcv_id=$1 AND consent_record_id=$2 AND publication_status='PUBLISHED'", [hcvId, consent.record_id]);
-      await audit({
-        hcvId,
-        eventType: 'CREATOR_CONSENT_WITHDRAWN',
-        actorType: 'CREATOR',
-        actorSubjectHash: hashString(session.account_id),
-        metadata: { platformStatus: 'TAKEDOWN_REQUESTED' },
-        client,
-      });
+
+      if (consent) {
+        newlyWithdrawn = true;
+        publications = (await client.query(`
+          SELECT p.publication_id,p.platform_post_id,p.platform_receipt_id,
+                 r.processing_status
+          FROM verified_originals_publications p
+          JOIN verified_originals_platform_receipts r
+            ON r.receipt_id=p.platform_receipt_id
+          WHERE p.hcv_id=$1 AND p.consent_record_id=$2
+            AND p.publication_status='PUBLISHED'
+        `, [hcvId, consent.record_id])).rows;
+        await client.query(
+          "UPDATE verified_originals_consents SET state='WITHDRAWN',withdrawn_at=NOW() WHERE record_id=$1",
+          [consent.record_id],
+        );
+        await client.query(
+          "UPDATE verified_originals_publications SET publication_status='REVOKED',revoked_at=NOW() WHERE hcv_id=$1 AND consent_record_id=$2 AND publication_status='PUBLISHED'",
+          [hcvId, consent.record_id],
+        );
+        for (const publication of publications) {
+          await client.query(`
+            UPDATE verified_originals_platform_receipts
+            SET processing_status='takedown_pending',verified_at=NOW()
+            WHERE receipt_id=$1 AND processing_status<>'withdrawn'
+          `, [publication.platform_receipt_id]);
+          publication.processing_status = 'takedown_pending';
+        }
+        await audit({
+          hcvId,
+          eventType: 'CREATOR_CONSENT_WITHDRAWN',
+          actorType: 'CREATOR',
+          actorSubjectHash: hashString(session.account_id),
+          metadata: { platformStatus: 'TAKEDOWN_REQUESTED' },
+          client,
+        });
+      } else {
+        consent = (await client.query(`
+          SELECT * FROM verified_originals_consents
+          WHERE hcv_id=$1 AND account_id=$2 AND state='WITHDRAWN'
+          ORDER BY withdrawn_at DESC NULLS LAST, consented_at DESC
+          LIMIT 1
+        `, [hcvId, session.account_id])).rows[0];
+        if (!consent) fail('WITHDRAWN_CONSENT_NOT_FOUND', 404);
+        publications = (await client.query(`
+          SELECT p.publication_id,p.platform_post_id,p.platform_receipt_id,
+                 r.processing_status
+          FROM verified_originals_publications p
+          JOIN verified_originals_platform_receipts r
+            ON r.receipt_id=p.platform_receipt_id
+          WHERE p.hcv_id=$1 AND p.consent_record_id=$2
+            AND p.publication_status='REVOKED'
+        `, [hcvId, consent.record_id])).rows;
+      }
       await client.query('COMMIT');
     } catch (error) {
       try { await client.query('ROLLBACK'); } catch (_) {}
@@ -982,27 +1263,29 @@ function createVerifiedOriginalsProduction({
       client.release();
     }
 
-    let takedown = 'PENDING';
-    try {
-      const config = youtubeConfig();
-      const accessToken = await oauthAccessToken(config);
-      await verifyYoutubeChannel(accessToken, config.channelId);
-      let allDeleted = true;
-      for (const publication of publications) {
-        const deleted = await deleteYoutubeVideo(accessToken, publication.platform_post_id);
-        allDeleted = allDeleted && deleted;
-        if (deleted) {
-          await pool.query(`
-            UPDATE verified_originals_platform_receipts
-            SET processing_status='withdrawn',visibility='unavailable',verified_at=NOW()
-            WHERE receipt_id=$1
-          `, [publication.platform_receipt_id]);
-        }      }
-      takedown = allDeleted ? 'COMPLETED' : 'PARTIAL';
-    } catch (_) {
-      takedown = 'PENDING';
+    const takedown = await attemptTakedowns(publications);
+    if (takedown === 'COMPLETED' && publications.length) {
+      try {
+        await audit({
+          hcvId,
+          eventType: 'PLATFORM_TAKEDOWN_COMPLETED',
+          actorType: newlyWithdrawn ? 'CREATOR' : 'SIGILLUM_PUBLISHER',
+          actorSubjectHash: hashString(
+            newlyWithdrawn
+              ? session.account_id
+              : String(process.env.SIGILLUM_PUBLISHER_ID || 'SIGILLUM_SERVER_V1'),
+          ),
+          metadata: { retry: !newlyWithdrawn },
+        });
+      } catch (_) {}
     }
-    return { ok: true, hcvId, consentState: 'WITHDRAWN', referenceAvailable: false, platformTakedown: takedown };
+    return {
+      ok: true,
+      hcvId,
+      consentState: 'WITHDRAWN',
+      referenceAvailable: false,
+      platformTakedown: takedown,
+    };
   }
 
   async function handle(req, res, url) {
@@ -1050,16 +1333,51 @@ function createVerifiedOriginalsProduction({
     if (req.method === 'GET' && page) {
       const availability = await publicAvailability(page[1]);
       const available = availability.availability === 'REFERENCE_AVAILABLE';
-      const html = '<!doctype html><html lang="it"><meta charset="utf-8">' +
+      const lang = ['it','en','es','ru'].includes(String(url.searchParams.get('lang') || '').toLowerCase())
+        ? String(url.searchParams.get('lang')).toLowerCase()
+        : 'en';
+      const copy = {
+        it: {
+          title: 'SIGILLUM Originali certificati',
+          available: 'ORIGINALE CERTIFICATO DISPONIBILE',
+          missing: 'RIFERIMENTO NON DISPONIBILE',
+          access: 'La verifica è gratuita. L’accesso al riferimento tramite SIGILLUM richiede un abbonamento attivo. Un link YouTube non in elenco già ottenuto può essere condiviso fuori dall’app.',
+          absent: 'Nessun originale certificato attivo è disponibile.',
+          warning: 'La presenza di un HCV-ID non prova che un file social esterno sia identico all’originale.',
+        },
+        en: {
+          title: 'SIGILLUM Certified Originals',
+          available: 'CERTIFIED ORIGINAL AVAILABLE',
+          missing: 'REFERENCE NOT AVAILABLE',
+          access: 'Verification is free. Accessing the reference through SIGILLUM requires an active subscription. An unlisted YouTube link already obtained can be shared outside the app.',
+          absent: 'No active certified original is available.',
+          warning: 'The presence of an HCV-ID does not prove that an external social file is identical to the original.',
+        },
+        es: {
+          title: 'Originales certificados SIGILLUM',
+          available: 'ORIGINAL CERTIFICADO DISPONIBLE',
+          missing: 'REFERENCIA NO DISPONIBLE',
+          access: 'La verificación es gratuita. El acceso a la referencia mediante SIGILLUM requiere una suscripción activa. Un enlace de YouTube no listado ya obtenido puede compartirse fuera de la app.',
+          absent: 'No hay ningún original certificado activo disponible.',
+          warning: 'La presencia de un HCV-ID no demuestra que un archivo externo de una red social sea idéntico al original.',
+        },
+        ru: {
+          title: 'Сертифицированные оригиналы SIGILLUM',
+          available: 'СЕРТИФИЦИРОВАННЫЙ ОРИГИНАЛ ДОСТУПЕН',
+          missing: 'ЭТАЛОН НЕДОСТУПЕН',
+          access: 'Проверка бесплатна. Для доступа к эталону через SIGILLUM требуется активная подписка. Уже полученной ссылкой YouTube в режиме unlisted можно поделиться вне приложения.',
+          absent: 'Активный сертифицированный оригинал отсутствует.',
+          warning: 'Наличие HCV-ID не доказывает, что внешний файл из социальной сети идентичен оригиналу.',
+        },
+      }[lang];
+      const html = '<!doctype html><html lang="' + lang + '"><meta charset="utf-8">' +
         '<meta name="viewport" content="width=device-width,initial-scale=1">' +
-        '<title>SIGILLUM Originali certificati</title>' +
+        '<title>' + copy.title + '</title>' +
         '<main style="max-width:720px;margin:40px auto;font:17px/1.5 sans-serif">' +
-        '<h1>' + (available ? 'ORIGINALE CERTIFICATO DISPONIBILE' : 'RIFERIMENTO NON DISPONIBILE') + '</h1>' +
+        '<h1>' + (available ? copy.available : copy.missing) + '</h1>' +
         '<p>HCV-ID: ' + page[1] + '</p>' +
-        (available
-          ? '<p>La verifica è gratuita. La visualizzazione richiede un abbonamento SIGILLUM attivo e avviene dall’app.</p>'
-          : '<p>Nessun originale certificato attivo è disponibile.</p>') +
-        '<p>La presenza di un HCV-ID non prova che un file social esterno sia identico all’originale.</p>' +
+        (available ? '<p>' + copy.access + '</p>' : '<p>' + copy.absent + '</p>') +
+        '<p>' + copy.warning + '</p>' +
         '</main></html>';
       sendHtml(res, available ? 200 : 404, html);
       return true;
@@ -1079,6 +1397,7 @@ function createVerifiedOriginalsProduction({
 module.exports = {
   CONSENT_VERSION,
   DERIVATION_OPERATION,
+  PHOTO_DERIVATION_OPERATION,
   DERIVATION_SCHEMA,
   YOUTUBE_SCOPE,
   canonicalYoutubeReference,
