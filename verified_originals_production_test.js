@@ -373,6 +373,17 @@ async function resetDb() {
     HCV_ID,OWNER,certificateRaw,sha(certificateRaw),sha(OWNER),DEVICE,
     CREATOR_ID,originalHash,'c'.repeat(64),
   ]);
+  await pool.query(`
+    INSERT INTO certificates(
+      hcv_id,account_id,certificate_raw,certificate_sha256,
+      account_subject_hash,device_key_fingerprint,creator_id,binding_version,
+      content_sha256,identity_verified,registry_attested_at,provenance_version,
+      registry_attestation_sha256
+    ) VALUES($1,$2,$3,$4,$5,$6,$7,1,$8,TRUE,NOW(),2,$9)
+  `,[
+    PHOTO_HCV_ID,OWNER,photoCertificateRaw,sha(photoCertificateRaw),sha(OWNER),
+    DEVICE,CREATOR_ID,photoHash,'6'.repeat(64),
+  ]);
 }
 
 async function request(base,method,pathname,{bearer,body,bytes,contentType='video/mp4'}={}) {
