@@ -40,8 +40,6 @@ jobs:
           node-version: '20'
       - name: Install dependencies
         run: npm install --no-audit --no-fund
-      - name: Apply production patches
-        run: npm run precheck
       - name: Full backend checks
         run: npm run check
       - name: Verified Originals integration
