@@ -1,5 +1,7 @@
 'use strict';
 
+const crypto = require('crypto');
+
 function isTrue(value) {
   return String(value || '').toLowerCase() === 'true';
 }
@@ -36,6 +38,50 @@ function isProductionSender(value) {
   if (domain === 'localhost' || domain.endsWith('.localhost')) return false;
   if (domain.endsWith('.example') || domain.endsWith('.invalid') || domain.endsWith('.test')) return false;
   return true;
+}
+
+function validateDerivationKeys(env, invalid) {
+  const keyId = String(env.SIGILLUM_DERIVATION_KEY_ID || '').trim();
+  const privatePem = String(env.SIGILLUM_DERIVATION_PRIVATE_KEY_PEM || '')
+    .replace(/\\n/g, '\n')
+    .trim();
+  const pinnedRaw = String(env.SIGILLUM_DERIVATION_PUBLIC_KEYS_JSON || '').trim();
+  if (!keyId || !privatePem || !pinnedRaw) return;
+
+  try {
+    const privateKey = crypto.createPrivateKey(privatePem);
+    const modulusLength = Number(
+      privateKey.asymmetricKeyDetails?.modulusLength || 0,
+    );
+    if (privateKey.asymmetricKeyType !== 'rsa' || modulusLength < 2048) {
+      throw new Error('DERIVATION_PRIVATE_KEY_NOT_RSA_2048');
+    }
+
+    const pinnedMap = JSON.parse(pinnedRaw);
+    if (!pinnedMap || typeof pinnedMap !== 'object' || Array.isArray(pinnedMap)) {
+      throw new Error('DERIVATION_PUBLIC_KEYS_INVALID');
+    }
+    const pinnedPem = pinnedMap[keyId];
+    if (typeof pinnedPem !== 'string' || !pinnedPem.trim()) {
+      throw new Error('DERIVATION_PIN_MISSING');
+    }
+
+    const derivedPublic = crypto
+      .createPublicKey(privateKey)
+      .export({ format: 'pem', type: 'spki' })
+      .toString()
+      .trim();
+    const pinnedPublic = crypto
+      .createPublicKey(pinnedPem)
+      .export({ format: 'pem', type: 'spki' })
+      .toString()
+      .trim();
+    if (derivedPublic !== pinnedPublic) {
+      throw new Error('DERIVATION_KEY_PIN_MISMATCH');
+    }
+  } catch (_) {
+    invalid.push('SIGILLUM_DERIVATION_KEYS=matching-rsa-2048');
+  }
 }
 
 function validateProductionConfig(env = process.env) {
@@ -125,6 +171,7 @@ function validateProductionConfig(env = process.env) {
       !/^[A-Za-z0-9._-]{3,80}$/.test(String(env.SIGILLUM_DERIVATION_KEY_ID))) {
     invalid.push('SIGILLUM_DERIVATION_KEY_ID=format');
   }
+  validateDerivationKeys(env, invalid);
 
   return {
     live: true,

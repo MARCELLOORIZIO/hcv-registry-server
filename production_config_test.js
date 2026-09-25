@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const { assertProductionConfig, validateProductionConfig } = require('./production_config');
 
 function expect(condition, message) {
@@ -14,6 +15,16 @@ try {
   rejected = error.code === 'SIGILLUM_PRODUCTION_NOT_READY';
 }
 expect(rejected, 'incomplete LIVE configuration must be rejected');
+
+const derivationKeyPair = crypto.generateKeyPairSync('rsa', {
+  modulusLength: 2048,
+});
+const derivationPrivatePem = derivationKeyPair.privateKey
+  .export({ format: 'pem', type: 'pkcs8' })
+  .toString();
+const derivationPublicPem = derivationKeyPair.publicKey
+  .export({ format: 'pem', type: 'spki' })
+  .toString();
 
 const readyEnv = {
   PRODUCTION_LIVE: 'true',
@@ -44,8 +55,10 @@ const readyEnv = {
   YOUTUBE_COMPLIANCE_APPROVED: 'true',
   YOUTUBE_UNLISTED_UPLOAD_CONFIRMED: 'true',
   SIGILLUM_DERIVATION_KEY_ID: 'sigillum_derivation_prod_v1',
-  SIGILLUM_DERIVATION_PRIVATE_KEY_PEM: 'private-key-test',
-  SIGILLUM_DERIVATION_PUBLIC_KEYS_JSON: '{"sigillum_derivation_prod_v1":"public-key-test"}',
+  SIGILLUM_DERIVATION_PRIVATE_KEY_PEM: derivationPrivatePem,
+  SIGILLUM_DERIVATION_PUBLIC_KEYS_JSON: JSON.stringify({
+    sigillum_derivation_prod_v1: derivationPublicPem,
+  }),
 };
 const ready = assertProductionConfig(readyEnv);
 expect(ready.live === true && ready.ready === true, 'complete LIVE configuration must be accepted');
@@ -74,6 +87,49 @@ expect(validateProductionConfig(unlistedUnconfirmed).ready === false, 'LIVE must
 const missingDerivationKey = { ...readyEnv, SIGILLUM_DERIVATION_PRIVATE_KEY_PEM: '' };
 expect(validateProductionConfig(missingDerivationKey).ready === false, 'LIVE must reject missing derivation signing material');
 
+const mismatchedPair = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
+const mismatchedPublicPem = mismatchedPair.publicKey
+  .export({ format: 'pem', type: 'spki' })
+  .toString();
+const mismatchedDerivationPin = {
+  ...readyEnv,
+  SIGILLUM_DERIVATION_PUBLIC_KEYS_JSON: JSON.stringify({
+    sigillum_derivation_prod_v1: mismatchedPublicPem,
+  }),
+};
+expect(
+  validateProductionConfig(mismatchedDerivationPin).ready === false,
+  'LIVE must reject mismatched derivation key pins',
+);
+
+const weakPair = crypto.generateKeyPairSync('rsa', { modulusLength: 1024 });
+const weakPrivatePem = weakPair.privateKey
+  .export({ format: 'pem', type: 'pkcs8' })
+  .toString();
+const weakPublicPem = weakPair.publicKey
+  .export({ format: 'pem', type: 'spki' })
+  .toString();
+const weakDerivationKey = {
+  ...readyEnv,
+  SIGILLUM_DERIVATION_PRIVATE_KEY_PEM: weakPrivatePem,
+  SIGILLUM_DERIVATION_PUBLIC_KEYS_JSON: JSON.stringify({
+    sigillum_derivation_prod_v1: weakPublicPem,
+  }),
+};
+expect(
+  validateProductionConfig(weakDerivationKey).ready === false,
+  'LIVE must reject derivation RSA keys below 2048 bits',
+);
+
+const malformedDerivationMap = {
+  ...readyEnv,
+  SIGILLUM_DERIVATION_PUBLIC_KEYS_JSON: '{not-json',
+};
+expect(
+  validateProductionConfig(malformedDerivationMap).ready === false,
+  'LIVE must reject malformed derivation public-key configuration',
+);
+
 console.log(JSON.stringify({
   ok: true,
   prelaunchAllowed: true,
@@ -87,4 +143,6 @@ console.log(JSON.stringify({
   youtubeComplianceRequiredForLive: true,
   youtubeUnlistedConfirmationRequiredForLive: true,
   derivationSigningRequiredForLive: true,
+  derivationKeyPinMustMatch: true,
+  derivationRsa2048Required: true,
 }, null, 2));
