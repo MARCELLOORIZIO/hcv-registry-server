@@ -58,6 +58,13 @@ function validateProductionConfig(env = process.env) {
     'APPLE_IAP_KEY_ID',
     'TERMS_VERSION',
     'PRIVACY_VERSION',
+    'YOUTUBE_CLIENT_ID',
+    'YOUTUBE_CLIENT_SECRET',
+    'YOUTUBE_REFRESH_TOKEN',
+    'YOUTUBE_CHANNEL_ID',
+    'SIGILLUM_DERIVATION_KEY_ID',
+    'SIGILLUM_DERIVATION_PRIVATE_KEY_PEM',
+    'SIGILLUM_DERIVATION_PUBLIC_KEYS_JSON',
   ];
 
   for (const key of required) {
@@ -103,6 +110,20 @@ function validateProductionConfig(env = process.env) {
   }
   if (present(env.PRIVACY_EMAIL) && !validEmail(env.PRIVACY_EMAIL)) {
     invalid.push('PRIVACY_EMAIL=email');
+  }
+  if (present(env.YOUTUBE_CHANNEL_ID) &&
+      !/^UC[A-Za-z0-9_-]{22}$/.test(String(env.YOUTUBE_CHANNEL_ID))) {
+    invalid.push('YOUTUBE_CHANNEL_ID=channel-id');
+  }
+  if (!isTrue(env.YOUTUBE_COMPLIANCE_APPROVED)) {
+    invalid.push('YOUTUBE_COMPLIANCE_APPROVED=true');
+  }
+  if (!isTrue(env.YOUTUBE_UNLISTED_UPLOAD_CONFIRMED)) {
+    invalid.push('YOUTUBE_UNLISTED_UPLOAD_CONFIRMED=true');
+  }
+  if (present(env.SIGILLUM_DERIVATION_KEY_ID) &&
+      !/^[A-Za-z0-9._-]{3,80}$/.test(String(env.SIGILLUM_DERIVATION_KEY_ID))) {
+    invalid.push('SIGILLUM_DERIVATION_KEY_ID=format');
   }
 
   return {

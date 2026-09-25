@@ -72,6 +72,10 @@ services:
         sync: false
       - key: YOUTUBE_CHANNEL_ID
         sync: false
+      - key: YOUTUBE_COMPLIANCE_APPROVED
+        sync: false
+      - key: YOUTUBE_UNLISTED_UPLOAD_CONFIRMED
+        sync: false
       - key: SIGILLUM_PUBLISHER_ID
         value: "SIGILLUM_YOUTUBE_V1"
       - key: SIGILLUM_DERIVATION_KEY_ID
