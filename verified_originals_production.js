@@ -646,7 +646,7 @@ function createVerifiedOriginalsProduction({
             'Original SHA-256: ' + originalSha256,
             'HCVPACK SHA-256: ' + hcvpackSha256,
             'Registry: https://sigillum-hcv.com/originals/' + hcvId,
-          ].join('\\n'),
+          ].join('\n'),
         },
         status: {
           privacyStatus: 'unlisted',
@@ -933,7 +933,7 @@ function createVerifiedOriginalsProduction({
         youtube.publicUrl,
         derivation.outputHash,
         original.contentHash,
-        DERIVATION_OPERATION,
+        derivation.manifest.transform.operation,
         hashString(manifestRaw),
         youtube.receiptId,
         derivation.manifest.createdAt,
