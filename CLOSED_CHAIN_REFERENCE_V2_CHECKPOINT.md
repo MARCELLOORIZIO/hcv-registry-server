@@ -33,7 +33,9 @@ Companion app branch: MARCELLOORIZIO/sigillum-hcv:feature/build133-closed-chain-
 - 2026-09-25: legal documents updated in IT/EN/ES/RU for encrypted local originals, temporary reference processing and YouTube hosting; legal revision is now 2026-09-25 and CI run 36119439169 passed.
 - 2026-09-25: withdrawal semantics confirmed: the active reference is taken down while HCV/Registry verification remains available.
 - 2026-09-25: full PostgreSQL photo publication path added to `verified_originals_production_test.js`; canonical JPEG is verified, converted to `photo_to_reference_video_v1`, uploaded through the mocked unlisted YouTube path, stored with HCVPACK SHA-256, and exposed through the paid `/view` route. CI run `36120172433` GREEN.
-- Remaining before release: live YouTube compliance/upload test; align production TERMS_VERSION and PRIVACY_VERSION with 2026-09-25 before deployment; no production deploy yet.
+- 2026-09-25: YouTube platform preflight rechecked against current official Google documentation. API projects created after 2020-07-28 that are still unverified have uploads forced to private until the YouTube API compliance audit is passed; this must be resolved before the live unlisted-reference test. OAuth consent is still in Testing, so its refresh token is time-limited and must not be treated as production-stable.
+- 2026-09-25: YouTube Data API video insert/update does not expose a per-video switch that disables comments. Comments-off must therefore be configured in YouTube Studio/channel upload defaults (and verified on the controlled live upload), not falsely represented as enforced by `verified_originals_production.js`.
+- Remaining before release: live YouTube compliance/upload test; confirm channel comments-off default; align production TERMS_VERSION and PRIVACY_VERSION with 2026-09-25 before deployment; no production deploy yet.
 
 ## Resume rule
 
