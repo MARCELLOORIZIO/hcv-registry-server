@@ -31,6 +31,18 @@ async function fingerprint(filePath, mediaType, workDir) {
   });
 }
 
+function assertModified(result, label) {
+  assert.equal(
+    result.verdict,
+    'modified',
+    label + ' must be classified as modified',
+  );
+  assert(
+    result.modifiedFrames >= 1,
+    label + ' must contain at least one modified frame',
+  );
+}
+
 (async () => {
   const root = fs.mkdtempSync(
     path.join(os.tmpdir(), 'sigillum-reference-v3-real-media-'),
@@ -41,14 +53,17 @@ async function fingerprint(filePath, mediaType, workDir) {
     const videoOfficial = path.join(root, 'video-official.mp4');
     const videoSocial = path.join(root, 'video-social.mp4');
     const videoUfo = path.join(root, 'video-social-ufo.mp4');
+    const videoHue = path.join(root, 'video-social-hue.mp4');
+    const videoBrightness = path.join(root, 'video-social-brightness.mp4');
+    const videoCrop = path.join(root, 'video-social-crop.mp4');
 
     run([
       '-hide_banner', '-loglevel', 'error', '-nostdin', '-y',
       '-f', 'lavfi',
-      '-i', 'color=c=0xA0A0A0:s=640x360:r=30:d=4',
+      '-i', 'color=c=0x4488CC:s=640x360:r=30:d=4',
       '-vf',
-      'drawbox=x=60:y=60:w=120:h=80:color=white:t=fill,' +
-        'drawbox=x=430:y=250:w=100:h=50:color=0x707070:t=fill',
+      'drawbox=x=60:y=60:w=120:h=80:color=red:t=fill,' +
+        'drawbox=x=430:y=250:w=100:h=50:color=green:t=fill',
       '-c:v', 'libx264', '-preset', 'medium', '-crf', '12',
       '-pix_fmt', 'yuv420p', '-an',
       videoOriginal,
@@ -77,7 +92,6 @@ async function fingerprint(filePath, mediaType, workDir) {
       videoSocial,
     ]);
 
-    // Same social copy, but with a small local synthetic object for 2 seconds.
     run([
       '-hide_banner', '-loglevel', 'error', '-nostdin', '-y',
       '-i', videoSocial,
@@ -88,9 +102,40 @@ async function fingerprint(filePath, mediaType, workDir) {
       videoUfo,
     ]);
 
+    run([
+      '-hide_banner', '-loglevel', 'error', '-nostdin', '-y',
+      '-i', videoSocial,
+      '-vf', 'hue=h=45',
+      '-c:v', 'libx264', '-preset', 'medium', '-crf', '35',
+      '-pix_fmt', 'yuv420p', '-an',
+      videoHue,
+    ]);
+
+    run([
+      '-hide_banner', '-loglevel', 'error', '-nostdin', '-y',
+      '-i', videoSocial,
+      '-vf', 'eq=brightness=0.10',
+      '-c:v', 'libx264', '-preset', 'medium', '-crf', '35',
+      '-pix_fmt', 'yuv420p', '-an',
+      videoBrightness,
+    ]);
+
+    run([
+      '-hide_banner', '-loglevel', 'error', '-nostdin', '-y',
+      '-i', videoSocial,
+      '-vf', 'crop=460:260:10:5,scale=480:270',
+      '-c:v', 'libx264', '-preset', 'medium', '-crf', '35',
+      '-pix_fmt', 'yuv420p', '-an',
+      videoCrop,
+    ]);
+
     const videoExpected = await fingerprint(videoOfficial, 'video', root);
     const videoCompressed = await fingerprint(videoSocial, 'video', root);
     const videoModified = await fingerprint(videoUfo, 'video', root);
+    const videoHueFingerprint = await fingerprint(videoHue, 'video', root);
+    const videoBrightnessFingerprint =
+      await fingerprint(videoBrightness, 'video', root);
+    const videoCropFingerprint = await fingerprint(videoCrop, 'video', root);
 
     const videoCompressedResult = compareReferenceVisualFingerprintsV3(
       videoExpected,
@@ -100,24 +145,41 @@ async function fingerprint(filePath, mediaType, workDir) {
       videoExpected,
       videoModified,
     );
+    const videoHueResult = compareReferenceVisualFingerprintsV3(
+      videoExpected,
+      videoHueFingerprint,
+    );
+    const videoBrightnessResult = compareReferenceVisualFingerprintsV3(
+      videoExpected,
+      videoBrightnessFingerprint,
+    );
+    const videoCropResult = compareReferenceVisualFingerprintsV3(
+      videoExpected,
+      videoCropFingerprint,
+    );
 
     assert.equal(videoCompressedResult.verdict, 'conforming');
     assert.equal(videoCompressedResult.modifiedFrames, 0);
-    assert.equal(videoModifiedResult.verdict, 'modified');
-    assert(videoModifiedResult.modifiedFrames >= 1);
+    assertModified(videoModifiedResult, 'video small UFO');
+    assertModified(videoHueResult, 'video hue change');
+    assertModified(videoBrightnessResult, 'video brightness change');
+    assertModified(videoCropResult, 'video crop');
 
     const photoOriginal = path.join(root, 'photo-original.jpg');
     const photoOfficial = path.join(root, 'photo-official.mp4');
     const photoSocial = path.join(root, 'photo-social.jpg');
     const photoUfo = path.join(root, 'photo-social-ufo.jpg');
+    const photoHue = path.join(root, 'photo-social-hue.jpg');
+    const photoBrightness = path.join(root, 'photo-social-brightness.jpg');
+    const photoCrop = path.join(root, 'photo-social-crop.jpg');
 
     run([
       '-hide_banner', '-loglevel', 'error', '-nostdin', '-y',
       '-f', 'lavfi',
-      '-i', 'color=c=0xA0A0A0:s=640x360:d=1',
+      '-i', 'color=c=0x4488CC:s=640x360:d=1',
       '-vf',
-      'drawbox=x=60:y=60:w=120:h=80:color=white:t=fill,' +
-        'drawbox=x=430:y=250:w=100:h=50:color=0x707070:t=fill',
+      'drawbox=x=60:y=60:w=120:h=80:color=red:t=fill,' +
+        'drawbox=x=430:y=250:w=100:h=50:color=green:t=fill',
       '-frames:v', '1', '-q:v', '2',
       photoOriginal,
     ]);
@@ -152,9 +214,37 @@ async function fingerprint(filePath, mediaType, workDir) {
       photoUfo,
     ]);
 
+    run([
+      '-hide_banner', '-loglevel', 'error', '-nostdin', '-y',
+      '-i', photoSocial,
+      '-vf', 'hue=h=45',
+      '-frames:v', '1', '-q:v', '18',
+      photoHue,
+    ]);
+
+    run([
+      '-hide_banner', '-loglevel', 'error', '-nostdin', '-y',
+      '-i', photoSocial,
+      '-vf', 'eq=brightness=0.10',
+      '-frames:v', '1', '-q:v', '18',
+      photoBrightness,
+    ]);
+
+    run([
+      '-hide_banner', '-loglevel', 'error', '-nostdin', '-y',
+      '-i', photoSocial,
+      '-vf', 'crop=460:260:10:5,scale=480:270',
+      '-frames:v', '1', '-q:v', '18',
+      photoCrop,
+    ]);
+
     const photoExpected = await fingerprint(photoOfficial, 'photo', root);
     const photoCompressed = await fingerprint(photoSocial, 'photo', root);
     const photoModified = await fingerprint(photoUfo, 'photo', root);
+    const photoHueFingerprint = await fingerprint(photoHue, 'photo', root);
+    const photoBrightnessFingerprint =
+      await fingerprint(photoBrightness, 'photo', root);
+    const photoCropFingerprint = await fingerprint(photoCrop, 'photo', root);
 
     const photoCompressedResult = compareReferenceVisualFingerprintsV3(
       photoExpected,
@@ -164,18 +254,38 @@ async function fingerprint(filePath, mediaType, workDir) {
       photoExpected,
       photoModified,
     );
+    const photoHueResult = compareReferenceVisualFingerprintsV3(
+      photoExpected,
+      photoHueFingerprint,
+    );
+    const photoBrightnessResult = compareReferenceVisualFingerprintsV3(
+      photoExpected,
+      photoBrightnessFingerprint,
+    );
+    const photoCropResult = compareReferenceVisualFingerprintsV3(
+      photoExpected,
+      photoCropFingerprint,
+    );
 
     assert.equal(photoCompressedResult.verdict, 'conforming');
     assert.equal(photoCompressedResult.modifiedFrames, 0);
-    assert.equal(photoModifiedResult.verdict, 'modified');
-    assert.equal(photoModifiedResult.modifiedFrames, 1);
+    assertModified(photoModifiedResult, 'photo small UFO');
+    assertModified(photoHueResult, 'photo hue change');
+    assertModified(photoBrightnessResult, 'photo brightness change');
+    assertModified(photoCropResult, 'photo crop');
 
     console.log(JSON.stringify({
       ok: true,
       videoCompressed: videoCompressedResult,
       videoSmallUfo: videoModifiedResult,
+      videoHue: videoHueResult,
+      videoBrightness: videoBrightnessResult,
+      videoCrop: videoCropResult,
       photoCompressed: photoCompressedResult,
       photoSmallUfo: photoModifiedResult,
+      photoHue: photoHueResult,
+      photoBrightness: photoBrightnessResult,
+      photoCrop: photoCropResult,
     }, null, 2));
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
