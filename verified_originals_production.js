@@ -23,20 +23,27 @@ const CONSENT_VERSION = 'SIGILLUM_VERIFIED_ORIGINALS_CONSENT_2026-09-25_V2';
 const YOUTUBE_SCOPE = 'https://www.googleapis.com/auth/youtube.force-ssl';
 const REFERENCE_VISUAL_FINGERPRINT_TYPE = 'SIGILLUM_REFERENCE_VISUAL_FINGERPRINT';
 const REFERENCE_VISUAL_FINGERPRINT_VERSION = 3;
-const REFERENCE_VISUAL_FINGERPRINT_ALGORITHM = 'SIGILLUM_LOCAL_GRID_V3';
+const REFERENCE_VISUAL_FINGERPRINT_ALGORITHM = 'SIGILLUM_LOCAL_RGB_GRID_V3';
 const REFERENCE_VISUAL_WIDTH = 128;
 const REFERENCE_VISUAL_HEIGHT = 72;
 const REFERENCE_VISUAL_GRID_COLUMNS = 16;
 const REFERENCE_VISUAL_GRID_ROWS = 9;
-const REFERENCE_VISUAL_FEATURE_BYTES_PER_TILE = 3;
+const REFERENCE_VISUAL_FEATURE_BYTES_PER_TILE = 6;
+const REFERENCE_VISUAL_RGB_CHANNELS = 3;
 const REFERENCE_VISUAL_VIDEO_FPS = 2;
 const REFERENCE_VISUAL_MAX_VIDEO_FRAMES = 120;
 const REFERENCE_VISUAL_FRAME_BYTES =
-  REFERENCE_VISUAL_WIDTH * REFERENCE_VISUAL_HEIGHT;
+  REFERENCE_VISUAL_WIDTH *
+  REFERENCE_VISUAL_HEIGHT *
+  REFERENCE_VISUAL_RGB_CHANNELS;
 const REFERENCE_VISUAL_TILE_WIDTH =
   REFERENCE_VISUAL_WIDTH / REFERENCE_VISUAL_GRID_COLUMNS;
 const REFERENCE_VISUAL_TILE_HEIGHT =
   REFERENCE_VISUAL_HEIGHT / REFERENCE_VISUAL_GRID_ROWS;
+const REFERENCE_VISUAL_MAX_MEAN_LUMA_DIFFERENCE = 6.0;
+const REFERENCE_VISUAL_MAX_SINGLE_TILE_LUMA_DIFFERENCE = 18.0;
+const REFERENCE_VISUAL_MAX_MEAN_CHROMA_DIFFERENCE = 8.0;
+const REFERENCE_VISUAL_MAX_MEAN_RGB_DIFFERENCE = 8.0;
 
 function hashBytes(value) {
   return crypto.createHash('sha256').update(value).digest('hex');
@@ -44,6 +51,10 @@ function hashBytes(value) {
 
 function hashString(value) {
   return crypto.createHash('sha256').update(String(value), 'utf8').digest('hex');
+}
+
+function referenceVisualLumaV3(red, green, blue) {
+  return Math.round(0.2126 * red + 0.7152 * green + 0.0722 * blue);
 }
 
 function referenceVisualFrameV3(frame) {
@@ -56,40 +67,73 @@ function referenceVisualFrameV3(frame) {
       REFERENCE_VISUAL_FEATURE_BYTES_PER_TILE,
   );
   let out = 0;
+
   for (let ty = 0; ty < REFERENCE_VISUAL_GRID_ROWS; ty += 1) {
     for (let tx = 0; tx < REFERENCE_VISUAL_GRID_COLUMNS; tx += 1) {
-      let sum = 0;
-      let minimum = 255;
-      let maximum = 0;
+      let sumLuma = 0;
+      let sumRed = 0;
+      let sumGreen = 0;
+      let sumBlue = 0;
+      let minimumLuma = 255;
+      let maximumLuma = 0;
       let gradient = 0;
       let gradientCount = 0;
       const x0 = tx * REFERENCE_VISUAL_TILE_WIDTH;
       const y0 = ty * REFERENCE_VISUAL_TILE_HEIGHT;
+
       for (let y = y0; y < y0 + REFERENCE_VISUAL_TILE_HEIGHT; y += 1) {
         for (let x = x0; x < x0 + REFERENCE_VISUAL_TILE_WIDTH; x += 1) {
-          const value = frame[y * REFERENCE_VISUAL_WIDTH + x];
-          sum += value;
-          minimum = Math.min(minimum, value);
-          maximum = Math.max(maximum, value);
+          const offset =
+            (y * REFERENCE_VISUAL_WIDTH + x) * REFERENCE_VISUAL_RGB_CHANNELS;
+          const red = frame[offset];
+          const green = frame[offset + 1];
+          const blue = frame[offset + 2];
+          const value = referenceVisualLumaV3(red, green, blue);
+
+          sumLuma += value;
+          sumRed += red;
+          sumGreen += green;
+          sumBlue += blue;
+          minimumLuma = Math.min(minimumLuma, value);
+          maximumLuma = Math.max(maximumLuma, value);
+
           if (x + 1 < x0 + REFERENCE_VISUAL_TILE_WIDTH) {
+            const right = offset + REFERENCE_VISUAL_RGB_CHANNELS;
             gradient += Math.abs(
-              value - frame[y * REFERENCE_VISUAL_WIDTH + x + 1],
+              value -
+                referenceVisualLumaV3(
+                  frame[right],
+                  frame[right + 1],
+                  frame[right + 2],
+                ),
             );
             gradientCount += 1;
           }
           if (y + 1 < y0 + REFERENCE_VISUAL_TILE_HEIGHT) {
+            const below =
+              ((y + 1) * REFERENCE_VISUAL_WIDTH + x) *
+              REFERENCE_VISUAL_RGB_CHANNELS;
             gradient += Math.abs(
-              value - frame[(y + 1) * REFERENCE_VISUAL_WIDTH + x],
+              value -
+                referenceVisualLumaV3(
+                  frame[below],
+                  frame[below + 1],
+                  frame[below + 2],
+                ),
             );
             gradientCount += 1;
           }
         }
       }
-      local[out++] = Math.round(
-        sum / (REFERENCE_VISUAL_TILE_WIDTH * REFERENCE_VISUAL_TILE_HEIGHT),
-      );
-      local[out++] = maximum - minimum;
+
+      const pixels =
+        REFERENCE_VISUAL_TILE_WIDTH * REFERENCE_VISUAL_TILE_HEIGHT;
+      local[out++] = Math.round(sumLuma / pixels);
+      local[out++] = maximumLuma - minimumLuma;
       local[out++] = gradientCount ? Math.round(gradient / gradientCount) : 0;
+      local[out++] = Math.round(sumRed / pixels);
+      local[out++] = Math.round(sumGreen / pixels);
+      local[out++] = Math.round(sumBlue / pixels);
     }
   }
 
@@ -99,12 +143,19 @@ function referenceVisualFrameV3(frame) {
       let sum = 0;
       for (let y = my * 9; y < (my + 1) * 9; y += 1) {
         for (let x = mx * 16; x < (mx + 1) * 16; x += 1) {
-          sum += frame[y * REFERENCE_VISUAL_WIDTH + x];
+          const offset =
+            (y * REFERENCE_VISUAL_WIDTH + x) * REFERENCE_VISUAL_RGB_CHANNELS;
+          sum += referenceVisualLumaV3(
+            frame[offset],
+            frame[offset + 1],
+            frame[offset + 2],
+          );
         }
       }
       macroMeans.push(Math.round(sum / (16 * 9)));
     }
   }
+
   const globalMean =
     macroMeans.reduce((total, value) => total + value, 0) / macroMeans.length;
   let bits = 0n;
@@ -228,6 +279,7 @@ function compareReferenceVisualFrameV3(expected, current) {
   } catch (_) {
     return { comparable: false, tampered: false };
   }
+
   const expectedLength =
     REFERENCE_VISUAL_GRID_COLUMNS *
     REFERENCE_VISUAL_GRID_ROWS *
@@ -237,6 +289,10 @@ function compareReferenceVisualFrameV3(expected, current) {
   }
 
   let totalMeanDifference = 0;
+  let totalLumaDifference = 0;
+  let maximumLumaDifference = 0;
+  let totalChromaDifference = 0;
+  let totalRgbDifference = 0;
   let severeCount = 0;
   const moderate = new Set();
   const tileCount = REFERENCE_VISUAL_GRID_COLUMNS * REFERENCE_VISUAL_GRID_ROWS;
@@ -272,10 +328,56 @@ function compareReferenceVisualFrameV3(expected, current) {
 
     if (severe) severeCount += 1;
     if (isModerate) moderate.add(tile);
+
+    const expectedRed = left[offset + 3];
+    const expectedGreen = left[offset + 4];
+    const expectedBlue = left[offset + 5];
+    const currentRed = right[offset + 3];
+    const currentGreen = right[offset + 4];
+    const currentBlue = right[offset + 5];
+
+    const expectedLuma =
+      0.2126 * expectedRed +
+      0.7152 * expectedGreen +
+      0.0722 * expectedBlue;
+    const currentLuma =
+      0.2126 * currentRed +
+      0.7152 * currentGreen +
+      0.0722 * currentBlue;
+    const lumaDifference = Math.abs(expectedLuma - currentLuma);
+    totalLumaDifference += lumaDifference;
+    maximumLumaDifference = Math.max(
+      maximumLumaDifference,
+      lumaDifference,
+    );
+
+    const expectedChroma =
+      Math.max(expectedRed, expectedGreen, expectedBlue) -
+      Math.min(expectedRed, expectedGreen, expectedBlue);
+    const currentChroma =
+      Math.max(currentRed, currentGreen, currentBlue) -
+      Math.min(currentRed, currentGreen, currentBlue);
+    totalChromaDifference += Math.abs(expectedChroma - currentChroma);
+
+    totalRgbDifference +=
+      Math.abs(expectedRed - currentRed) +
+      Math.abs(expectedGreen - currentGreen) +
+      Math.abs(expectedBlue - currentBlue);
   }
 
   const meanResidual = totalMeanDifference / tileCount;
-  if (meanResidual > 12) {
+  const meanLumaDifference = totalLumaDifference / tileCount;
+  const meanChromaDifference = totalChromaDifference / tileCount;
+  const meanRgbDifference = totalRgbDifference / (tileCount * 3);
+
+  const tonalOrColourTamper =
+    meanLumaDifference > REFERENCE_VISUAL_MAX_MEAN_LUMA_DIFFERENCE ||
+    maximumLumaDifference >
+      REFERENCE_VISUAL_MAX_SINGLE_TILE_LUMA_DIFFERENCE ||
+    meanChromaDifference > REFERENCE_VISUAL_MAX_MEAN_CHROMA_DIFFERENCE ||
+    meanRgbDifference > REFERENCE_VISUAL_MAX_MEAN_RGB_DIFFERENCE;
+
+  if (meanResidual > 12 && !tonalOrColourTamper) {
     return { comparable: false, tampered: false };
   }
 
@@ -297,7 +399,7 @@ function compareReferenceVisualFrameV3(expected, current) {
 
   return {
     comparable: true,
-    tampered: severeCount > 0 || adjacent,
+    tampered: severeCount > 0 || adjacent || tonalOrColourTamper,
   };
 }
 
@@ -409,11 +511,11 @@ async function buildReferenceVisualFingerprintV3({
       ',scale=' + REFERENCE_VISUAL_WIDTH + ':' + REFERENCE_VISUAL_HEIGHT +
       ':force_original_aspect_ratio=decrease,pad=' +
       REFERENCE_VISUAL_WIDTH + ':' + REFERENCE_VISUAL_HEIGHT +
-      ':(ow-iw)/2:(oh-ih)/2:color=black,format=gray'
+      ':(ow-iw)/2:(oh-ih)/2:color=black,format=rgb24'
     : 'scale=' + REFERENCE_VISUAL_WIDTH + ':' + REFERENCE_VISUAL_HEIGHT +
       ':force_original_aspect_ratio=decrease,pad=' +
       REFERENCE_VISUAL_WIDTH + ':' + REFERENCE_VISUAL_HEIGHT +
-      ':(ow-iw)/2:(oh-ih)/2:color=black,format=gray';
+      ':(ow-iw)/2:(oh-ih)/2:color=black,format=rgb24';
   const args = [
     '-hide_banner', '-loglevel', 'error', '-nostdin', '-y',
     '-i', filePath,
