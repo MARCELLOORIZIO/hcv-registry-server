@@ -42,3 +42,12 @@ Companion app branch: MARCELLOORIZIO/sigillum-hcv:feature/build133-closed-chain-
 ## Resume rule
 
 Resume from this file and the app checkpoint. Do not re-design already locked decisions unless a failing test or external platform constraint forces a change.
+
+## 2026-09-29 Official-copy fingerprint V3
+
+- The server computes the V3 visual fingerprint from the SIGILLUM official derivative before YouTube upload.
+- Fingerprint parameters match the app exactly: 128x72 grayscale, 16x9 grid, mean/range/edge features, global frame hash, 2 fps video sampling, max 120 frames.
+- The fingerprint is embedded in `statement.output.referenceVisualFingerprint` inside the RSA-signed trusted derivation manifest.
+- `activeReference` validates the signed manifest before exposing the fingerprint; public availability exposes the fingerprint but does not expose the YouTube locator.
+- Cross-language golden matches the app: globalHash `03030f0f1f1f7f7f`; local-feature SHA-256 `4ae46d0f4d9b9f5ef680cb4c6eda75b67a2a1a3a4037e336efe34b748265bcd4`.
+- Closed-chain backend validation GREEN. No Render deployment performed.
