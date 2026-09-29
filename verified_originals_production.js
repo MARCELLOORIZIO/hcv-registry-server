@@ -21,6 +21,22 @@ const CAPTURE_PROVENANCE_PIPELINE = 'HCV_CAPTURE_BINDING_V1';
 const DERIVATION_SIGNATURE_ALGORITHM = 'RSA-SHA256-PKCS1V15';
 const CONSENT_VERSION = 'SIGILLUM_VERIFIED_ORIGINALS_CONSENT_2026-09-25_V2';
 const YOUTUBE_SCOPE = 'https://www.googleapis.com/auth/youtube.force-ssl';
+const REFERENCE_VISUAL_FINGERPRINT_TYPE = 'SIGILLUM_REFERENCE_VISUAL_FINGERPRINT';
+const REFERENCE_VISUAL_FINGERPRINT_VERSION = 3;
+const REFERENCE_VISUAL_FINGERPRINT_ALGORITHM = 'SIGILLUM_LOCAL_GRID_V3';
+const REFERENCE_VISUAL_WIDTH = 128;
+const REFERENCE_VISUAL_HEIGHT = 72;
+const REFERENCE_VISUAL_GRID_COLUMNS = 16;
+const REFERENCE_VISUAL_GRID_ROWS = 9;
+const REFERENCE_VISUAL_FEATURE_BYTES_PER_TILE = 3;
+const REFERENCE_VISUAL_VIDEO_FPS = 2;
+const REFERENCE_VISUAL_MAX_VIDEO_FRAMES = 120;
+const REFERENCE_VISUAL_FRAME_BYTES =
+  REFERENCE_VISUAL_WIDTH * REFERENCE_VISUAL_HEIGHT;
+const REFERENCE_VISUAL_TILE_WIDTH =
+  REFERENCE_VISUAL_WIDTH / REFERENCE_VISUAL_GRID_COLUMNS;
+const REFERENCE_VISUAL_TILE_HEIGHT =
+  REFERENCE_VISUAL_HEIGHT / REFERENCE_VISUAL_GRID_ROWS;
 
 function hashBytes(value) {
   return crypto.createHash('sha256').update(value).digest('hex');
@@ -28,6 +44,195 @@ function hashBytes(value) {
 
 function hashString(value) {
   return crypto.createHash('sha256').update(String(value), 'utf8').digest('hex');
+}
+
+function referenceVisualFrameV3(frame) {
+  if (!Buffer.isBuffer(frame) || frame.length !== REFERENCE_VISUAL_FRAME_BYTES) {
+    throw new Error('REFERENCE_VISUAL_V3_FRAME_SIZE_INVALID');
+  }
+  const local = Buffer.alloc(
+    REFERENCE_VISUAL_GRID_COLUMNS *
+      REFERENCE_VISUAL_GRID_ROWS *
+      REFERENCE_VISUAL_FEATURE_BYTES_PER_TILE,
+  );
+  let out = 0;
+  for (let ty = 0; ty < REFERENCE_VISUAL_GRID_ROWS; ty += 1) {
+    for (let tx = 0; tx < REFERENCE_VISUAL_GRID_COLUMNS; tx += 1) {
+      let sum = 0;
+      let minimum = 255;
+      let maximum = 0;
+      let gradient = 0;
+      let gradientCount = 0;
+      const x0 = tx * REFERENCE_VISUAL_TILE_WIDTH;
+      const y0 = ty * REFERENCE_VISUAL_TILE_HEIGHT;
+      for (let y = y0; y < y0 + REFERENCE_VISUAL_TILE_HEIGHT; y += 1) {
+        for (let x = x0; x < x0 + REFERENCE_VISUAL_TILE_WIDTH; x += 1) {
+          const value = frame[y * REFERENCE_VISUAL_WIDTH + x];
+          sum += value;
+          minimum = Math.min(minimum, value);
+          maximum = Math.max(maximum, value);
+          if (x + 1 < x0 + REFERENCE_VISUAL_TILE_WIDTH) {
+            gradient += Math.abs(
+              value - frame[y * REFERENCE_VISUAL_WIDTH + x + 1],
+            );
+            gradientCount += 1;
+          }
+          if (y + 1 < y0 + REFERENCE_VISUAL_TILE_HEIGHT) {
+            gradient += Math.abs(
+              value - frame[(y + 1) * REFERENCE_VISUAL_WIDTH + x],
+            );
+            gradientCount += 1;
+          }
+        }
+      }
+      local[out++] = Math.round(
+        sum / (REFERENCE_VISUAL_TILE_WIDTH * REFERENCE_VISUAL_TILE_HEIGHT),
+      );
+      local[out++] = maximum - minimum;
+      local[out++] = gradientCount ? Math.round(gradient / gradientCount) : 0;
+    }
+  }
+
+  const macroMeans = [];
+  for (let my = 0; my < 8; my += 1) {
+    for (let mx = 0; mx < 8; mx += 1) {
+      let sum = 0;
+      for (let y = my * 9; y < (my + 1) * 9; y += 1) {
+        for (let x = mx * 16; x < (mx + 1) * 16; x += 1) {
+          sum += frame[y * REFERENCE_VISUAL_WIDTH + x];
+        }
+      }
+      macroMeans.push(Math.round(sum / (16 * 9)));
+    }
+  }
+  const globalMean =
+    macroMeans.reduce((total, value) => total + value, 0) / macroMeans.length;
+  let bits = 0n;
+  for (const value of macroMeans) {
+    bits = (bits << 1n) | (value >= globalMean ? 1n : 0n);
+  }
+
+  return {
+    globalHash: bits.toString(16).padStart(16, '0'),
+    localFeatures: local.toString('base64'),
+  };
+}
+
+function referenceVisualFingerprintV3FromRaw(raw, mediaType) {
+  if (!Buffer.isBuffer(raw) ||
+      !raw.length ||
+      raw.length % REFERENCE_VISUAL_FRAME_BYTES !== 0 ||
+      (mediaType !== 'photo' && mediaType !== 'video')) {
+    throw new Error('REFERENCE_VISUAL_V3_RAW_INVALID');
+  }
+  const rawFrameCount = raw.length / REFERENCE_VISUAL_FRAME_BYTES;
+  const frameCount = mediaType === 'photo'
+    ? 1
+    : Math.min(rawFrameCount, REFERENCE_VISUAL_MAX_VIDEO_FRAMES);
+  const frames = [];
+  for (let index = 0; index < frameCount; index += 1) {
+    const start = index * REFERENCE_VISUAL_FRAME_BYTES;
+    frames.push(
+      referenceVisualFrameV3(
+        raw.subarray(start, start + REFERENCE_VISUAL_FRAME_BYTES),
+      ),
+    );
+  }
+  return {
+    type: REFERENCE_VISUAL_FINGERPRINT_TYPE,
+    version: REFERENCE_VISUAL_FINGERPRINT_VERSION,
+    algorithm: REFERENCE_VISUAL_FINGERPRINT_ALGORITHM,
+    mediaType,
+    width: REFERENCE_VISUAL_WIDTH,
+    height: REFERENCE_VISUAL_HEIGHT,
+    gridColumns: REFERENCE_VISUAL_GRID_COLUMNS,
+    gridRows: REFERENCE_VISUAL_GRID_ROWS,
+    featureBytesPerTile: REFERENCE_VISUAL_FEATURE_BYTES_PER_TILE,
+    samplingFps: mediaType === 'video' ? REFERENCE_VISUAL_VIDEO_FPS : 0,
+    maxFrames: mediaType === 'video' ? REFERENCE_VISUAL_MAX_VIDEO_FRAMES : 1,
+    frameCount: frames.length,
+    frames,
+  };
+}
+
+function validReferenceVisualFingerprintV3(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw) ||
+      raw.type !== REFERENCE_VISUAL_FINGERPRINT_TYPE ||
+      raw.version !== REFERENCE_VISUAL_FINGERPRINT_VERSION ||
+      raw.algorithm !== REFERENCE_VISUAL_FINGERPRINT_ALGORITHM ||
+      raw.width !== REFERENCE_VISUAL_WIDTH ||
+      raw.height !== REFERENCE_VISUAL_HEIGHT ||
+      raw.gridColumns !== REFERENCE_VISUAL_GRID_COLUMNS ||
+      raw.gridRows !== REFERENCE_VISUAL_GRID_ROWS ||
+      raw.featureBytesPerTile !== REFERENCE_VISUAL_FEATURE_BYTES_PER_TILE ||
+      (raw.mediaType !== 'photo' && raw.mediaType !== 'video') ||
+      !Array.isArray(raw.frames) ||
+      !raw.frames.length ||
+      raw.frameCount !== raw.frames.length ||
+      raw.frames.length > REFERENCE_VISUAL_MAX_VIDEO_FRAMES) {
+    return false;
+  }
+  if (raw.mediaType === 'photo' && raw.frames.length !== 1) return false;
+  const expectedFeatureBytes =
+    REFERENCE_VISUAL_GRID_COLUMNS *
+    REFERENCE_VISUAL_GRID_ROWS *
+    REFERENCE_VISUAL_FEATURE_BYTES_PER_TILE;
+  return raw.frames.every(frame => {
+    if (!frame || typeof frame !== 'object' ||
+        !/^[a-f0-9]{16}$/.test(String(frame.globalHash || ''))) {
+      return false;
+    }
+    try {
+      return Buffer.from(
+        String(frame.localFeatures || ''),
+        'base64',
+      ).length === expectedFeatureBytes;
+    } catch (_) {
+      return false;
+    }
+  });
+}
+
+async function buildReferenceVisualFingerprintV3({
+  ffmpegPath,
+  filePath,
+  mediaType,
+  workDir,
+}) {
+  const rawPath = path.join(workDir, 'reference-visual-v3.raw');
+  const filter = mediaType === 'video'
+    ? 'fps=' + REFERENCE_VISUAL_VIDEO_FPS +
+      ',scale=' + REFERENCE_VISUAL_WIDTH + ':' + REFERENCE_VISUAL_HEIGHT +
+      ':force_original_aspect_ratio=decrease,pad=' +
+      REFERENCE_VISUAL_WIDTH + ':' + REFERENCE_VISUAL_HEIGHT +
+      ':(ow-iw)/2:(oh-ih)/2:color=black,format=gray'
+    : 'scale=' + REFERENCE_VISUAL_WIDTH + ':' + REFERENCE_VISUAL_HEIGHT +
+      ':force_original_aspect_ratio=decrease,pad=' +
+      REFERENCE_VISUAL_WIDTH + ':' + REFERENCE_VISUAL_HEIGHT +
+      ':(ow-iw)/2:(oh-ih)/2:color=black,format=gray';
+  const args = [
+    '-hide_banner', '-loglevel', 'error', '-nostdin', '-y',
+    '-i', filePath,
+    '-vf', filter,
+    '-frames:v',
+    String(
+      mediaType === 'video'
+        ? REFERENCE_VISUAL_MAX_VIDEO_FRAMES
+        : 1,
+    ),
+    '-f', 'rawvideo',
+    rawPath,
+  ];
+  try {
+    await execFileAsync(ffmpegPath, args, {
+      timeout: 180000,
+      maxBuffer: 4 * 1024 * 1024,
+    });
+    const raw = await fs.promises.readFile(rawPath);
+    return referenceVisualFingerprintV3FromRaw(raw, mediaType);
+  } finally {
+    try { await fs.promises.rm(rawPath, { force: true }); } catch (_) {}
+  }
 }
 
 function canonicalYoutubeReference(videoId) {
@@ -131,6 +336,10 @@ function verifyDerivationManifest({
         statement.parent?.sha256 !== contentHash ||
         statement.parent?.signedCertificateDigest !== hashString(certificateRaw) ||
         statement.output?.mediaType !== 'video' ||
+        (statement.output?.referenceVisualFingerprint != null &&
+          !validReferenceVisualFingerprintV3(
+            statement.output.referenceVisualFingerprint,
+          )) ||
         !Number.isSafeInteger(statement.output?.byteLength) ||
         statement.output.byteLength <= 0 ||
         !SHA256.test(statement.output?.sha256 || '') ||
@@ -515,6 +724,29 @@ function createVerifiedOriginalsProduction({
       publicationStatus: row.publication_status,
       certificateVerdict: 'CERTIFICATE_RECORD_VERIFIED',
       socialFileVerdict: 'NOT_VERIFIED',
+      referenceVisualFingerprint: await (async () => {
+        try {
+          const derivationRow = (await pool.query(
+            'SELECT manifest_raw FROM trusted_derivations WHERE output_sha256=$1 AND hcv_id=$2',
+            [row.reference_sha256, hcvId],
+          )).rows[0];
+          if (!derivationRow) return null;
+          const manifest = JSON.parse(derivationRow.manifest_raw);
+          const trustedKeys = parsePinnedDerivationKeys();
+          if (!verifyDerivationManifest({
+            manifest,
+            certificateRaw: original.row.certificate_raw,
+            trustedKeys,
+            verifyCertificateRaw,
+          })) return null;
+          const fingerprint = manifest.output?.referenceVisualFingerprint;
+          return validReferenceVisualFingerprintV3(fingerprint)
+            ? fingerprint
+            : null;
+        } catch (_) {
+          return null;
+        }
+      })(),
       publishedAt: row.published_at,
     };
   }
@@ -532,6 +764,7 @@ function createVerifiedOriginalsProduction({
       hcvpackSha256: reference.hcvpackSha256,
       certificateVerdict: 'CERTIFICATE_RECORD_VERIFIED',
       socialFileVerdict: 'NOT_VERIFIED',
+      referenceVisualFingerprint: reference.referenceVisualFingerprint,
       viewAccess: 'SUBSCRIPTION_REQUIRED',
     };
   }
@@ -921,6 +1154,15 @@ function createVerifiedOriginalsProduction({
     if (!output.length) fail('DERIVATION_OUTPUT_INVALID', 500);
     const outputHash = hashBytes(output);
     if (outputHash === original.contentHash) fail('DERIVATION_OUTPUT_INVALID', 500);
+    const referenceVisualFingerprint = await buildReferenceVisualFingerprintV3({
+      ffmpegPath,
+      filePath: outputPath,
+      mediaType: contentType,
+      workDir: path.dirname(outputPath),
+    });
+    if (!validReferenceVisualFingerprintV3(referenceVisualFingerprint)) {
+      fail('REFERENCE_VISUAL_FINGERPRINT_INVALID', 500);
+    }
 
     const statement = {
       schema: DERIVATION_SCHEMA,
@@ -930,7 +1172,12 @@ function createVerifiedOriginalsProduction({
         sha256: original.contentHash,
         signedCertificateDigest: hashString(original.row.certificate_raw),
       },
-      output: { sha256: outputHash, byteLength: output.length, mediaType: 'video' },
+      output: {
+        sha256: outputHash,
+        byteLength: output.length,
+        mediaType: 'video',
+        referenceVisualFingerprint,
+      },
       transform: {
         operation: derivationOperation,
         editorialImpact: 'non_editorial',
@@ -1403,4 +1650,7 @@ module.exports = {
   canonicalYoutubeReference,
   createVerifiedOriginalsProduction,
   verifyDerivationManifest,
+  referenceVisualFrameV3,
+  referenceVisualFingerprintV3FromRaw,
+  validReferenceVisualFingerprintV3,
 };
