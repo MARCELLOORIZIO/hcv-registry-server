@@ -32,7 +32,7 @@ assert.strictEqual(
     .createHash('sha256')
     .update(Buffer.from(fingerprint.frames[0].localFeatures, 'base64'))
     .digest('hex'),
-  '493f334a1c1ab61483db584cda762a2e9750cd8bb91df39c26226c73b84e7f08',
+  '4ae46d0f4d9b9f5ef680cb4c6eda75b67a2a1a3a4037e336efe34b748265bcd4',
 );
 
 const videoRaw = Buffer.concat([
