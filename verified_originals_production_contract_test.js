@@ -57,4 +57,11 @@ const lookup = feature.slice(lookupStart, lookupEnd);
 assert(!lookup.includes('publicUrl'));
 assert(!lookup.includes('platformPostId'));
 
+assert(feature.includes("referenceVisualFingerprint = await buildReferenceVisualFingerprintV3"));
+assert(feature.includes("referenceVisualFingerprint,"));
+assert(feature.includes("referenceVisualFingerprint: reference.referenceVisualFingerprint"));
+assert(feature.includes("statement.output?.referenceVisualFingerprint"));
+assert(feature.includes("validReferenceVisualFingerprintV3"));
+assert(feature.includes("REFERENCE_VISUAL_FINGERPRINT_ALGORITHM"));
+
 console.log('verified_originals_production_contract_test: PASS');
