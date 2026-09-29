@@ -11,10 +11,15 @@ const WIDTH = 128;
 const HEIGHT = 72;
 
 function baseFrame(seed = 0) {
-  const frame = Buffer.alloc(WIDTH * HEIGHT);
+  const frame = Buffer.alloc(WIDTH * HEIGHT * 3);
   for (let y = 0; y < HEIGHT; y += 1) {
     for (let x = 0; x < WIDTH; x += 1) {
-      frame[y * WIDTH + x] = 168 + Math.floor(x / 24) + Math.floor(y / 18) + seed;
+      const value =
+        168 + Math.floor(x / 24) + Math.floor(y / 18) + seed;
+      const offset = (y * WIDTH + x) * 3;
+      frame[offset] = value;
+      frame[offset + 1] = value;
+      frame[offset + 2] = value;
     }
   }
   return frame;
@@ -23,6 +28,8 @@ function baseFrame(seed = 0) {
 const fingerprint = referenceVisualFingerprintV3FromRaw(baseFrame(), 'photo');
 assert.strictEqual(validReferenceVisualFingerprintV3(fingerprint), true);
 assert.strictEqual(fingerprint.frameCount, 1);
+assert.strictEqual(fingerprint.algorithm, 'SIGILLUM_LOCAL_RGB_GRID_V3');
+assert.strictEqual(fingerprint.featureBytesPerTile, 6);
 assert.strictEqual(
   fingerprint.frames[0].globalHash,
   '03030f0f1f1f7f7f',
@@ -32,7 +39,7 @@ assert.strictEqual(
     .createHash('sha256')
     .update(Buffer.from(fingerprint.frames[0].localFeatures, 'base64'))
     .digest('hex'),
-  '4ae46d0f4d9b9f5ef680cb4c6eda75b67a2a1a3a4037e336efe34b748265bcd4',
+  'f5df80936c5d9050b35e5a606c92b55a7eb2bec873f5805f9c81d37f14a4afbc',
 );
 
 const videoRaw = Buffer.concat([
