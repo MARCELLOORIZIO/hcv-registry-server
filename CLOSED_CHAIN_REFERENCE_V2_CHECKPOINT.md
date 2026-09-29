@@ -51,3 +51,11 @@ Resume from this file and the app checkpoint. Do not re-design already locked de
 - `activeReference` validates the signed manifest before exposing the fingerprint; public availability exposes the fingerprint but does not expose the YouTube locator.
 - Cross-language golden matches the app: globalHash `03030f0f1f1f7f7f`; local-feature SHA-256 `4ae46d0f4d9b9f5ef680cb4c6eda75b67a2a1a3a4037e336efe34b748265bcd4`.
 - Closed-chain backend validation GREEN. No Render deployment performed.
+
+## 2026-09-30 V3 RGB hardening and real-media regression
+
+- Official derivative fingerprint upgraded to `SIGILLUM_LOCAL_RGB_GRID_V3`: RGB24 normalized frames, 128x72, 16x9 grid, luma mean/range/edge + RGB means.
+- Signed derivation manifest continues to bind `output.referenceVisualFingerprint` before YouTube upload.
+- Real FFmpeg regression is mandatory in `npm run check`: H.264/JPEG recompression remains conforming; small UFO insertion, hue change, brightness change and crop are all classified modified for both video and photo workflows.
+- Photo regression uses the real SIGILLUM photo -> 5-second MP4 official-reference transform before comparison against recompressed JPEG social copies.
+- Backend validation GREEN after RGB hardening. No Render deployment performed.
