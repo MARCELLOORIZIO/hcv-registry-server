@@ -193,6 +193,210 @@ function validReferenceVisualFingerprintV3(raw) {
   });
 }
 
+function referenceVisualHexDistanceV3(left, right) {
+  const a = String(left || '');
+  const b = String(right || '');
+  if (a.length !== b.length) return 9999;
+  let distance = 0;
+  for (let index = 0; index < a.length; index += 1) {
+    const av = Number.parseInt(a[index], 16);
+    const bv = Number.parseInt(b[index], 16);
+    if (!Number.isInteger(av) || !Number.isInteger(bv)) return 9999;
+    let diff = av ^ bv;
+    while (diff !== 0) {
+      distance += diff & 1;
+      diff >>= 1;
+    }
+  }
+  return distance;
+}
+
+function compareReferenceVisualFrameV3(expected, current) {
+  const globalDistance = referenceVisualHexDistanceV3(
+    expected?.globalHash,
+    current?.globalHash,
+  );
+  if (globalDistance > 18) {
+    return { comparable: false, tampered: false };
+  }
+
+  let left;
+  let right;
+  try {
+    left = Buffer.from(String(expected?.localFeatures || ''), 'base64');
+    right = Buffer.from(String(current?.localFeatures || ''), 'base64');
+  } catch (_) {
+    return { comparable: false, tampered: false };
+  }
+  const expectedLength =
+    REFERENCE_VISUAL_GRID_COLUMNS *
+    REFERENCE_VISUAL_GRID_ROWS *
+    REFERENCE_VISUAL_FEATURE_BYTES_PER_TILE;
+  if (left.length !== right.length || left.length !== expectedLength) {
+    return { comparable: false, tampered: false };
+  }
+
+  let totalMeanDifference = 0;
+  let severeCount = 0;
+  const moderate = new Set();
+  const tileCount = REFERENCE_VISUAL_GRID_COLUMNS * REFERENCE_VISUAL_GRID_ROWS;
+
+  for (let tile = 0; tile < tileCount; tile += 1) {
+    const offset = tile * REFERENCE_VISUAL_FEATURE_BYTES_PER_TILE;
+    const expectedMean = left[offset];
+    const expectedRange = left[offset + 1];
+    const expectedEdge = left[offset + 2];
+    const currentMean = right[offset];
+    const currentRange = right[offset + 1];
+    const currentEdge = right[offset + 2];
+
+    const meanDifference = Math.abs(expectedMean - currentMean);
+    const rangeDifference = Math.abs(expectedRange - currentRange);
+    const edgeDifference = Math.abs(expectedEdge - currentEdge);
+    totalMeanDifference += meanDifference;
+
+    const expectedSmooth = expectedRange <= 42 && expectedEdge <= 16;
+    const currentSmooth = currentRange <= 42 && currentEdge <= 16;
+    const smoothToStructured = expectedSmooth &&
+      (currentRange - expectedRange >= 30 ||
+       currentEdge - expectedEdge >= 14);
+    const structuredToSmooth = currentSmooth &&
+      (expectedRange - currentRange >= 30 ||
+       expectedEdge - currentEdge >= 14);
+    const severe = meanDifference >= 24 ||
+      smoothToStructured ||
+      structuredToSmooth ||
+      (rangeDifference >= 44 && edgeDifference >= 12);
+    const isModerate = meanDifference >= 11 &&
+      (rangeDifference >= 14 || edgeDifference >= 8);
+
+    if (severe) severeCount += 1;
+    if (isModerate) moderate.add(tile);
+  }
+
+  const meanResidual = totalMeanDifference / tileCount;
+  if (meanResidual > 12) {
+    return { comparable: false, tampered: false };
+  }
+
+  let adjacent = false;
+  for (const tile of moderate) {
+    const x = tile % REFERENCE_VISUAL_GRID_COLUMNS;
+    const y = Math.floor(tile / REFERENCE_VISUAL_GRID_COLUMNS);
+    for (const other of moderate) {
+      if (other === tile) continue;
+      const ox = other % REFERENCE_VISUAL_GRID_COLUMNS;
+      const oy = Math.floor(other / REFERENCE_VISUAL_GRID_COLUMNS);
+      if (Math.abs(x - ox) <= 1 && Math.abs(y - oy) <= 1) {
+        adjacent = true;
+        break;
+      }
+    }
+    if (adjacent) break;
+  }
+
+  return {
+    comparable: true,
+    tampered: severeCount > 0 || adjacent,
+  };
+}
+
+function compareReferenceVisualFingerprintsV3(expected, current) {
+  if (!validReferenceVisualFingerprintV3(expected) ||
+      !validReferenceVisualFingerprintV3(current) ||
+      expected.mediaType !== current.mediaType) {
+    return {
+      verdict: 'inconclusive',
+      alignedFrames: 0,
+      modifiedFrames: 0,
+      inconclusiveFrames: 0,
+      expectedFrames: 0,
+    };
+  }
+
+  const expectedFrames = expected.frames;
+  const currentFrames = current.frames;
+  if (expected.mediaType === 'photo') {
+    const residual = compareReferenceVisualFrameV3(
+      expectedFrames[0],
+      currentFrames[0],
+    );
+    return {
+      verdict: residual.tampered
+        ? 'modified'
+        : residual.comparable
+          ? 'conforming'
+          : 'inconclusive',
+      alignedFrames: residual.comparable ? 1 : 0,
+      modifiedFrames: residual.tampered ? 1 : 0,
+      inconclusiveFrames: residual.comparable ? 0 : 1,
+      expectedFrames: 1,
+    };
+  }
+
+  const used = new Set();
+  let aligned = 0;
+  let modified = 0;
+  let inconclusive = 0;
+
+  for (let e = 0; e < expectedFrames.length; e += 1) {
+    const center = expectedFrames.length <= 1 || currentFrames.length <= 1
+      ? 0
+      : Math.round(
+          e * (currentFrames.length - 1) / (expectedFrames.length - 1),
+        );
+    const low = Math.max(0, center - 4);
+    const high = Math.min(currentFrames.length - 1, center + 4);
+    let bestIndex = -1;
+    let bestDistance = 9999;
+
+    for (let i = low; i <= high; i += 1) {
+      if (used.has(i)) continue;
+      const distance = referenceVisualHexDistanceV3(
+        expectedFrames[e].globalHash,
+        currentFrames[i].globalHash,
+      );
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        bestIndex = i;
+      }
+    }
+
+    if (bestIndex < 0 || bestDistance > 18) {
+      inconclusive += 1;
+      continue;
+    }
+
+    used.add(bestIndex);
+    const residual = compareReferenceVisualFrameV3(
+      expectedFrames[e],
+      currentFrames[bestIndex],
+    );
+    if (!residual.comparable) {
+      inconclusive += 1;
+      continue;
+    }
+    aligned += 1;
+    if (residual.tampered) modified += 1;
+  }
+
+  const minimumAligned = Math.max(2, Math.ceil(expectedFrames.length * 0.55));
+  const verdict = modified > 0
+    ? 'modified'
+    : aligned >= minimumAligned &&
+        inconclusive <= Math.ceil(expectedFrames.length * 0.35)
+      ? 'conforming'
+      : 'inconclusive';
+
+  return {
+    verdict,
+    alignedFrames: aligned,
+    modifiedFrames: modified,
+    inconclusiveFrames: inconclusive,
+    expectedFrames: expectedFrames.length,
+  };
+}
+
 async function buildReferenceVisualFingerprintV3({
   ffmpegPath,
   filePath,
@@ -1653,4 +1857,6 @@ module.exports = {
   referenceVisualFrameV3,
   referenceVisualFingerprintV3FromRaw,
   validReferenceVisualFingerprintV3,
+  buildReferenceVisualFingerprintV3,
+  compareReferenceVisualFingerprintsV3,
 };
