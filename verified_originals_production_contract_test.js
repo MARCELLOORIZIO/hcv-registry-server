@@ -37,18 +37,20 @@ for (const token of [
   'retryPendingTakedowns',
   "processing_status='takedown_pending'",
   'youtubeCommentsDisabled',
-  'YOUTUBE_COMMENTS_MUST_BE_DISABLED',
+  'youtubeCommentsStatus',
+  'commentsStatus',
   'verification-reference',
   'YOUTUBE_LIVE_ATTESTED_SIGNED_V3',
   'youtubeAccessTokenCache',
   'youtubeChannelVerifiedUntil',
-  'YOUTUBE_COMMENTS_STATUS_FAILED',
   'existingDerivation',
 ]) {
   assert(feature.includes(token), 'feature missing invariant: '+token);
 }
 
 assert(!feature.includes("privacyStatus: 'public'"));
+assert(!feature.includes('YOUTUBE_COMMENTS_MUST_BE_DISABLED'));
+assert(!feature.includes('YOUTUBE_COMMENTS_STATUS_FAILED'));
 assert(!feature.includes("displayRiskDecision === 'NO_DISPLAY_EVIDENCE'"));
 assert(feature.includes("new Set(['image/jpeg', 'image/png'])"));
 assert(feature.includes("Original SHA-256: "));

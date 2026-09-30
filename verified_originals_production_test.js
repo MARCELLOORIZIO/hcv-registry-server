@@ -526,41 +526,10 @@ async function run() {
     const consentId=consent.json.recordId;
     assert.ok(consentId);
 
-    const commentsStatusFailed=await request(
-      base,'POST',
-      '/api/verified-originals/publish/'+HCV_ID+
-        '?consentRecordId='+encodeURIComponent(consentId)+
-        '&monetizationEnabled=false'+
-        '&hcvpackSha256='+HCVPACK_HASH,
-      {bearer:'owner-token',bytes:originalBytes,headers:packageHeaders(HCV_ID,originalHash,HCVPACK_HASH)},
-    );
-    assert.equal(commentsStatusFailed.status,502,commentsStatusFailed.text);
-    assert.equal(
-      commentsStatusFailed.json.error,
-      'YOUTUBE_COMMENTS_STATUS_FAILED',
-    );
-    assert.equal(deleteCount,1);
-    assert.equal(commentsCheckCount,1);
-
-    const commentsRejected=await request(
-      base,'POST',
-      '/api/verified-originals/publish/'+HCV_ID+
-        '?consentRecordId='+encodeURIComponent(consentId)+
-        '&monetizationEnabled=false'+
-        '&hcvpackSha256='+HCVPACK_HASH,
-      {bearer:'owner-token',bytes:originalBytes,headers:packageHeaders(HCV_ID,originalHash,HCVPACK_HASH)},
-    );
-    assert.equal(commentsRejected.status,502,commentsRejected.text);
-    assert.equal(
-      commentsRejected.json.error,
-      'YOUTUBE_COMMENTS_MUST_BE_DISABLED',
-    );
-    assert.equal(deleteCount,2);
-    assert.equal(commentsCheckCount,2);
-
-    // Retrying the exact same original after platform-policy failures must
-    // reuse the already signed trusted derivation rather than conflict on a
-    // fresh nonce.
+    // Comment state is diagnostic only. The YouTube Data API does not expose
+    // a supported per-video comments-off write field, and live API uploads may
+    // not inherit Studio defaults. Publication therefore remains gated on the
+    // real YouTube object, successful processing and unlisted privacy only.
     const published=await request(
       base,'POST',
       '/api/verified-originals/publish/'+HCV_ID+
@@ -572,11 +541,12 @@ async function run() {
     assert.equal(published.status,201,published.text);
     assert.equal(published.json.platform,'youtube');
     assert.equal(published.json.publicationStatus,'PUBLISHED');
-    assert.equal(uploadSessionCount,3);
-    assert.equal(uploadPutCount,3);
+    assert.equal(uploadSessionCount,1);
+    assert.equal(uploadPutCount,1);
     assert.ok(uploadedBytes && uploadedBytes.length > 0);
     assert.equal(uploadMetadata.status.privacyStatus,'unlisted');
-    assert.equal(commentsCheckCount,3);
+    assert.equal(commentsCheckCount,1);
+    assert.equal(deleteCount,0);
     assert.equal(uploadMetadata.snippet.title,'SIGILLUM '+HCV_ID);
     assert.ok(uploadMetadata.snippet.description.includes('Original SHA-256: '+originalHash));
     assert.ok(uploadMetadata.snippet.description.includes('HCVPACK SHA-256: '+HCVPACK_HASH));
@@ -595,7 +565,8 @@ async function run() {
     assert.equal(liveVerification.status,200,liveVerification.text);
     assert.equal(liveVerification.json.availability,'REFERENCE_AVAILABLE');
     assert.equal(liveVerification.json.youtubeLive,true);
-    assert.equal(liveVerification.json.commentsDisabled,true);
+    assert.equal(liveVerification.json.commentsDisabled,false);
+    assert.equal(liveVerification.json.commentsStatus,'ENABLED');
     assert.equal(
       liveVerification.json.comparisonMode,
       'YOUTUBE_LIVE_ATTESTED_SIGNED_V3',
@@ -603,7 +574,7 @@ async function run() {
     assert.ok(liveVerification.json.referenceVisualFingerprint);
     assert.ok(Number.isInteger(liveVerification.json.youtubeCheckMs));
     assert.ok(Number.isInteger(liveVerification.json.totalMs));
-    assert.equal(commentsCheckCount,4);
+    assert.equal(commentsCheckCount,2);
     assert.equal(oauthTokenRequestCount,1);
     assert.equal(channelCheckCount,1);
     assert.equal(liveVerification.json.cacheHit,false);
@@ -618,7 +589,7 @@ async function run() {
     );
     assert.equal(cachedLiveVerification.json.cacheHit,true);
     assert.equal(cachedLiveVerification.json.youtubeCheckMs,0);
-    assert.equal(commentsCheckCount,4);
+    assert.equal(commentsCheckCount,2);
     assert.equal(oauthTokenRequestCount,1);
     assert.equal(channelCheckCount,1);
 
@@ -658,7 +629,7 @@ async function run() {
     assert.equal(withdrawal.status,200,withdrawal.text);
     assert.equal(withdrawal.json.referenceAvailable,false);
     assert.equal(withdrawal.json.platformTakedown,'COMPLETED');
-    assert.equal(deleteCount,3);
+    assert.equal(deleteCount,1);
 
     const after=await request(base,'GET','/api/verified-originals/'+HCV_ID);
     assert.equal(after.status,200);
@@ -720,7 +691,7 @@ async function run() {
     );
     assert.equal(photoPublished.status,201,photoPublished.text);
     assert.equal(photoPublished.json.platform,'youtube');
-    assert.equal(commentsCheckCount,5);
+    assert.equal(commentsCheckCount,3);
     assert.equal(
       photoPublished.json.derivationType,
       'photo_to_reference_video_v1',
@@ -767,7 +738,7 @@ async function run() {
     );
     assert.equal(photoWithdrawalRetry.status,200,photoWithdrawalRetry.text);
     assert.equal(photoWithdrawalRetry.json.platformTakedown,'COMPLETED');
-    assert.equal(deleteCount,4);
+    assert.equal(deleteCount,2);
 
     console.log(
       'verified_originals_production_test: PASS — PostgreSQL, video/photo exact originals, unlisted YouTube, free/paid, withdrawal, tamper stop',

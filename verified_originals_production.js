@@ -1648,20 +1648,30 @@ function createVerifiedOriginalsProduction({
   }
 
   async function youtubeCommentsDisabled(accessToken, videoId) {
-    const response = await fetchImpl(
-      'https://www.googleapis.com/youtube/v3/commentThreads?part=id&maxResults=1&videoId=' +
-        encodeURIComponent(videoId),
-      { headers: { authorization: 'Bearer ' + accessToken } },
-    );
-    const payload = await response.json().catch(() => ({}));
-    if (response.ok) return false;
-    const reasons = Array.isArray(payload?.error?.errors)
-      ? payload.error.errors.map(item => String(item?.reason || ''))
-      : [];
-    if (response.status === 403 && reasons.includes('commentsDisabled')) {
-      return true;
+    try {
+      const response = await fetchImpl(
+        'https://www.googleapis.com/youtube/v3/commentThreads?part=id&maxResults=1&videoId=' +
+          encodeURIComponent(videoId),
+        { headers: { authorization: 'Bearer ' + accessToken } },
+      );
+      const payload = await response.json().catch(() => ({}));
+      if (response.ok) return false;
+      const reasons = Array.isArray(payload?.error?.errors)
+        ? payload.error.errors.map(item => String(item?.reason || ''))
+        : [];
+      if (response.status === 403 && reasons.includes('commentsDisabled')) {
+        return true;
+      }
+      return null;
+    } catch (_) {
+      return null;
     }
-    fail('YOUTUBE_COMMENTS_STATUS_FAILED', 502);
+  }
+
+  function youtubeCommentsStatus(disabled) {
+    if (disabled === true) return 'DISABLED';
+    if (disabled === false) return 'ENABLED';
+    return 'UNKNOWN';
   }
 
   async function liveYoutubeReferenceStatus(reference) {
@@ -1669,7 +1679,8 @@ function createVerifiedOriginalsProduction({
       return {
         availability: 'REFERENCE_NOT_AVAILABLE',
         youtubeLive: false,
-        commentsDisabled: false,
+        commentsDisabled: null,
+        commentsStatus: 'UNKNOWN',
       };
     }
 
@@ -1695,7 +1706,8 @@ function createVerifiedOriginalsProduction({
       value = {
         availability: 'REFERENCE_NOT_AVAILABLE',
         youtubeLive: false,
-        commentsDisabled: false,
+        commentsDisabled: null,
+        commentsStatus: 'UNKNOWN',
         processingStatus: 'missing',
         privacyStatus: '',
         checkedAt: new Date().toISOString(),
@@ -1711,7 +1723,8 @@ function createVerifiedOriginalsProduction({
         value = {
           availability: 'REFERENCE_NOT_AVAILABLE',
           youtubeLive: false,
-          commentsDisabled: false,
+          commentsDisabled: null,
+          commentsStatus: 'UNKNOWN',
           processingStatus: status.processingStatus,
           privacyStatus: status.privacyStatus,
           checkedAt: new Date().toISOString(),
@@ -1722,11 +1735,10 @@ function createVerifiedOriginalsProduction({
           videoId,
         );
         value = {
-          availability: commentsDisabled
-            ? 'REFERENCE_AVAILABLE'
-            : 'REFERENCE_NOT_AVAILABLE',
+          availability: 'REFERENCE_AVAILABLE',
           youtubeLive: true,
           commentsDisabled,
+          commentsStatus: youtubeCommentsStatus(commentsDisabled),
           processingStatus: status.processingStatus,
           privacyStatus: status.privacyStatus,
           checkedAt: new Date().toISOString(),
@@ -1812,19 +1824,18 @@ function createVerifiedOriginalsProduction({
       try { await deleteYoutubeVideo(accessToken, videoId); } catch (_) {}
       fail(status.privacyStatus !== 'unlisted' ? 'YOUTUBE_REFERENCE_NOT_UNLISTED' : 'YOUTUBE_PROCESSING_NOT_SUCCEEDED', 502);
     }
-    let commentsDisabled;
-    try {
-      commentsDisabled = await youtubeCommentsDisabled(accessToken, videoId);
-    } catch (error) {
-      try { await deleteYoutubeVideo(accessToken, videoId); } catch (_) {}
-      throw error;
-    }
-    if (!commentsDisabled) {
-      try { await deleteYoutubeVideo(accessToken, videoId); } catch (_) {}
-      fail('YOUTUBE_COMMENTS_MUST_BE_DISABLED', 502);
-    }
+    const commentsDisabled = await youtubeCommentsDisabled(accessToken, videoId);
+    const commentsStatus = youtubeCommentsStatus(commentsDisabled);
     const receiptId = await registerReceipt({ hcvId, videoId, referenceSha256, uploadUrl, status, config });
-    return { videoId, publicUrl: canonicalYoutubeReference(videoId).publicUrl, receiptId, status, accessToken };
+    return {
+      videoId,
+      publicUrl: canonicalYoutubeReference(videoId).publicUrl,
+      receiptId,
+      status,
+      accessToken,
+      commentsDisabled,
+      commentsStatus,
+    };
   }
 
   async function streamToFile(req, destination, expectedSize) {

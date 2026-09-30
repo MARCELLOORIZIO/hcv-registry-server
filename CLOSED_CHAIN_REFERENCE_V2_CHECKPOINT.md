@@ -140,3 +140,15 @@ Resume from this file and the app checkpoint. Do not re-design already locked de
 - Full production-backend validation is GREEN at functional HEAD `50b3727e5cc13bd01a7eb49b7c3227a87a4d4fa0`, run `36717952523`: syntax/safety, OAuth tools, LIVE guard, strict PRELAUNCH, public legal/OAuth pages, account/login flow, Apple billing, device enrollment/revocation, certificate/Registry checks and PostgreSQL load probe all passed.
 - Render deploy `dep-dauge0mgekts73ec1kcg` is LIVE at commit `50b3727e5cc13bd01a7eb49b7c3227a87a4d4fa0`. Startup confirms device enrollment schema verification and `SIGILLUM production server running in PRELAUNCH mode`.
 - `YOUTUBE_COMPLIANCE_APPROVED`, `YOUTUBE_UNLISTED_UPLOAD_CONFIRMED` and `PRODUCTION_LIVE` remain intentionally unmodified/false until Google OAuth verification and applicable YouTube API compliance/audit requirements are actually satisfied.
+
+
+## 2026-09-30 Live OAuth/upload result — comments are diagnostic, not a gate
+
+- Production OAuth provisioning succeeded with the published external Google Auth client and exact scope `youtube.force-ssl`; the authorized account was verified against the configured SIGILLUM YouTube channel.
+- The controlled live scope demo successfully performed token refresh, channel verification, resumable `videos.insert`, processing wait, `privacyStatus=unlisted`, and `videos.delete`.
+- The same live upload reported comments enabled even though both YouTube Studio upload defaults and channel moderation defaults were already configured with comments Off. This demonstrates that SIGILLUM cannot rely on Studio defaults being inherited by API uploads.
+- YouTube Data API does not expose a supported per-video comments-off write field through `videos.insert`/`videos.update`. Therefore comments state is now retained as diagnostics only and is no longer allowed to invalidate or delete an otherwise valid official reference.
+- Publication/live-reference validity remains fail-closed on the actual YouTube object: expected SIGILLUM channel, object present, processing succeeded, `privacyStatus=unlisted`, upload not failed/deleted, plus the existing Registry/trusted-derivation/HCV bindings.
+- `verification-reference` continues to return comment diagnostics (`commentsDisabled` and `commentsStatus`) when available, but signed V3 disclosure and reference availability no longer depend on them.
+- The OAuth demo continues to show the observed comment state and proceeds to `videos.delete` even when comments are enabled or cannot be confirmed.
+- No production flags were changed. `YOUTUBE_COMPLIANCE_APPROVED`, `YOUTUBE_UNLISTED_UPLOAD_CONFIRMED` and `PRODUCTION_LIVE` remain untouched pending the required external approvals/readiness steps.

@@ -16,7 +16,7 @@ server environment and is used server-side for official reference management.
 2. OAuth publishing status must be **In production**.
 3. The Web OAuth client must contain this exact authorized redirect URI:
    `http://127.0.0.1:53682/oauth2/callback`
-4. YouTube Studio defaults for new videos must have comments disabled.
+4. YouTube Studio comments defaults may be set to disabled, but this is diagnostic only for API uploads and is not a publication gate.
 5. The channel authorized by OAuth must match `YOUTUBE_CHANNEL_ID`.
 6. Do not show the client secret, refresh token, Render secrets, private keys or
    other credentials in the recording.
@@ -78,13 +78,19 @@ Record the tool showing:
 4. resumable `videos.insert` upload;
 5. video privacy = `unlisted`;
 6. processing status = `succeeded`;
-7. comments disabled check;
+7. comments-state diagnostic (advisory only; an API upload is not rejected if YouTube does not inherit Studio comment defaults);
 8. the temporary video in YouTube Studio if useful;
 9. `videos.delete` deletion;
 10. successful cleanup.
 
 The delete operation is why SIGILLUM requires `youtube.force-ssl` instead of
 the narrower `youtube.upload` scope.
+
+The controlled live test on 2026-09-30 confirmed that YouTube API uploads can
+remain comment-enabled even while both Studio upload defaults and channel
+moderation defaults are set to comments Off. SIGILLUM therefore records comment
+state as diagnostics only. Reference validity remains fail-closed on the real
+YouTube object being present, processed successfully and `unlisted`.
 
 ## Part D — show SIGILLUM product functionality
 

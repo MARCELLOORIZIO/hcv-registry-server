@@ -170,6 +170,13 @@ async function main() {
   });
   assert.strictEqual(commentsOff, true);
 
+  const commentsOn = await demo.commentsDisabled({
+    fetchImpl: async () => response(200, { items: [] }),
+    token: 'access-test',
+    videoId: 'Abcdef12345',
+  });
+  assert.strictEqual(commentsOn, false);
+
   let deleteMethod = '';
   await demo.deleteVideo({
     fetchImpl: async (target, options) => {
