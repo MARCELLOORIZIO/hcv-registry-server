@@ -105,10 +105,63 @@ function supportDocument(lang) {
   return { title: 'SIGILLUM Support', body: `${section('Support', 'For issues with access, email verification, subscriptions, identity verification, HCV certification, HCVPACK, Registry or account deletion, contact marcelloorizio@legalmail.it.')}${section('Privacy requests', 'To exercise personal-data rights, use the same address and state that the message is a privacy request.')}${section('Useful information', 'Do not send passwords, OTP codes, identity-document copies or private keys by email. For technical reports, include the app version, device model and a description of the issue while avoiding unnecessary personal data.')}` };
 }
 
+function googleDataDisclosure(lang) {
+  const copy = {
+    it: [
+      '14. Dati Google/YouTube e OAuth',
+      'Per pubblicare e verificare la copia di riferimento ufficiale, SIGILLUM utilizza OAuth 2.0 e YouTube Data API sul canale YouTube controllato da SIGILLUM. Il backend conserva in modo riservato il token di autorizzazione necessario a mantenere l’accesso al canale e usa le autorizzazioni solo per caricare, leggere lo stato e gestire le copie di riferimento SIGILLUM. SIGILLUM non usa i dati Google per pubblicità, profilazione o vendita e non condivide i token OAuth con gli utenti. L’accesso può essere revocato dal proprietario dell’account Google dalle impostazioni di sicurezza Google.',
+    ],
+    en: [
+      '14. Google/YouTube data and OAuth',
+      'To publish and verify the official reference copy, SIGILLUM uses OAuth 2.0 and the YouTube Data API on the YouTube channel controlled by SIGILLUM. The backend securely retains the authorization token required to maintain channel access and uses the granted permissions only to upload, read status and manage SIGILLUM reference copies. SIGILLUM does not use Google data for advertising, profiling or sale and does not share OAuth tokens with users. Access can be revoked by the Google Account owner from Google security settings.',
+    ],
+    es: [
+      '14. Datos de Google/YouTube y OAuth',
+      'Para publicar y verificar la copia de referencia oficial, SIGILLUM utiliza OAuth 2.0 y YouTube Data API en el canal de YouTube controlado por SIGILLUM. El backend conserva de forma segura el token de autorización necesario para mantener el acceso al canal y utiliza los permisos únicamente para cargar, consultar el estado y gestionar las copias de referencia de SIGILLUM. SIGILLUM no utiliza datos de Google para publicidad, perfilado o venta y no comparte tokens OAuth con los usuarios. El propietario de la cuenta de Google puede revocar el acceso desde la configuración de seguridad de Google.',
+    ],
+    ru: [
+      '14. Данные Google/YouTube и OAuth',
+      'Для публикации и проверки официальной эталонной копии SIGILLUM использует OAuth 2.0 и YouTube Data API на канале YouTube, контролируемом SIGILLUM. Сервер безопасно хранит токен авторизации, необходимый для доступа к каналу, и использует предоставленные разрешения только для загрузки, проверки статуса и управления эталонными копиями SIGILLUM. SIGILLUM не использует данные Google для рекламы, профилирования или продажи и не передает OAuth-токены пользователям. Владелец аккаунта Google может отозвать доступ в настройках безопасности Google.',
+    ],
+  }[lang];
+  return section(copy[0], copy[1]);
+}
+
+function homeDocument(lang) {
+  const copy = {
+    it: [
+      'SIGILLUM — Human Chain Verifier',
+      'SIGILLUM è un sistema per creare, firmare, registrare e verificare evidenze tecniche di provenienza e integrità per foto, video e testi. I contenuti Creator sono associati a HCV-ID, certificati firmati e Registry online. Quando un Creator condivide una foto o un video, SIGILLUM crea prima una copia di riferimento ufficiale sul proprio canale YouTube, normalmente non in elenco, per consentire successive verifiche tecniche e, agli abbonati, il confronto visivo o audio con la copia ufficiale.',
+    ],
+    en: [
+      'SIGILLUM — Human Chain Verifier',
+      'SIGILLUM is a system for creating, signing, registering and verifying technical evidence of provenance and integrity for photos, videos and text. Creator content is associated with an HCV-ID, signed certificates and an online Registry. When a Creator shares a photo or video, SIGILLUM first creates an official reference copy on its YouTube channel, normally unlisted, to support later technical verification and, for subscribers, visual or audio comparison with the official copy.',
+    ],
+    es: [
+      'SIGILLUM — Human Chain Verifier',
+      'SIGILLUM es un sistema para crear, firmar, registrar y verificar evidencias técnicas de procedencia e integridad de fotografías, vídeos y textos. El contenido Creator se vincula a un HCV-ID, certificados firmados y un Registry en línea. Cuando un Creator comparte una foto o un vídeo, SIGILLUM crea primero una copia de referencia oficial en su canal de YouTube, normalmente no listada, para permitir posteriores verificaciones técnicas y, para suscriptores, la comparación visual o de audio con la copia oficial.',
+    ],
+    ru: [
+      'SIGILLUM — Human Chain Verifier',
+      'SIGILLUM — система для создания, подписания, регистрации и проверки технических свидетельств происхождения и целостности фотографий, видео и текста. Контент Creator связывается с HCV-ID, подписанными сертификатами и онлайн Registry. Когда Creator делится фотографией или видео, SIGILLUM сначала создает официальную эталонную копию на своем канале YouTube, обычно в режиме unlisted, чтобы обеспечить последующую техническую проверку и, для подписчиков, визуальное или аудиосравнение с официальной копией.',
+    ],
+  }[lang];
+  return {
+    title: copy[0],
+    body: '<div class="card"><p>' + copy[1] + '</p></div>' +
+      '<p><a href="/privacy?lang=' + lang + '">Privacy</a> · ' +
+      '<a href="/terms?lang=' + lang + '">Terms</a> · ' +
+      '<a href="/support?lang=' + lang + '">Support</a></p>',
+  };
+}
+
 function legalDocument(type, language, versions = {}) {
   const lang = normalizeLanguage(language);
   if (type === 'terms') return termsDocument(lang, versions.termsVersion || '2026-08-18');
-  if (type === 'privacy') return privacyDocument(lang, versions.privacyVersion || '2026-08-18');
+  if (type === 'privacy') {
+    const doc = privacyDocument(lang, versions.privacyVersion || '2026-08-18');
+    return { ...doc, body: doc.body + googleDataDisclosure(lang) };
+  }
   if (type === 'delete-data') return deletionDocument(lang);
   if (type === 'support') return supportDocument(lang);
   return null;
@@ -124,6 +177,10 @@ function legalPage(pathname, language, versions = {}) {
       ru: ['Проверка личности', 'Процедура проверки завершена.', 'Вернуться в SIGILLUM'],
     }[lang];
     return legalShell(copy[0], `<p>${copy[1]} <a href="sigillum://kyc-return">${copy[2]}</a>.</p><script>setTimeout(()=>location.href='sigillum://kyc-return',300)</script>`, lang, pathname);
+  }
+  if (pathname === '/') {
+    const doc = homeDocument(lang);
+    return legalShell(doc.title, doc.body, lang, pathname);
   }
   const type = pathname === '/privacy' ? 'privacy' : pathname === '/terms' ? 'terms' : pathname === '/support' ? 'support' : pathname === '/delete-data' ? 'delete-data' : null;
   if (!type) return null;
