@@ -40,6 +40,10 @@ for (const token of [
   'YOUTUBE_COMMENTS_MUST_BE_DISABLED',
   'verification-reference',
   'YOUTUBE_LIVE_ATTESTED_SIGNED_V3',
+  'youtubeAccessTokenCache',
+  'youtubeChannelVerifiedUntil',
+  'YOUTUBE_COMMENTS_STATUS_FAILED',
+  'existingDerivation',
 ]) {
   assert(feature.includes(token), 'feature missing invariant: '+token);
 }
