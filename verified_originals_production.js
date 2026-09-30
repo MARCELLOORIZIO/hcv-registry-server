@@ -1837,6 +1837,41 @@ function createVerifiedOriginalsProduction({
       fail('REFERENCE_VISUAL_FINGERPRINT_INVALID', 500);
     }
 
+    const existingDerivation = (await pool.query(
+      'SELECT hcv_id,manifest_raw FROM trusted_derivations WHERE output_sha256=$1',
+      [outputHash],
+    )).rows[0];
+    if (existingDerivation) {
+      let existingManifest;
+      try {
+        existingManifest = JSON.parse(existingDerivation.manifest_raw);
+      } catch (_) {
+        fail('DERIVATION_IMMUTABLE_RECORD_CONFLICT', 409);
+      }
+      const reusable =
+        existingDerivation.hcv_id === hcvId &&
+        verifyDerivationManifest({
+          manifest: existingManifest,
+          certificateRaw: original.row.certificate_raw,
+          trustedKeys,
+          verifyCertificateRaw,
+        }) &&
+        existingManifest.parent?.sha256 === original.contentHash &&
+        existingManifest.output?.sha256 === outputHash &&
+        existingManifest.output?.byteLength === output.length &&
+        existingManifest.transform?.operation === derivationOperation &&
+        JSON.stringify(existingManifest.output?.referenceVisualFingerprint) ===
+          JSON.stringify(referenceVisualFingerprint);
+      if (!reusable) {
+        fail('DERIVATION_IMMUTABLE_RECORD_CONFLICT', 409);
+      }
+      return {
+        manifest: existingManifest,
+        outputHash,
+        outputSize: output.length,
+      };
+    }
+
     const statement = {
       schema: DERIVATION_SCHEMA,
       hcvId,
@@ -1946,6 +1981,44 @@ function createVerifiedOriginalsProduction({
       });
     if (!validReferenceVisualFingerprintV3(referenceVisualFingerprint)) {
       fail('REFERENCE_VISUAL_FINGERPRINT_INVALID', 500);
+    }
+
+    const existingDerivation = (await pool.query(
+      'SELECT hcv_id,manifest_raw FROM trusted_derivations WHERE output_sha256=$1',
+      [outputHash],
+    )).rows[0];
+    if (existingDerivation) {
+      let existingManifest;
+      try {
+        existingManifest = JSON.parse(existingDerivation.manifest_raw);
+      } catch (_) {
+        fail('DERIVATION_IMMUTABLE_RECORD_CONFLICT', 409);
+      }
+      const reusable =
+        existingDerivation.hcv_id === hcvId &&
+        verifySubtitleDerivationManifest({
+          manifest: existingManifest,
+          certificateRaw: original.row.certificate_raw,
+          trustedKeys,
+          verifyCertificateRaw,
+        }) &&
+        existingManifest.parent?.sha256 === original.contentHash &&
+        existingManifest.source?.sha256 === captionedSha256 &&
+        existingManifest.source?.subtitleSha256 === subtitleSha256 &&
+        existingManifest.output?.sha256 === outputHash &&
+        existingManifest.output?.byteLength === output.length &&
+        existingManifest.transform?.operation ===
+          SUBTITLE_DERIVATION_OPERATION &&
+        JSON.stringify(existingManifest.output?.referenceVisualFingerprint) ===
+          JSON.stringify(referenceVisualFingerprint);
+      if (!reusable) {
+        fail('DERIVATION_IMMUTABLE_RECORD_CONFLICT', 409);
+      }
+      return {
+        manifest: existingManifest,
+        outputHash,
+        outputSize: output.length,
+      };
     }
 
     const statement = {
