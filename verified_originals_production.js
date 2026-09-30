@@ -681,6 +681,74 @@ function verifyDerivationManifest({
   }
 }
 
+function verifySubtitleDerivationManifest({
+  manifest,
+  certificateRaw,
+  trustedKeys,
+  verifyCertificateRaw,
+}) {
+  try {
+    if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest) ||
+        !trustedKeys ||
+        manifest.schema !== SUBTITLE_DERIVATION_SCHEMA ||
+        !HCV_ID.test(manifest.hcvId)) {
+      return false;
+    }
+
+    const { signature, ...statement } = manifest;
+    if (Object.keys(statement).length !== 9 ||
+        typeof signature !== 'string' ||
+        !signature) {
+      return false;
+    }
+
+    const certificate = verifyCertificateRaw(certificateRaw, manifest.hcvId);
+    const contentHash = String(certificate?.content?.hash || '').toLowerCase();
+    const contentType = String(certificate?.content?.type || '');
+    if (contentType !== 'video' ||
+        !SHA256.test(contentHash) ||
+        statement.parent?.kind !== 'original' ||
+        statement.parent?.sha256 !== contentHash ||
+        statement.parent?.signedCertificateDigest !== hashString(certificateRaw) ||
+        statement.source?.kind !== 'captioned_video' ||
+        !SHA256.test(statement.source?.sha256 || '') ||
+        !SHA256.test(statement.source?.subtitleSha256 || '') ||
+        statement.output?.mediaType !== 'video' ||
+        !Number.isSafeInteger(statement.output?.byteLength) ||
+        statement.output.byteLength <= 0 ||
+        !SHA256.test(statement.output?.sha256 || '') ||
+        !validReferenceVisualFingerprintV3(
+          statement.output?.referenceVisualFingerprint,
+        ) ||
+        statement.transform?.operation !== SUBTITLE_DERIVATION_OPERATION ||
+        statement.transform?.editorialImpact !== 'caption_overlay' ||
+        statement.transform?.policyVersion !== SUBTITLE_DERIVATION_SCHEMA ||
+        statement.issuer?.signatureAlgorithm !== DERIVATION_SIGNATURE_ALGORITHM ||
+        !/^[A-Za-z0-9._-]{3,80}$/.test(statement.issuer?.keyId || '') ||
+        !/^[0-9a-f-]{36}$/i.test(statement.nonce || '') ||
+        !Number.isFinite(Date.parse(statement.createdAt))) {
+      return false;
+    }
+
+    const pem = trustedKeys[statement.issuer.keyId];
+    if (!pem) return false;
+    const publicKey = crypto.createPublicKey(pem);
+    if (publicKey.asymmetricKeyType !== 'rsa' ||
+        publicKey.asymmetricKeyDetails?.modulusLength < 2048) {
+      return false;
+    }
+
+    return crypto.verify(
+      'RSA-SHA256',
+      Buffer.from(JSON.stringify(statement), 'utf8'),
+      publicKey,
+      Buffer.from(signature, 'base64'),
+    );
+  } catch (_) {
+    return false;
+  }
+}
+
 function createVerifiedOriginalsProduction({
   pool,
   authenticate,
@@ -1599,6 +1667,149 @@ function createVerifiedOriginalsProduction({
     const stored = (await pool.query('SELECT hcv_id,manifest_raw FROM trusted_derivations WHERE output_sha256=$1', [outputHash])).rows[0];
     if (!stored || stored.hcv_id !== hcvId || stored.manifest_raw !== raw) fail('DERIVATION_IMMUTABLE_RECORD_CONFLICT', 409);
     return { manifest, outputHash, outputSize: output.length };
+  }
+
+  async function createTrustedSubtitleDerivative({
+    hcvId,
+    original,
+    captionedPath,
+    outputPath,
+    captionedSha256,
+    subtitleSha256,
+  }) {
+    if (original.contentType !== 'video' ||
+        !SHA256.test(captionedSha256) ||
+        !SHA256.test(subtitleSha256)) {
+      fail('SUBTITLE_DERIVATION_INPUT_INVALID', 400);
+    }
+
+    const keyId = String(process.env.SIGILLUM_DERIVATION_KEY_ID || '');
+    const privatePem = String(
+      process.env.SIGILLUM_DERIVATION_PRIVATE_KEY_PEM || '',
+    ).replace(/\\n/g, '\n');
+    const trustedKeys = parsePinnedDerivationKeys();
+    if (!/^[A-Za-z0-9._-]{3,80}$/.test(keyId) ||
+        !privatePem ||
+        !trustedKeys?.[keyId]) {
+      fail('DERIVATION_SERVICE_NOT_CONFIGURED', 503);
+    }
+
+    const privateKey = crypto.createPrivateKey(privatePem);
+    if (privateKey.asymmetricKeyType !== 'rsa' ||
+        privateKey.asymmetricKeyDetails?.modulusLength < 2048) {
+      fail('DERIVATION_SIGNING_KEY_INVALID', 503);
+    }
+    const publicFromPrivate = crypto.createPublicKey(privateKey)
+      .export({ format: 'pem', type: 'spki' })
+      .toString();
+    const pinned = crypto.createPublicKey(trustedKeys[keyId])
+      .export({ format: 'pem', type: 'spki' })
+      .toString();
+    if (publicFromPrivate !== pinned) {
+      fail('DERIVATION_KEY_PIN_MISMATCH', 503);
+    }
+
+    await execFileAsync(ffmpegPath, [
+      '-hide_banner', '-loglevel', 'error', '-nostdin', '-y',
+      '-i', captionedPath,
+      '-map', '0:v:0', '-map', '0:a?',
+      '-map_metadata', '-1', '-map_chapters', '-1',
+      '-c:v', 'libx264', '-preset', 'medium', '-crf', '23',
+      '-pix_fmt', 'yuv420p',
+      '-c:a', 'aac', '-b:a', '160k',
+      '-movflags', '+faststart',
+      outputPath,
+    ], {
+      timeout: 180000,
+      maxBuffer: 4 * 1024 * 1024,
+    });
+
+    const output = await fs.promises.readFile(outputPath);
+    if (!output.length) fail('SUBTITLE_DERIVATION_OUTPUT_INVALID', 500);
+    const outputHash = hashBytes(output);
+    const referenceVisualFingerprint =
+      await buildReferenceVisualFingerprintV3({
+        ffmpegPath,
+        filePath: outputPath,
+        mediaType: 'video',
+        workDir: path.dirname(outputPath),
+      });
+    if (!validReferenceVisualFingerprintV3(referenceVisualFingerprint)) {
+      fail('REFERENCE_VISUAL_FINGERPRINT_INVALID', 500);
+    }
+
+    const statement = {
+      schema: SUBTITLE_DERIVATION_SCHEMA,
+      hcvId,
+      parent: {
+        kind: 'original',
+        sha256: original.contentHash,
+        signedCertificateDigest: hashString(original.row.certificate_raw),
+      },
+      source: {
+        kind: 'captioned_video',
+        sha256: captionedSha256,
+        subtitleSha256,
+      },
+      output: {
+        sha256: outputHash,
+        byteLength: output.length,
+        mediaType: 'video',
+        referenceVisualFingerprint,
+      },
+      transform: {
+        operation: SUBTITLE_DERIVATION_OPERATION,
+        editorialImpact: 'caption_overlay',
+        policyVersion: SUBTITLE_DERIVATION_SCHEMA,
+      },
+      issuer: {
+        keyId,
+        signatureAlgorithm: DERIVATION_SIGNATURE_ALGORITHM,
+      },
+      createdAt: new Date().toISOString(),
+      nonce: crypto.randomUUID(),
+    };
+
+    const manifest = {
+      ...statement,
+      signature: crypto.sign(
+        'RSA-SHA256',
+        Buffer.from(JSON.stringify(statement), 'utf8'),
+        privateKey,
+      ).toString('base64'),
+    };
+
+    if (!verifySubtitleDerivationManifest({
+      manifest,
+      certificateRaw: original.row.certificate_raw,
+      trustedKeys,
+      verifyCertificateRaw,
+    })) {
+      fail('SUBTITLE_DERIVATION_ATTESTATION_INVALID', 500);
+    }
+
+    const raw = JSON.stringify(manifest);
+    await pool.query(`
+      INSERT INTO trusted_derivations(output_sha256,hcv_id,manifest_raw)
+      VALUES($1,$2,$3)
+      ON CONFLICT(output_sha256) DO NOTHING
+    `, [outputHash, hcvId, raw]);
+
+    const stored = (await pool.query(
+      'SELECT hcv_id,manifest_raw FROM trusted_derivations WHERE output_sha256=$1',
+      [outputHash],
+    )).rows[0];
+    if (!stored ||
+        stored.hcv_id !== hcvId ||
+        stored.manifest_raw !== raw) {
+      fail('DERIVATION_IMMUTABLE_RECORD_CONFLICT', 409);
+    }
+
+    return {
+      manifest,
+      outputHash,
+      outputSize: output.length,
+    };
   }
 
   async function registerPublication({
