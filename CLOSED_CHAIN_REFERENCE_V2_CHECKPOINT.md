@@ -100,3 +100,12 @@ Resume from this file and the app checkpoint. Do not re-design already locked de
 - Render production inspection confirms `sigillum-registry-production` uses that release branch with auto-deploy OFF. Current live deployment is commit `3e62c5afc2c94f2585dbfefbe7c0981a1233b083` deployed 2026-09-25; none of this feature branch's live-reference/cache/comment-status changes are production-deployed yet.
 - Render connector exposes service/deploy configuration but no read operation for environment-variable values. Therefore OAuth client/refresh-token/channel readiness is not marked complete from configuration inspection alone; it remains a live production test item.
 - No Render deploy, production environment-variable mutation, release merge/rebase or credential rotation was performed.
+
+## 2026-09-30 Backend final hardening and checkpoint correction
+
+- Publication cleanup now also covers a transient failure while querying YouTube comment state. If the platform cannot confirm whether comments are disabled after a candidate upload, SIGILLUM deletes that candidate video and fails closed with `YOUTUBE_COMMENTS_STATUS_FAILED`; it does not leave an unregistered orphan reference on the channel.
+- Integration coverage now exercises two fail-closed retries before success: transient comment-status API failure, comments-enabled rejection, then successful publication of the exact same original. The existing signed trusted derivation is reused safely across retries.
+- Latest backend functional validation is GREEN at HEAD `7786ba037af9f28ab454fc5e784897b15fb567dc`: Closed-chain reference v2 run `36701824508` passed dependency install, full `npm run check` and the PostgreSQL Verified Originals integration test.
+- Historical checkpoint correction: backend PR #35 was opened as a draft but was subsequently merged into `release/reconciled-prelaunch-backend-clean-20260824` on 2026-09-25 at 15:11:35 UTC. The earlier checkpoint sentence saying it remained unmerged is therefore stale historical text, not the current repository state.
+- After that historical merge, substantial hardening continued on the feature branch. Current comparison against `release/reconciled-prelaunch-backend-clean-20260824` is diverged: 41 commits ahead and 1 behind. No additional merge/rebase was performed in this hardening pass; final reconciliation remains deferred to release consolidation.
+- No Render deployment or production YouTube/OAuth credential change was performed.
