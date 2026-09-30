@@ -109,3 +109,11 @@ Resume from this file and the app checkpoint. Do not re-design already locked de
 - Historical checkpoint correction: backend PR #35 was opened as a draft but was subsequently merged into `release/reconciled-prelaunch-backend-clean-20260824` on 2026-09-25 at 15:11:35 UTC. The earlier checkpoint sentence saying it remained unmerged is therefore stale historical text, not the current repository state.
 - After that historical merge, substantial hardening continued on the feature branch. At validated functional HEAD `7786ba037af9f28ab454fc5e784897b15fb567dc`, comparison against `release/reconciled-prelaunch-backend-clean-20260824` was diverged: 41 commits ahead and 1 behind; later checkpoint-only commits do not change the functional delta. No additional merge/rebase was performed in this hardening pass; final reconciliation remains deferred to release consolidation.
 - No Render deployment or production YouTube/OAuth credential change was performed.
+
+## 2026-09-30 Release reconciliation completed
+
+- The apparent one-commit divergence was the historical release merge commit for PR #35, not an independent functional change. The feature branch was reconciled by preserving its validated tree and adding release commit `3e62c5afc2c94f2585dbfefbe7c0981a1233b083` as merge ancestry; no files changed during reconciliation.
+- Reconciled feature commit `e4fd00a192128d45b5ba86639fa61472bab98596` passed Closed-chain reference v2 validation run `36709669155`.
+- Follow-up PR #36 (`Closed-chain final hardening and live-reference attestation`) was merged into `release/reconciled-prelaunch-backend-clean-20260824` as commit `a7c485123054eb368587c1572c73cac2bca61ef8`.
+- Release now contains the live-reference endpoint, comments-off fail-closed enforcement, orphan-upload cleanup, idempotent derivation retry, subtitle reference separation, bounded live-reference cache and four-generation V3 real-media regression.
+- Render production still has auto-deploy OFF; the merge did not deploy automatically.
