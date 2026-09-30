@@ -1297,6 +1297,32 @@ function createVerifiedOriginalsProduction({
     };
   }
 
+  async function verificationReference(hcvId) {
+    const startedAt = Date.now();
+    const reference = await activeReference(hcvId);
+    if (!reference) {
+      return {
+        hcvId,
+        availability: 'REFERENCE_NOT_AVAILABLE',
+        youtubeLive: false,
+        comparisonMode: 'YOUTUBE_LIVE_ATTESTED_SIGNED_V3',
+        totalMs: Date.now() - startedAt,
+      };
+    }
+    const live = await liveYoutubeReferenceStatus(reference);
+    return {
+      hcvId,
+      ...live,
+      platform: 'youtube',
+      comparisonMode: 'YOUTUBE_LIVE_ATTESTED_SIGNED_V3',
+      referenceVisualFingerprint:
+        live.availability === 'REFERENCE_AVAILABLE'
+          ? reference.referenceVisualFingerprint
+          : null,
+      totalMs: Date.now() - startedAt,
+    };
+  }
+
   async function publicHistory(hcvId) {
     const rows = (await pool.query(`
       SELECT publication_id,hcv_id,platform,publication_status,
@@ -1584,6 +1610,56 @@ function createVerifiedOriginalsProduction({
     } while (true);
   }
 
+  async function youtubeCommentsDisabled(accessToken, videoId) {
+    const response = await fetchImpl(
+      'https://www.googleapis.com/youtube/v3/commentThreads?part=id&maxResults=1&videoId=' +
+        encodeURIComponent(videoId),
+      { headers: { authorization: 'Bearer ' + accessToken } },
+    );
+    const payload = await response.json().catch(() => ({}));
+    if (response.ok) return false;
+    const reasons = Array.isArray(payload?.error?.errors)
+      ? payload.error.errors.map(item => String(item?.reason || ''))
+      : [];
+    if (response.status === 403 && reasons.includes('commentsDisabled')) {
+      return true;
+    }
+    fail('YOUTUBE_COMMENTS_STATUS_FAILED', 502);
+  }
+
+  async function liveYoutubeReferenceStatus(reference) {
+    if (!reference || !YOUTUBE_ID.test(reference.platformPostId || '')) {
+      return {
+        availability: 'REFERENCE_NOT_AVAILABLE',
+        youtubeLive: false,
+        commentsDisabled: false,
+      };
+    }
+    const startedAt = Date.now();
+    const config = youtubeConfig();
+    const accessToken = await oauthAccessToken(config);
+    await verifyYoutubeChannel(accessToken, config.channelId);
+    const status = await youtubeStatus(accessToken, reference.platformPostId);
+    const commentsDisabled = await youtubeCommentsDisabled(
+      accessToken,
+      reference.platformPostId,
+    );
+    const ready =
+      status.processingStatus === 'succeeded' &&
+      status.privacyStatus === 'unlisted' &&
+      status.uploadStatus !== 'deleted' &&
+      status.uploadStatus !== 'failed';
+    return {
+      availability: ready ? 'REFERENCE_AVAILABLE' : 'REFERENCE_NOT_AVAILABLE',
+      youtubeLive: ready,
+      commentsDisabled,
+      processingStatus: status.processingStatus,
+      privacyStatus: status.privacyStatus,
+      checkedAt: new Date().toISOString(),
+      youtubeCheckMs: Date.now() - startedAt,
+    };
+  }
+
   async function registerReceipt({ hcvId, videoId, referenceSha256, uploadUrl, status, config }) {
     const receiptId = crypto.randomUUID();
     await pool.query(`
@@ -1638,6 +1714,11 @@ function createVerifiedOriginalsProduction({
     if (status.processingStatus !== 'succeeded' || status.privacyStatus !== 'unlisted') {
       try { await deleteYoutubeVideo(accessToken, videoId); } catch (_) {}
       fail(status.privacyStatus !== 'unlisted' ? 'YOUTUBE_REFERENCE_NOT_UNLISTED' : 'YOUTUBE_PROCESSING_NOT_SUCCEEDED', 502);
+    }
+    const commentsDisabled = await youtubeCommentsDisabled(accessToken, videoId);
+    if (!commentsDisabled) {
+      try { await deleteYoutubeVideo(accessToken, videoId); } catch (_) {}
+      fail('YOUTUBE_COMMENTS_MUST_BE_DISABLED', 502);
     }
     const receiptId = await registerReceipt({ hcvId, videoId, referenceSha256, uploadUrl, status, config });
     return { videoId, publicUrl: canonicalYoutubeReference(videoId).publicUrl, receiptId, status, accessToken };
@@ -2469,6 +2550,7 @@ function createVerifiedOriginalsProduction({
     const publicLookup = /^\/api\/verified-originals\/(HCV-[A-F0-9]{16})$/.exec(url.pathname);
     const view = /^\/api\/verified-originals\/(HCV-[A-F0-9]{16})\/view$/.exec(url.pathname);
     const list = /^\/api\/verified-originals\/(HCV-[A-F0-9]{16})\/publications$/.exec(url.pathname);
+    const verifyReference = /^\/api\/verified-originals\/(HCV-[A-F0-9]{16})\/verification-reference$/.exec(url.pathname);
     const consentStatusMatch = /^\/api\/verified-originals\/consents\/(HCV-[A-F0-9]{16})$/.exec(url.pathname);
     const withdraw = /^\/api\/verified-originals\/consents\/(HCV-[A-F0-9]{16})\/withdraw$/.exec(url.pathname);
     const publish = /^\/api\/verified-originals\/publish\/(HCV-[A-F0-9]{16})$/.exec(url.pathname);
@@ -2477,6 +2559,10 @@ function createVerifiedOriginalsProduction({
 
     if (req.method === 'GET' && publicLookup) {
       sendJson(res, 200, await publicAvailability(publicLookup[1]));
+      return true;
+    }
+    if (req.method === 'GET' && verifyReference) {
+      sendJson(res, 200, await verificationReference(verifyReference[1]));
       return true;
     }
     if (req.method === 'GET' && view) {
@@ -2575,6 +2661,7 @@ function createVerifiedOriginalsProduction({
     initSchema,
     handle,
     publicAvailability,
+    verificationReference,
     activeReference,
     activeSubtitleReference,
     verifyDerivationManifest: args =>
