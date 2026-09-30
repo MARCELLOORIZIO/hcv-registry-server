@@ -117,3 +117,11 @@ Resume from this file and the app checkpoint. Do not re-design already locked de
 - Follow-up PR #36 (`Closed-chain final hardening and live-reference attestation`) was merged into `release/reconciled-prelaunch-backend-clean-20260824` as commit `a7c485123054eb368587c1572c73cac2bca61ef8`.
 - Release now contains the live-reference endpoint, comments-off fail-closed enforcement, orphan-upload cleanup, idempotent derivation retry, subtitle reference separation, bounded live-reference cache and four-generation V3 real-media regression.
 - Render production still has auto-deploy OFF; the merge did not deploy automatically.
+
+## 2026-09-30 Render deployment after release reconciliation
+
+- Production release branch deployment completed successfully on Render after the release reconciliation and legal version alignment. Deploy `dep-daufbtnavr4c738vk7e0` is LIVE at release commit `5e475373feb9266bfa3473dcec80e050155f9dc4`.
+- Render production `TERMS_VERSION` and `PRIVACY_VERSION` were aligned to `2026-09-25`; this environment update triggered the deployment because Render applies environment changes by redeploying even though repository auto-deploy remains OFF.
+- Startup logs confirm all production patch stages applied, including `Verified Originals PostgreSQL production integration applied`, followed by `SIGILLUM production PostgreSQL server listening on 10000` and Render reporting the service live.
+- The same startup logs explicitly report `SIGILLUM production server running in PRELAUNCH mode`. Therefore the backend code is deployed, but `PRODUCTION_LIVE` is not enabled and live YouTube publication must not be considered production-ready yet.
+- No YouTube compliance/unlisted flags or OAuth credentials were fabricated or changed. Live YouTube end-to-end publication remains gated on actual confirmed production configuration.
