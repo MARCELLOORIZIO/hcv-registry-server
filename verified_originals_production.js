@@ -792,6 +792,7 @@ function createVerifiedOriginalsProduction({
   let youtubeAccessTokenExpiresAt = 0;
   let youtubeChannelVerifiedId = '';
   let youtubeChannelVerifiedUntil = 0;
+  const youtubeReferenceStatusCache = new Map();
 
   function verifyHcvpackBindingSignature(req, original, hcvId, hcvpackSha256) {
     if (String(req.headers['x-sigillum-hcvpack-binding-version'] || '') !== '1') {
@@ -1624,6 +1625,7 @@ function createVerifiedOriginalsProduction({
 
   async function deleteYoutubeVideo(accessToken, videoId) {
     if (!YOUTUBE_ID.test(videoId || '')) return false;
+    youtubeReferenceStatusCache.delete(videoId);
     const response = await fetchImpl(
       'https://www.googleapis.com/youtube/v3/videos?id=' + encodeURIComponent(videoId),
       { method: 'DELETE', headers: { authorization: 'Bearer ' + accessToken } },
@@ -1670,54 +1672,88 @@ function createVerifiedOriginalsProduction({
         commentsDisabled: false,
       };
     }
-    const startedAt = Date.now();
+
+    const videoId = reference.platformPostId;
+    const now = Date.now();
+    const cached = youtubeReferenceStatusCache.get(videoId);
+    if (cached && cached.expiresAt > now) {
+      return {
+        ...cached.value,
+        youtubeCheckMs: 0,
+        cacheHit: true,
+      };
+    }
+
+    const startedAt = now;
     const config = youtubeConfig();
     const accessToken = await oauthAccessToken(config);
     await verifyYoutubeChannel(accessToken, config.channelId);
-    const status = await youtubeStatus(
-      accessToken,
-      reference.platformPostId,
-      true,
-    );
+    const status = await youtubeStatus(accessToken, videoId, true);
+
+    let value;
     if (!status) {
-      return {
+      value = {
         availability: 'REFERENCE_NOT_AVAILABLE',
         youtubeLive: false,
         commentsDisabled: false,
         processingStatus: 'missing',
         privacyStatus: '',
         checkedAt: new Date().toISOString(),
-        youtubeCheckMs: Date.now() - startedAt,
       };
+    } else {
+      const ready =
+        status.processingStatus === 'succeeded' &&
+        status.privacyStatus === 'unlisted' &&
+        status.uploadStatus !== 'deleted' &&
+        status.uploadStatus !== 'failed';
+
+      if (!ready) {
+        value = {
+          availability: 'REFERENCE_NOT_AVAILABLE',
+          youtubeLive: false,
+          commentsDisabled: false,
+          processingStatus: status.processingStatus,
+          privacyStatus: status.privacyStatus,
+          checkedAt: new Date().toISOString(),
+        };
+      } else {
+        const commentsDisabled = await youtubeCommentsDisabled(
+          accessToken,
+          videoId,
+        );
+        value = {
+          availability: commentsDisabled
+            ? 'REFERENCE_AVAILABLE'
+            : 'REFERENCE_NOT_AVAILABLE',
+          youtubeLive: true,
+          commentsDisabled,
+          processingStatus: status.processingStatus,
+          privacyStatus: status.privacyStatus,
+          checkedAt: new Date().toISOString(),
+        };
+      }
     }
-    const ready =
-      status.processingStatus === 'succeeded' &&
-      status.privacyStatus === 'unlisted' &&
-      status.uploadStatus !== 'deleted' &&
-      status.uploadStatus !== 'failed';
-    if (!ready) {
-      return {
-        availability: 'REFERENCE_NOT_AVAILABLE',
-        youtubeLive: false,
-        commentsDisabled: false,
-        processingStatus: status.processingStatus,
-        privacyStatus: status.privacyStatus,
-        checkedAt: new Date().toISOString(),
-        youtubeCheckMs: Date.now() - startedAt,
-      };
-    }
-    const commentsDisabled = await youtubeCommentsDisabled(
-      accessToken,
-      reference.platformPostId,
+
+    const ttlMs = Math.max(
+      5_000,
+      Math.min(
+        60_000,
+        Number(process.env.YOUTUBE_REFERENCE_STATUS_TTL_MS || 30_000),
+      ),
     );
+    youtubeReferenceStatusCache.set(videoId, {
+      value,
+      expiresAt: Date.now() + ttlMs,
+    });
+    if (youtubeReferenceStatusCache.size > 1000) {
+      const oldestKey = youtubeReferenceStatusCache.keys().next().value;
+      if (oldestKey) youtubeReferenceStatusCache.delete(oldestKey);
+    }
+
     return {
-      availability: ready ? 'REFERENCE_AVAILABLE' : 'REFERENCE_NOT_AVAILABLE',
-      youtubeLive: ready,
-      commentsDisabled,
-      processingStatus: status.processingStatus,
-      privacyStatus: status.privacyStatus,
-      checkedAt: new Date().toISOString(),
+      ...value,
       youtubeCheckMs: Date.now() - startedAt,
+      cacheHit: false,
     };
   }
 
