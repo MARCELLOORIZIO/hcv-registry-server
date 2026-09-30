@@ -1179,6 +1179,106 @@ function createVerifiedOriginalsProduction({
     };
   }
 
+  async function activeSubtitleReference(
+    hcvId,
+    captionedSha256,
+    subtitleSha256,
+  ) {
+    if (!SHA256.test(captionedSha256) || !SHA256.test(subtitleSha256)) {
+      return null;
+    }
+    const original = await verifiedOriginal(hcvId);
+    if (!original || original.contentType !== 'video') return null;
+
+    const row = (await pool.query(`
+      SELECT
+        p.*,
+        c.state AS consent_state,
+        r.hcv_id AS receipt_hcv_id,
+        r.platform AS receipt_platform,
+        r.platform_post_id AS receipt_platform_post_id,
+        r.uploaded_sha256 AS receipt_uploaded_sha256,
+        r.processing_status AS receipt_processing_status,
+        r.visibility AS receipt_visibility
+      FROM verified_originals_publications p
+      JOIN verified_originals_consents c ON c.record_id=p.consent_record_id
+      JOIN verified_originals_platform_receipts r
+        ON r.receipt_id=p.platform_receipt_id
+      WHERE p.hcv_id=$1
+        AND p.publication_status='PUBLISHED'
+        AND p.reference_role=$2
+        AND p.source_derivation_sha256=$3
+        AND p.subtitle_sha256=$4
+      ORDER BY p.published_at DESC
+      LIMIT 1
+    `, [
+      hcvId,
+      DERIVED_REFERENCE_ROLE,
+      captionedSha256,
+      subtitleSha256,
+    ])).rows[0];
+
+    if (!row ||
+        row.consent_state !== 'ACTIVE' ||
+        row.original_content_sha256 !== original.contentHash ||
+        row.derived_from !== original.contentHash ||
+        row.derivation_type !== SUBTITLE_DERIVATION_OPERATION ||
+        row.receipt_hcv_id !== hcvId ||
+        row.receipt_platform !== 'youtube' ||
+        row.receipt_platform_post_id !== row.platform_post_id ||
+        row.receipt_uploaded_sha256 !== row.reference_sha256 ||
+        row.receipt_processing_status !== 'succeeded' ||
+        row.receipt_visibility !== 'unlisted' ||
+        !SHA256.test(row.reference_sha256 || '')) {
+      return null;
+    }
+
+    const derivationRow = (await pool.query(
+      'SELECT manifest_raw FROM trusted_derivations WHERE output_sha256=$1 AND hcv_id=$2',
+      [row.reference_sha256, hcvId],
+    )).rows[0];
+    if (!derivationRow) return null;
+
+    let manifest;
+    try {
+      manifest = JSON.parse(derivationRow.manifest_raw);
+    } catch (_) {
+      return null;
+    }
+    const trustedKeys = parsePinnedDerivationKeys();
+    if (!verifySubtitleDerivationManifest({
+      manifest,
+      certificateRaw: original.row.certificate_raw,
+      trustedKeys,
+      verifyCertificateRaw,
+    })) {
+      return null;
+    }
+    if (manifest.source?.sha256 !== captionedSha256 ||
+        manifest.source?.subtitleSha256 !== subtitleSha256) {
+      return null;
+    }
+
+    const reference = canonicalYoutubeReference(row.platform_post_id);
+    if (!reference || reference.publicUrl !== row.public_url) return null;
+
+    return {
+      publicationId: row.publication_id,
+      hcvId,
+      platform: 'youtube',
+      platformPostId: row.platform_post_id,
+      publicUrl: row.public_url,
+      referenceSha256: row.reference_sha256,
+      originalContentSha256: row.original_content_sha256,
+      sourceDerivationSha256: row.source_derivation_sha256,
+      subtitleSha256: row.subtitle_sha256,
+      derivationType: row.derivation_type,
+      referenceRole: row.reference_role,
+      publicationStatus: row.publication_status,
+      publishedAt: row.published_at,
+    };
+  }
+
   async function publicAvailability(hcvId) {
     const reference = await activeReference(hcvId);
     if (!reference) {
@@ -1981,6 +2081,212 @@ function createVerifiedOriginalsProduction({
     }
   }
 
+  async function publishSubtitleDerivative(req, hcvId, url) {
+    const access = await creatorAccess(req);
+    const original = await ownedOriginal(hcvId, access.session);
+    if (original.contentType !== 'video') {
+      fail('SUBTITLE_DERIVATION_REQUIRES_VIDEO', 415);
+    }
+
+    const originalReference = await activeReference(hcvId);
+    if (!originalReference) {
+      fail('ORIGINAL_REFERENCE_REQUIRED', 409);
+    }
+
+    const requestMediaType = String(req.headers['content-type'] || '')
+      .split(';')[0]
+      .toLowerCase();
+    if (requestMediaType !== 'video/mp4') {
+      fail('SUBTITLE_DERIVATION_MEDIA_TYPE_UNSUPPORTED', 415);
+    }
+
+    const contentLength = Number(req.headers['content-length']);
+    const maxBytes = Math.max(
+      1,
+      Number(
+        process.env.SIGILLUM_VERIFIED_ORIGINALS_MAX_BYTES || 536870912,
+      ),
+    );
+    if (!Number.isSafeInteger(contentLength) ||
+        contentLength <= 0 ||
+        contentLength > maxBytes) {
+      fail('SUBTITLE_DERIVATION_CONTENT_LENGTH_INVALID', 411);
+    }
+
+    const consentRecordId = String(
+      url.searchParams.get('consentRecordId') || '',
+    );
+    const monetizationEnabled = strictBoolean(
+      url.searchParams.get('monetizationEnabled'),
+    );
+    const hcvpackSha256 = String(
+      url.searchParams.get('hcvpackSha256') || '',
+    ).toLowerCase();
+    const subtitleSha256 = String(
+      url.searchParams.get('subtitleSha256') || '',
+    ).toLowerCase();
+    const captionedSha256 = String(
+      req.headers['x-sigillum-captioned-sha256'] || '',
+    ).toLowerCase();
+
+    if (!consentRecordId ||
+        monetizationEnabled === null ||
+        !SHA256.test(hcvpackSha256) ||
+        !SHA256.test(subtitleSha256) ||
+        !SHA256.test(captionedSha256)) {
+      fail('SUBTITLE_DERIVATION_REQUEST_INVALID', 400);
+    }
+
+    const existing = await activeSubtitleReference(
+      hcvId,
+      captionedSha256,
+      subtitleSha256,
+    );
+    if (existing) {
+      return {
+        ok: true,
+        alreadyAvailable: true,
+        ...existing,
+        hcvpackSha256,
+      };
+    }
+
+    if (!verifySubtitleDerivationBindingSignature(
+      req,
+      original,
+      hcvId,
+      captionedSha256,
+      subtitleSha256,
+      hcvpackSha256,
+    )) {
+      fail('SUBTITLE_DERIVATION_BINDING_SIGNATURE_INVALID', 422);
+    }
+
+    const consent = (await pool.query(`
+      SELECT * FROM verified_originals_consents
+      WHERE record_id=$1
+        AND hcv_id=$2
+        AND account_id=$3
+        AND state='ACTIVE'
+    `, [
+      consentRecordId,
+      hcvId,
+      access.session.account_id,
+    ])).rows[0];
+    if (!consent ||
+        !consent.publication_consent ||
+        !consent.rights_confirmed) {
+      fail('ACTIVE_CREATOR_CONSENT_REQUIRED', 403);
+    }
+    if (monetizationEnabled && !consent.monetization_consent) {
+      fail('MONETIZATION_NOT_AUTHORIZED', 403);
+    }
+
+    const tmpRoot = String(
+      process.env.SIGILLUM_VERIFIED_ORIGINALS_TMP ||
+        path.join(os.tmpdir(), 'sigillum-verified-originals'),
+    );
+    await fs.promises.mkdir(tmpRoot, { recursive: true, mode: 0o700 });
+    const jobDir = await fs.promises.mkdtemp(
+      path.join(tmpRoot, 'subtitle-job-'),
+    );
+    const captionedPath = path.join(jobDir, 'captioned-source.mp4');
+    const outputPath = path.join(jobDir, 'reference-subtitled.mp4');
+
+    try {
+      const uploaded = await streamToFile(
+        req,
+        captionedPath,
+        contentLength,
+      );
+      if (uploaded.sha256 !== captionedSha256) {
+        fail('SUBTITLE_DERIVATION_SHA_MISMATCH', 422);
+      }
+
+      const derivation = await createTrustedSubtitleDerivative({
+        hcvId,
+        original,
+        captionedPath,
+        outputPath,
+        captionedSha256,
+        subtitleSha256,
+      });
+
+      const youtube = await youtubePublish({
+        hcvId,
+        filePath: outputPath,
+        referenceSha256: derivation.outputHash,
+        size: derivation.outputSize,
+        originalSha256: original.contentHash,
+        hcvpackSha256,
+        referenceRole: DERIVED_REFERENCE_ROLE,
+        subtitleSha256,
+      });
+
+      let publicationId;
+      try {
+        publicationId = await registerPublication({
+          hcvId,
+          consentRecordId,
+          original,
+          derivation,
+          youtube,
+          monetizationEnabled,
+          hcvpackSha256,
+          referenceRole: DERIVED_REFERENCE_ROLE,
+          sourceDerivationSha256: captionedSha256,
+          subtitleSha256,
+        });
+      } catch (error) {
+        try {
+          await deleteYoutubeVideo(youtube.accessToken, youtube.videoId);
+        } catch (_) {}
+        try {
+          await pool.query(`
+            UPDATE verified_originals_platform_receipts
+            SET processing_status='registration_failed',
+                visibility='unavailable',
+                verified_at=NOW()
+            WHERE receipt_id=$1
+          `, [youtube.receiptId]);
+        } catch (_) {}
+        throw error;
+      }
+
+      return {
+        ok: true,
+        alreadyAvailable: false,
+        publicationId,
+        hcvId,
+        platform: 'youtube',
+        publicUrl: youtube.publicUrl,
+        publicationStatus: 'PUBLISHED',
+        referenceRole: DERIVED_REFERENCE_ROLE,
+        originalContentSha256: original.contentHash,
+        sourceDerivationSha256: captionedSha256,
+        subtitleSha256,
+        referenceSha256: derivation.outputHash,
+        derivedFrom: original.contentHash,
+        derivationType: SUBTITLE_DERIVATION_OPERATION,
+        hcvpackSha256,
+        socialFileVerdict: 'NOT_VERIFIED',
+      };
+    } finally {
+      for (const item of [
+        outputPath + '.hcvderivation.json',
+        outputPath,
+        captionedPath,
+      ]) {
+        try {
+          await fs.promises.rm(item, { force: true });
+        } catch (_) {}
+      }
+      try {
+        await fs.promises.rmdir(jobDir);
+      } catch (_) {}
+    }
+  }
+
   async function attemptTakedowns(publications) {
     if (!publications.length) return 'COMPLETED';
     try {
@@ -2166,6 +2472,7 @@ function createVerifiedOriginalsProduction({
     const consentStatusMatch = /^\/api\/verified-originals\/consents\/(HCV-[A-F0-9]{16})$/.exec(url.pathname);
     const withdraw = /^\/api\/verified-originals\/consents\/(HCV-[A-F0-9]{16})\/withdraw$/.exec(url.pathname);
     const publish = /^\/api\/verified-originals\/publish\/(HCV-[A-F0-9]{16})$/.exec(url.pathname);
+    const publishSubtitle = /^\/api\/verified-originals\/publish-subtitle\/(HCV-[A-F0-9]{16})$/.exec(url.pathname);
     const page = /^\/originals\/(HCV-[A-F0-9]{16})$/.exec(url.pathname);
 
     if (req.method === 'GET' && publicLookup) {
@@ -2199,6 +2506,14 @@ function createVerifiedOriginalsProduction({
     }
     if (req.method === 'POST' && publish) {
       sendJson(res, 201, await publishOriginal(req, publish[1], url));
+      return true;
+    }
+    if (req.method === 'POST' && publishSubtitle) {
+      sendJson(
+        res,
+        201,
+        await publishSubtitleDerivative(req, publishSubtitle[1], url),
+      );
       return true;
     }
     if (req.method === 'GET' && page) {
