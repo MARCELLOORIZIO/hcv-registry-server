@@ -16,6 +16,10 @@ const YOUTUBE_CHANNEL_ID = /^UC[A-Za-z0-9_-]{22}$/;
 const DERIVATION_SCHEMA = 'SIGILLUM_TRUSTED_DERIVATION_V1';
 const DERIVATION_OPERATION = 'video_transcode_h264_aac_v1';
 const PHOTO_DERIVATION_OPERATION = 'photo_to_reference_video_v1';
+const SUBTITLE_DERIVATION_SCHEMA = 'SIGILLUM_SUBTITLE_DERIVATION_V1';
+const SUBTITLE_DERIVATION_OPERATION = 'subtitle_burn_in_reference_v1';
+const ORIGINAL_REFERENCE_ROLE = 'ORIGINAL_REFERENCE';
+const DERIVED_REFERENCE_ROLE = 'DERIVED_REFERENCE';
 const CAPTURE_PROVENANCE_TYPE = 'SIGILLUM_CAPTURE_PROVENANCE_BINDING';
 const CAPTURE_PROVENANCE_PIPELINE = 'HCV_CAPTURE_BINDING_V1';
 const DERIVATION_SIGNATURE_ALGORITHM = 'RSA-SHA256-PKCS1V15';
@@ -821,6 +825,12 @@ function createVerifiedOriginalsProduction({
       );
       ALTER TABLE verified_originals_publications
         ADD COLUMN IF NOT EXISTS hcvpack_sha256 TEXT NOT NULL DEFAULT '';
+      ALTER TABLE verified_originals_publications
+        ADD COLUMN IF NOT EXISTS reference_role TEXT NOT NULL DEFAULT 'ORIGINAL_REFERENCE';
+      ALTER TABLE verified_originals_publications
+        ADD COLUMN IF NOT EXISTS source_derivation_sha256 TEXT NOT NULL DEFAULT '';
+      ALTER TABLE verified_originals_publications
+        ADD COLUMN IF NOT EXISTS subtitle_sha256 TEXT NOT NULL DEFAULT '';
       CREATE INDEX IF NOT EXISTS verified_originals_publications_hcv_idx
         ON verified_originals_publications(hcv_id, published_at DESC);
 
@@ -995,10 +1005,12 @@ function createVerifiedOriginalsProduction({
       FROM verified_originals_publications p
       JOIN verified_originals_consents c ON c.record_id=p.consent_record_id
       JOIN verified_originals_platform_receipts r ON r.receipt_id=p.platform_receipt_id
-      WHERE p.hcv_id=$1 AND p.publication_status='PUBLISHED'
+      WHERE p.hcv_id=$1
+        AND p.publication_status='PUBLISHED'
+        AND p.reference_role=$2
       ORDER BY p.published_at DESC
       LIMIT 1
-    `, [hcvId])).rows[0];
+    `, [hcvId, ORIGINAL_REFERENCE_ROLE])).rows[0];
     if (!row ||
         row.consent_state !== 'ACTIVE' ||
         row.original_content_sha256 !== original.contentHash ||
@@ -1078,7 +1090,8 @@ function createVerifiedOriginalsProduction({
   async function publicHistory(hcvId) {
     const rows = (await pool.query(`
       SELECT publication_id,hcv_id,platform,publication_status,
-             created_at,published_at,revoked_at,unavailable_at
+             reference_role,derivation_type,source_derivation_sha256,
+             subtitle_sha256,created_at,published_at,revoked_at,unavailable_at
       FROM verified_originals_publications
       WHERE hcv_id=$1
       ORDER BY published_at DESC
@@ -1089,6 +1102,10 @@ function createVerifiedOriginalsProduction({
       hcvId: row.hcv_id,
       platform: row.platform,
       publicationStatus: row.publication_status,
+      referenceRole: row.reference_role,
+      derivationType: row.derivation_type,
+      sourceDerivationSha256: row.source_derivation_sha256 || null,
+      subtitleSha256: row.subtitle_sha256 || null,
       createdAt: row.created_at,
       publishedAt: row.published_at,
       revokedAt: row.revoked_at,
