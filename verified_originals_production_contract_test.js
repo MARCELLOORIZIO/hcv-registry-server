@@ -64,4 +64,26 @@ assert(feature.includes("statement.output?.referenceVisualFingerprint"));
 assert(feature.includes("validReferenceVisualFingerprintV3"));
 assert(feature.includes("REFERENCE_VISUAL_FINGERPRINT_ALGORITHM"));
 
+for (const token of [
+  "SUBTITLE_DERIVATION_SCHEMA",
+  "SUBTITLE_DERIVATION_OPERATION",
+  "ORIGINAL_REFERENCE_ROLE",
+  "DERIVED_REFERENCE_ROLE",
+  "publish-subtitle",
+  "SIGILLUM_SUBTITLE_DERIVATION_BINDING_V1",
+  "x-sigillum-subtitle-derivation-signature",
+  "source_derivation_sha256",
+  "subtitle_sha256",
+  "reference_role=$2",
+  "referenceRole: DERIVED_REFERENCE_ROLE",
+  "ORIGINAL_REFERENCE_REQUIRED",
+]) {
+  assert(
+    feature.includes(token),
+    'subtitle closed-chain invariant missing: ' + token,
+  );
+}
+assert(feature.includes("AND p.reference_role=$2"));
+assert(feature.includes("[hcvId, ORIGINAL_REFERENCE_ROLE]"));
+
 console.log('verified_originals_production_contract_test: PASS');
