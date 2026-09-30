@@ -788,6 +788,10 @@ function createVerifiedOriginalsProduction({
   };
 
   let takedownTimer = null;
+  let youtubeAccessTokenCache = '';
+  let youtubeAccessTokenExpiresAt = 0;
+  let youtubeChannelVerifiedId = '';
+  let youtubeChannelVerifiedUntil = 0;
 
   function verifyHcvpackBindingSignature(req, original, hcvId, hcvpackSha256) {
     if (String(req.headers['x-sigillum-hcvpack-binding-version'] || '') !== '1') {
@@ -1443,6 +1447,11 @@ function createVerifiedOriginalsProduction({
   }
 
   async function oauthAccessToken(config) {
+    const now = Date.now();
+    if (youtubeAccessTokenCache && youtubeAccessTokenExpiresAt > now + 60_000) {
+      return youtubeAccessTokenCache;
+    }
+
     let response;
     try {
       response = await fetchImpl('https://oauth2.googleapis.com/token', {
@@ -1462,10 +1471,24 @@ function createVerifiedOriginalsProduction({
     if (!response.ok || typeof payload.access_token !== 'string' || !payload.access_token) {
       fail('YOUTUBE_OAUTH_FAILED', 502);
     }
-    return payload.access_token;
+
+    const expiresInSeconds = Math.max(
+      120,
+      Math.min(3600, Number(payload.expires_in || 3600)),
+    );
+    youtubeAccessTokenCache = payload.access_token;
+    youtubeAccessTokenExpiresAt = now + expiresInSeconds * 1000;
+    youtubeChannelVerifiedUntil = 0;
+    return youtubeAccessTokenCache;
   }
 
   async function verifyYoutubeChannel(accessToken, expectedChannelId) {
+    const now = Date.now();
+    if (youtubeChannelVerifiedId === expectedChannelId &&
+        youtubeChannelVerifiedUntil > now) {
+      return;
+    }
+
     const response = await fetchImpl(
       'https://www.googleapis.com/youtube/v3/channels?part=id&mine=true',
       { headers: { authorization: 'Bearer ' + accessToken } },
@@ -1474,6 +1497,12 @@ function createVerifiedOriginalsProduction({
     if (!response.ok || !Array.isArray(payload.items) || payload.items.length !== 1 || payload.items[0]?.id !== expectedChannelId) {
       fail('YOUTUBE_CHANNEL_ID_MISMATCH', 502);
     }
+    youtubeChannelVerifiedId = expectedChannelId;
+    youtubeChannelVerifiedUntil =
+      now + Math.max(
+        60_000,
+        Number(process.env.YOUTUBE_CHANNEL_VERIFY_TTL_MS || 300_000),
+      );
   }
 
   async function startYoutubeUpload({
