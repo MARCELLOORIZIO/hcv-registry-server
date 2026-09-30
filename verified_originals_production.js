@@ -744,6 +744,48 @@ function createVerifiedOriginalsProduction({
     }
   }
 
+  function verifySubtitleDerivationBindingSignature(
+    req,
+    original,
+    hcvId,
+    captionedSha256,
+    subtitleSha256,
+    hcvpackSha256,
+  ) {
+    if (String(req.headers['x-sigillum-subtitle-binding-version'] || '') !== '1') {
+      return false;
+    }
+    const signature = String(
+      req.headers['x-sigillum-subtitle-derivation-signature'] || '',
+    );
+    if (!signature ||
+        !SHA256.test(captionedSha256) ||
+        !SHA256.test(subtitleSha256) ||
+        !SHA256.test(hcvpackSha256)) {
+      return false;
+    }
+    const publicKey = certificateRsaPublicKey(original.certificate);
+    if (!publicKey) return false;
+    const statement = [
+      'SIGILLUM_SUBTITLE_DERIVATION_BINDING_V1',
+      hcvId,
+      original.contentHash,
+      captionedSha256,
+      subtitleSha256,
+      hcvpackSha256,
+    ].join('|');
+    try {
+      return crypto.verify(
+        'RSA-SHA256',
+        Buffer.from(statement, 'utf8'),
+        publicKey,
+        Buffer.from(signature, 'base64'),
+      );
+    } catch (_) {
+      return false;
+    }
+  }
+
   function youtubeServiceConfigured() {
     return Boolean(
       process.env.YOUTUBE_CLIENT_ID &&
