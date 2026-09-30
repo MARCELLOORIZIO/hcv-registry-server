@@ -2576,7 +2576,11 @@ function createVerifiedOriginalsProduction({
     handle,
     publicAvailability,
     activeReference,
-    verifyDerivationManifest: args => verifyDerivationManifest({ ...args, verifyCertificateRaw }),
+    activeSubtitleReference,
+    verifyDerivationManifest: args =>
+      verifyDerivationManifest({ ...args, verifyCertificateRaw }),
+    verifySubtitleDerivationManifest: args =>
+      verifySubtitleDerivationManifest({ ...args, verifyCertificateRaw }),
   };
 }
 
@@ -2584,11 +2588,16 @@ module.exports = {
   CONSENT_VERSION,
   DERIVATION_OPERATION,
   PHOTO_DERIVATION_OPERATION,
+  SUBTITLE_DERIVATION_OPERATION,
+  SUBTITLE_DERIVATION_SCHEMA,
+  ORIGINAL_REFERENCE_ROLE,
+  DERIVED_REFERENCE_ROLE,
   DERIVATION_SCHEMA,
   YOUTUBE_SCOPE,
   canonicalYoutubeReference,
   createVerifiedOriginalsProduction,
   verifyDerivationManifest,
+  verifySubtitleDerivationManifest,
   referenceVisualFrameV3,
   referenceVisualFingerprintV3FromRaw,
   validReferenceVisualFingerprintV3,
