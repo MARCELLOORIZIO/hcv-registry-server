@@ -182,6 +182,7 @@ process.env.YOUTUBE_CHANNEL_ID = CHANNEL_ID;
 process.env.SIGILLUM_PUBLISHER_ID = 'SIGILLUM_TEST_PUBLISHER';
 process.env.YOUTUBE_PROCESSING_TIMEOUT_MS = '3000';
 process.env.YOUTUBE_PROCESSING_POLL_MS = '10';
+process.env.YOUTUBE_REFERENCE_STATUS_TTL_MS = '1000';
 process.env.SIGILLUM_VERIFIED_ORIGINALS_TMP = path.join(tmp, 'jobs');
 
 const pool = new Pool({
@@ -584,7 +585,23 @@ async function run() {
     assert.equal(commentsCheckCount,3);
     assert.equal(oauthTokenRequestCount,1);
     assert.equal(channelCheckCount,1);
+    assert.equal(liveVerification.json.cacheHit,false);
 
+    const cachedLiveVerification=await request(
+      base,'GET','/api/verified-originals/'+HCV_ID+'/verification-reference',
+    );
+    assert.equal(cachedLiveVerification.status,200,cachedLiveVerification.text);
+    assert.equal(
+      cachedLiveVerification.json.availability,
+      'REFERENCE_AVAILABLE',
+    );
+    assert.equal(cachedLiveVerification.json.cacheHit,true);
+    assert.equal(cachedLiveVerification.json.youtubeCheckMs,0);
+    assert.equal(commentsCheckCount,3);
+    assert.equal(oauthTokenRequestCount,1);
+    assert.equal(channelCheckCount,1);
+
+    await new Promise(resolve=>setTimeout(resolve,1100));
     forceYoutubeReferenceMissing = true;
     const missingLiveReference=await request(
       base,'GET','/api/verified-originals/'+HCV_ID+'/verification-reference',
@@ -597,6 +614,7 @@ async function run() {
     assert.equal(missingLiveReference.json.youtubeLive,false);
     assert.equal(missingLiveReference.json.referenceVisualFingerprint,null);
     assert.equal(missingLiveReference.json.processingStatus,'missing');
+    assert.equal(missingLiveReference.json.cacheHit,false);
     forceYoutubeReferenceMissing = false;
 
     const freeView=await request(base,'GET','/api/verified-originals/'+HCV_ID+'/view',{
