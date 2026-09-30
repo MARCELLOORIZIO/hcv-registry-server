@@ -69,3 +69,16 @@ Resume from this file and the app checkpoint. Do not re-design already locked de
 - Idempotent lookup reuses an existing active captioned reference only when captioned-video SHA-256 and SRT SHA-256 both match.
 - Backend validation GREEN at commit `a111f8ade851edb721056553c97f94f43ebe1c07`.
 - No Render deployment performed.
+
+
+## 2026-09-30 Live YouTube reference attestation and publication retry hardening
+
+- Added GET `/api/verified-originals/:hcvId/verification-reference`. The endpoint resolves only the active ORIGINAL_REFERENCE, re-authenticates the configured YouTube publisher, verifies the expected channel, checks the current YouTube video status and returns the signed V3 fingerprint only while the platform object is still usable.
+- Live-reference mode is `YOUTUBE_LIVE_ATTESTED_SIGNED_V3`. The endpoint does not expose the YouTube locator. Removed/out-of-band deleted YouTube objects resolve to REFERENCE_NOT_AVAILABLE instead of producing a server error.
+- Publication now verifies the comments state after the YouTube upload. The YouTube Data API still does not expose a supported per-video comments-off switch through videos.insert/update, so SIGILLUM does not claim to set it there. Instead the controlled channel must be configured comments-off in YouTube Studio; if the uploaded video does not actually report comments disabled, the backend deletes the candidate reference and fails closed with YOUTUBE_COMMENTS_MUST_BE_DISABLED.
+- YouTube OAuth access tokens are cached in-process until shortly before expiry and expected-channel verification is cached for a bounded TTL (default 5 minutes), avoiding redundant token/channel calls on every verification while preserving live per-reference status checks.
+- Trusted original and subtitle derivations are now retry-idempotent. If a deterministic output SHA-256 already has a stored trusted derivation, the server verifies the existing signed manifest and all parent/source/output/V3 bindings and reuses it; it does not generate a new nonce that would conflict after a temporary YouTube failure.
+- Integration coverage now exercises: comments-enabled rejection + cleanup, successful retry of the exact same original, cached OAuth/channel preflight, live-reference success, out-of-band missing YouTube reference, and no signed V3 disclosure while the live reference is unavailable.
+- Platform limitation recorded explicitly: the official YouTube Data API exposes video metadata/status operations but no supported endpoint for downloading the transcoded media bytes. No scraping/yt-dlp/undocumented extraction is used. The current compliant chain therefore attests the real YouTube object live and binds it to the RSA-signed V3 generated from the exact trusted derivative uploaded to that object. Direct fresh-transcode byte/frame comparison remains unavailable without a supported media-byte source.
+- Closed-chain backend validation GREEN at commit 79efb2923280d89a97d31620f6a8b79470ae4025: run 36700673428.
+- No Render deploy, release-branch merge/rebase or production credential change was performed.
