@@ -595,7 +595,7 @@ async function run() {
       'REFERENCE_NOT_AVAILABLE',
     );
     assert.equal(missingLiveReference.json.youtubeLive,false);
-    assert.equal(missingLiveReference.json.referenceVisualFingerprint,undefined);
+    assert.equal(missingLiveReference.json.referenceVisualFingerprint,null);
     assert.equal(missingLiveReference.json.processingStatus,'missing');
     forceYoutubeReferenceMissing = false;
 
