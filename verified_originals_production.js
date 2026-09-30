@@ -1282,7 +1282,15 @@ function createVerifiedOriginalsProduction({
     }
   }
 
-  async function startYoutubeUpload({ accessToken, hcvId, size, originalSha256, hcvpackSha256 }) {
+  async function startYoutubeUpload({
+    accessToken,
+    hcvId,
+    size,
+    originalSha256,
+    hcvpackSha256,
+    referenceRole = ORIGINAL_REFERENCE_ROLE,
+    subtitleSha256 = '',
+  }) {
     const endpoint = 'https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status';
     const response = await fetchImpl(endpoint, {
       method: 'POST',
@@ -1294,12 +1302,17 @@ function createVerifiedOriginalsProduction({
       },
       body: JSON.stringify({
         snippet: {
-          title: 'SIGILLUM ' + hcvId,
+          title: referenceRole === DERIVED_REFERENCE_ROLE
+            ? 'SIGILLUM ' + hcvId + ' SUBTITLED'
+            : 'SIGILLUM ' + hcvId,
           description: [
-            'SIGILLUM VERIFIED ORIGINAL',
+            referenceRole === DERIVED_REFERENCE_ROLE
+              ? 'SIGILLUM VERIFIED DERIVATION — SUBTITLED VIDEO'
+              : 'SIGILLUM VERIFIED ORIGINAL',
             'HCV-ID: ' + hcvId,
             'Original SHA-256: ' + originalSha256,
             'HCVPACK SHA-256: ' + hcvpackSha256,
+            ...(subtitleSha256 ? ['Subtitle SHA-256: ' + subtitleSha256] : []),
             'Registry: https://sigillum-hcv.com/originals/' + hcvId,
           ].join('\n'),
         },
@@ -1424,11 +1437,28 @@ function createVerifiedOriginalsProduction({
     return receiptId;
   }
 
-  async function youtubePublish({ hcvId, filePath, referenceSha256, size, originalSha256, hcvpackSha256 }) {
+  async function youtubePublish({
+    hcvId,
+    filePath,
+    referenceSha256,
+    size,
+    originalSha256,
+    hcvpackSha256,
+    referenceRole = ORIGINAL_REFERENCE_ROLE,
+    subtitleSha256 = '',
+  }) {
     const config = youtubeConfig();
     const accessToken = await oauthAccessToken(config);
     await verifyYoutubeChannel(accessToken, config.channelId);
-    const uploadUrl = await startYoutubeUpload({ accessToken, hcvId, size, originalSha256, hcvpackSha256 });
+    const uploadUrl = await startYoutubeUpload({
+      accessToken,
+      hcvId,
+      size,
+      originalSha256,
+      hcvpackSha256,
+      referenceRole,
+      subtitleSha256,
+    });
     const videoId = await uploadYoutubeFile({ accessToken, uploadUrl, filePath, size });
     let status;
     try {
@@ -1571,7 +1601,18 @@ function createVerifiedOriginalsProduction({
     return { manifest, outputHash, outputSize: output.length };
   }
 
-  async function registerPublication({ hcvId, consentRecordId, original, derivation, youtube, monetizationEnabled, hcvpackSha256 }) {
+  async function registerPublication({
+    hcvId,
+    consentRecordId,
+    original,
+    derivation,
+    youtube,
+    monetizationEnabled,
+    hcvpackSha256,
+    referenceRole = ORIGINAL_REFERENCE_ROLE,
+    sourceDerivationSha256 = '',
+    subtitleSha256 = '',
+  }) {
     const client = await pool.connect();
     const publicationId = crypto.randomUUID();
     try {
@@ -1593,8 +1634,9 @@ function createVerifiedOriginalsProduction({
           publication_id,hcv_id,platform,platform_post_id,public_url,
           reference_sha256,original_content_sha256,derived_from,derivation_type,
           derivation_manifest_sha256,platform_receipt_id,created_at,publication_status,
-          consent_record_id,consent_version,monetization_consent,published_by,hcvpack_sha256
-        ) VALUES($1,$2,'youtube',$3,$4,$5,$6,$6,$7,$8,$9,$10,'PUBLISHED',$11,$12,$13,$14,$15)
+          consent_record_id,consent_version,monetization_consent,published_by,hcvpack_sha256,
+          reference_role,source_derivation_sha256,subtitle_sha256
+        ) VALUES($1,$2,'youtube',$3,$4,$5,$6,$6,$7,$8,$9,$10,'PUBLISHED',$11,$12,$13,$14,$15,$16,$17,$18)
       `, [
         publicationId,
         hcvId,
@@ -1611,6 +1653,9 @@ function createVerifiedOriginalsProduction({
         monetizationEnabled,
         String(process.env.SIGILLUM_PUBLISHER_ID || 'SIGILLUM_SERVER_V1'),
         hcvpackSha256,
+        referenceRole,
+        sourceDerivationSha256,
+        subtitleSha256,
       ]);
       await audit({
         hcvId,
@@ -1623,6 +1668,9 @@ function createVerifiedOriginalsProduction({
           platformVisibility: youtube.status.privacyStatus,
           workerVersion: 'verified_originals_production_v2',
           hcvpackSha256,
+          referenceRole,
+          sourceDerivationSha256: sourceDerivationSha256 || null,
+          subtitleSha256: subtitleSha256 || null,
         },
         client,
       });
