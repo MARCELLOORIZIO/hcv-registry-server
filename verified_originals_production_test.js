@@ -182,6 +182,7 @@ process.env.YOUTUBE_CHANNEL_ID = CHANNEL_ID;
 process.env.SIGILLUM_PUBLISHER_ID = 'SIGILLUM_TEST_PUBLISHER';
 process.env.YOUTUBE_PROCESSING_TIMEOUT_MS = '3000';
 process.env.YOUTUBE_PROCESSING_POLL_MS = '10';
+process.env.YOUTUBE_REFERENCE_STATUS_TTL_MS = '1000';
 process.env.SIGILLUM_VERIFIED_ORIGINALS_TMP = path.join(tmp, 'jobs');
 
 const pool = new Pool({
@@ -208,8 +209,14 @@ function response(status, payload = {}, headers = {}) {
 
 let uploadSessionCount = 0;
 let uploadPutCount = 0;
+let oauthTokenRequestCount = 0;
+let channelCheckCount = 0;
 let deleteCount = 0;
 let deleteFailuresRemaining = 0;
+let commentsCheckCount = 0;
+let commentsStatusFailuresRemaining = 1;
+let commentsEnabledChecksRemaining = 1;
+let forceYoutubeReferenceMissing = false;
 let uploadMetadata = null;
 let uploadedBytes = null;
 const uploadUrl =
@@ -218,12 +225,14 @@ const uploadUrl =
 async function fakeFetch(url, options = {}) {
   const target = String(url);
   if (target === 'https://oauth2.googleapis.com/token') {
+    oauthTokenRequestCount += 1;
     const body = new URLSearchParams(options.body);
     assert.equal(body.get('client_secret'),'server-secret');
     assert.equal(body.get('grant_type'),'refresh_token');
     return response(200,{access_token:'access-token'});
   }
   if (target.includes('/youtube/v3/channels?part=id&mine=true')) {
+    channelCheckCount += 1;
     return response(200,{items:[{id:CHANNEL_ID}]});
   }
   if (target.includes('uploadType=resumable') && options.method === 'POST') {
@@ -240,6 +249,9 @@ async function fakeFetch(url, options = {}) {
     return response(201,{id});
   }
   if (target.includes('/youtube/v3/videos?part=status,processingDetails')) {
+    if (forceYoutubeReferenceMissing) {
+      return response(200,{items:[]});
+    }
     const id = target.includes(encodeURIComponent(PHOTO_VIDEO_ID))
       ? PHOTO_VIDEO_ID
       : VIDEO_ID;
@@ -250,6 +262,22 @@ async function fakeFetch(url, options = {}) {
         status:{privacyStatus:'unlisted',uploadStatus:'processed'},
         processingDetails:{processingStatus:'succeeded'},
       }],
+    });
+  }
+  if (target.includes('/youtube/v3/commentThreads?part=id&maxResults=1&videoId=')) {
+    commentsCheckCount += 1;
+    if (commentsStatusFailuresRemaining > 0) {
+      commentsStatusFailuresRemaining -= 1;
+      return response(500,{error:{message:'temporary comment status failure'}});
+    }
+    if (commentsEnabledChecksRemaining > 0) {
+      commentsEnabledChecksRemaining -= 1;
+      return response(200,{items:[]});
+    }
+    return response(403,{
+      error:{
+        errors:[{reason:'commentsDisabled'}],
+      },
     });
   }
   if (target.includes('/youtube/v3/videos?id=') && options.method === 'DELETE') {
@@ -498,6 +526,41 @@ async function run() {
     const consentId=consent.json.recordId;
     assert.ok(consentId);
 
+    const commentsStatusFailed=await request(
+      base,'POST',
+      '/api/verified-originals/publish/'+HCV_ID+
+        '?consentRecordId='+encodeURIComponent(consentId)+
+        '&monetizationEnabled=false'+
+        '&hcvpackSha256='+HCVPACK_HASH,
+      {bearer:'owner-token',bytes:originalBytes,headers:packageHeaders(HCV_ID,originalHash,HCVPACK_HASH)},
+    );
+    assert.equal(commentsStatusFailed.status,502,commentsStatusFailed.text);
+    assert.equal(
+      commentsStatusFailed.json.error,
+      'YOUTUBE_COMMENTS_STATUS_FAILED',
+    );
+    assert.equal(deleteCount,1);
+    assert.equal(commentsCheckCount,1);
+
+    const commentsRejected=await request(
+      base,'POST',
+      '/api/verified-originals/publish/'+HCV_ID+
+        '?consentRecordId='+encodeURIComponent(consentId)+
+        '&monetizationEnabled=false'+
+        '&hcvpackSha256='+HCVPACK_HASH,
+      {bearer:'owner-token',bytes:originalBytes,headers:packageHeaders(HCV_ID,originalHash,HCVPACK_HASH)},
+    );
+    assert.equal(commentsRejected.status,502,commentsRejected.text);
+    assert.equal(
+      commentsRejected.json.error,
+      'YOUTUBE_COMMENTS_MUST_BE_DISABLED',
+    );
+    assert.equal(deleteCount,2);
+    assert.equal(commentsCheckCount,2);
+
+    // Retrying the exact same original after platform-policy failures must
+    // reuse the already signed trusted derivation rather than conflict on a
+    // fresh nonce.
     const published=await request(
       base,'POST',
       '/api/verified-originals/publish/'+HCV_ID+
@@ -509,10 +572,11 @@ async function run() {
     assert.equal(published.status,201,published.text);
     assert.equal(published.json.platform,'youtube');
     assert.equal(published.json.publicationStatus,'PUBLISHED');
-    assert.equal(uploadSessionCount,1);
-    assert.equal(uploadPutCount,1);
+    assert.equal(uploadSessionCount,3);
+    assert.equal(uploadPutCount,3);
     assert.ok(uploadedBytes && uploadedBytes.length > 0);
     assert.equal(uploadMetadata.status.privacyStatus,'unlisted');
+    assert.equal(commentsCheckCount,3);
     assert.equal(uploadMetadata.snippet.title,'SIGILLUM '+HCV_ID);
     assert.ok(uploadMetadata.snippet.description.includes('Original SHA-256: '+originalHash));
     assert.ok(uploadMetadata.snippet.description.includes('HCVPACK SHA-256: '+HCVPACK_HASH));
@@ -524,6 +588,55 @@ async function run() {
     assert.equal(freeLookup.json.viewAccess,'SUBSCRIPTION_REQUIRED');
     assert.equal(freeLookup.json.publicUrl,undefined);
     assert.equal(freeLookup.json.platformPostId,undefined);
+
+    const liveVerification=await request(
+      base,'GET','/api/verified-originals/'+HCV_ID+'/verification-reference',
+    );
+    assert.equal(liveVerification.status,200,liveVerification.text);
+    assert.equal(liveVerification.json.availability,'REFERENCE_AVAILABLE');
+    assert.equal(liveVerification.json.youtubeLive,true);
+    assert.equal(liveVerification.json.commentsDisabled,true);
+    assert.equal(
+      liveVerification.json.comparisonMode,
+      'YOUTUBE_LIVE_ATTESTED_SIGNED_V3',
+    );
+    assert.ok(liveVerification.json.referenceVisualFingerprint);
+    assert.ok(Number.isInteger(liveVerification.json.youtubeCheckMs));
+    assert.ok(Number.isInteger(liveVerification.json.totalMs));
+    assert.equal(commentsCheckCount,4);
+    assert.equal(oauthTokenRequestCount,1);
+    assert.equal(channelCheckCount,1);
+    assert.equal(liveVerification.json.cacheHit,false);
+
+    const cachedLiveVerification=await request(
+      base,'GET','/api/verified-originals/'+HCV_ID+'/verification-reference',
+    );
+    assert.equal(cachedLiveVerification.status,200,cachedLiveVerification.text);
+    assert.equal(
+      cachedLiveVerification.json.availability,
+      'REFERENCE_AVAILABLE',
+    );
+    assert.equal(cachedLiveVerification.json.cacheHit,true);
+    assert.equal(cachedLiveVerification.json.youtubeCheckMs,0);
+    assert.equal(commentsCheckCount,4);
+    assert.equal(oauthTokenRequestCount,1);
+    assert.equal(channelCheckCount,1);
+
+    await new Promise(resolve=>setTimeout(resolve,1100));
+    forceYoutubeReferenceMissing = true;
+    const missingLiveReference=await request(
+      base,'GET','/api/verified-originals/'+HCV_ID+'/verification-reference',
+    );
+    assert.equal(missingLiveReference.status,200,missingLiveReference.text);
+    assert.equal(
+      missingLiveReference.json.availability,
+      'REFERENCE_NOT_AVAILABLE',
+    );
+    assert.equal(missingLiveReference.json.youtubeLive,false);
+    assert.equal(missingLiveReference.json.referenceVisualFingerprint,null);
+    assert.equal(missingLiveReference.json.processingStatus,'missing');
+    assert.equal(missingLiveReference.json.cacheHit,false);
+    forceYoutubeReferenceMissing = false;
 
     const freeView=await request(base,'GET','/api/verified-originals/'+HCV_ID+'/view',{
       bearer:'free-token',
@@ -545,7 +658,7 @@ async function run() {
     assert.equal(withdrawal.status,200,withdrawal.text);
     assert.equal(withdrawal.json.referenceAvailable,false);
     assert.equal(withdrawal.json.platformTakedown,'COMPLETED');
-    assert.equal(deleteCount,1);
+    assert.equal(deleteCount,3);
 
     const after=await request(base,'GET','/api/verified-originals/'+HCV_ID);
     assert.equal(after.status,200);
@@ -607,6 +720,7 @@ async function run() {
     );
     assert.equal(photoPublished.status,201,photoPublished.text);
     assert.equal(photoPublished.json.platform,'youtube');
+    assert.equal(commentsCheckCount,5);
     assert.equal(
       photoPublished.json.derivationType,
       'photo_to_reference_video_v1',
@@ -653,7 +767,7 @@ async function run() {
     );
     assert.equal(photoWithdrawalRetry.status,200,photoWithdrawalRetry.text);
     assert.equal(photoWithdrawalRetry.json.platformTakedown,'COMPLETED');
-    assert.equal(deleteCount,2);
+    assert.equal(deleteCount,4);
 
     console.log(
       'verified_originals_production_test: PASS — PostgreSQL, video/photo exact originals, unlisted YouTube, free/paid, withdrawal, tamper stop',

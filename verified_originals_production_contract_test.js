@@ -36,6 +36,14 @@ for (const token of [
   'X-Sigillum-Hcvpack-Signature'.toLowerCase(),
   'retryPendingTakedowns',
   "processing_status='takedown_pending'",
+  'youtubeCommentsDisabled',
+  'YOUTUBE_COMMENTS_MUST_BE_DISABLED',
+  'verification-reference',
+  'YOUTUBE_LIVE_ATTESTED_SIGNED_V3',
+  'youtubeAccessTokenCache',
+  'youtubeChannelVerifiedUntil',
+  'YOUTUBE_COMMENTS_STATUS_FAILED',
+  'existingDerivation',
 ]) {
   assert(feature.includes(token), 'feature missing invariant: '+token);
 }
@@ -56,5 +64,42 @@ const lookupEnd = feature.indexOf('async function publicHistory', lookupStart);
 const lookup = feature.slice(lookupStart, lookupEnd);
 assert(!lookup.includes('publicUrl'));
 assert(!lookup.includes('platformPostId'));
+
+const verificationStart = feature.indexOf('async function verificationReference');
+const verificationEnd = feature.indexOf('async function publicHistory', verificationStart);
+const verification = feature.slice(verificationStart, verificationEnd);
+assert(verification.includes('liveYoutubeReferenceStatus'));
+assert(verification.includes("comparisonMode: 'YOUTUBE_LIVE_ATTESTED_SIGNED_V3'"));
+assert(verification.includes('referenceVisualFingerprint'));
+assert(!verification.includes('publicUrl'));
+
+assert(feature.includes("referenceVisualFingerprint = await buildReferenceVisualFingerprintV3"));
+assert(feature.includes("referenceVisualFingerprint,"));
+assert(feature.includes("referenceVisualFingerprint: reference.referenceVisualFingerprint"));
+assert(feature.includes("statement.output?.referenceVisualFingerprint"));
+assert(feature.includes("validReferenceVisualFingerprintV3"));
+assert(feature.includes("REFERENCE_VISUAL_FINGERPRINT_ALGORITHM"));
+
+for (const token of [
+  "SUBTITLE_DERIVATION_SCHEMA",
+  "SUBTITLE_DERIVATION_OPERATION",
+  "ORIGINAL_REFERENCE_ROLE",
+  "DERIVED_REFERENCE_ROLE",
+  "publish-subtitle",
+  "SIGILLUM_SUBTITLE_DERIVATION_BINDING_V1",
+  "x-sigillum-subtitle-derivation-signature",
+  "source_derivation_sha256",
+  "subtitle_sha256",
+  "reference_role=$2",
+  "referenceRole: DERIVED_REFERENCE_ROLE",
+  "ORIGINAL_REFERENCE_REQUIRED",
+]) {
+  assert(
+    feature.includes(token),
+    'subtitle closed-chain invariant missing: ' + token,
+  );
+}
+assert(feature.includes("AND p.reference_role=$2"));
+assert(feature.includes("[hcvId, ORIGINAL_REFERENCE_ROLE]"));
 
 console.log('verified_originals_production_contract_test: PASS');

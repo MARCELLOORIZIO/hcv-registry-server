@@ -16,11 +16,38 @@ const YOUTUBE_CHANNEL_ID = /^UC[A-Za-z0-9_-]{22}$/;
 const DERIVATION_SCHEMA = 'SIGILLUM_TRUSTED_DERIVATION_V1';
 const DERIVATION_OPERATION = 'video_transcode_h264_aac_v1';
 const PHOTO_DERIVATION_OPERATION = 'photo_to_reference_video_v1';
+const SUBTITLE_DERIVATION_SCHEMA = 'SIGILLUM_SUBTITLE_DERIVATION_V1';
+const SUBTITLE_DERIVATION_OPERATION = 'subtitle_burn_in_reference_v1';
+const ORIGINAL_REFERENCE_ROLE = 'ORIGINAL_REFERENCE';
+const DERIVED_REFERENCE_ROLE = 'DERIVED_REFERENCE';
 const CAPTURE_PROVENANCE_TYPE = 'SIGILLUM_CAPTURE_PROVENANCE_BINDING';
 const CAPTURE_PROVENANCE_PIPELINE = 'HCV_CAPTURE_BINDING_V1';
 const DERIVATION_SIGNATURE_ALGORITHM = 'RSA-SHA256-PKCS1V15';
 const CONSENT_VERSION = 'SIGILLUM_VERIFIED_ORIGINALS_CONSENT_2026-09-25_V2';
 const YOUTUBE_SCOPE = 'https://www.googleapis.com/auth/youtube.force-ssl';
+const REFERENCE_VISUAL_FINGERPRINT_TYPE = 'SIGILLUM_REFERENCE_VISUAL_FINGERPRINT';
+const REFERENCE_VISUAL_FINGERPRINT_VERSION = 3;
+const REFERENCE_VISUAL_FINGERPRINT_ALGORITHM = 'SIGILLUM_LOCAL_RGB_GRID_V3';
+const REFERENCE_VISUAL_WIDTH = 128;
+const REFERENCE_VISUAL_HEIGHT = 72;
+const REFERENCE_VISUAL_GRID_COLUMNS = 16;
+const REFERENCE_VISUAL_GRID_ROWS = 9;
+const REFERENCE_VISUAL_FEATURE_BYTES_PER_TILE = 6;
+const REFERENCE_VISUAL_RGB_CHANNELS = 3;
+const REFERENCE_VISUAL_VIDEO_FPS = 2;
+const REFERENCE_VISUAL_MAX_VIDEO_FRAMES = 120;
+const REFERENCE_VISUAL_FRAME_BYTES =
+  REFERENCE_VISUAL_WIDTH *
+  REFERENCE_VISUAL_HEIGHT *
+  REFERENCE_VISUAL_RGB_CHANNELS;
+const REFERENCE_VISUAL_TILE_WIDTH =
+  REFERENCE_VISUAL_WIDTH / REFERENCE_VISUAL_GRID_COLUMNS;
+const REFERENCE_VISUAL_TILE_HEIGHT =
+  REFERENCE_VISUAL_HEIGHT / REFERENCE_VISUAL_GRID_ROWS;
+const REFERENCE_VISUAL_MAX_MEAN_LUMA_DIFFERENCE = 6.0;
+const REFERENCE_VISUAL_MAX_SINGLE_TILE_LUMA_DIFFERENCE = 18.0;
+const REFERENCE_VISUAL_MAX_MEAN_CHROMA_DIFFERENCE = 8.0;
+const REFERENCE_VISUAL_MAX_MEAN_RGB_DIFFERENCE = 8.0;
 
 function hashBytes(value) {
   return crypto.createHash('sha256').update(value).digest('hex');
@@ -28,6 +55,494 @@ function hashBytes(value) {
 
 function hashString(value) {
   return crypto.createHash('sha256').update(String(value), 'utf8').digest('hex');
+}
+
+function referenceVisualLumaV3(red, green, blue) {
+  return Math.round(0.2126 * red + 0.7152 * green + 0.0722 * blue);
+}
+
+function referenceVisualFrameV3(frame) {
+  if (!Buffer.isBuffer(frame) || frame.length !== REFERENCE_VISUAL_FRAME_BYTES) {
+    throw new Error('REFERENCE_VISUAL_V3_FRAME_SIZE_INVALID');
+  }
+  const local = Buffer.alloc(
+    REFERENCE_VISUAL_GRID_COLUMNS *
+      REFERENCE_VISUAL_GRID_ROWS *
+      REFERENCE_VISUAL_FEATURE_BYTES_PER_TILE,
+  );
+  let out = 0;
+
+  for (let ty = 0; ty < REFERENCE_VISUAL_GRID_ROWS; ty += 1) {
+    for (let tx = 0; tx < REFERENCE_VISUAL_GRID_COLUMNS; tx += 1) {
+      let sumLuma = 0;
+      let sumRed = 0;
+      let sumGreen = 0;
+      let sumBlue = 0;
+      let minimumLuma = 255;
+      let maximumLuma = 0;
+      let gradient = 0;
+      let gradientCount = 0;
+      const x0 = tx * REFERENCE_VISUAL_TILE_WIDTH;
+      const y0 = ty * REFERENCE_VISUAL_TILE_HEIGHT;
+
+      for (let y = y0; y < y0 + REFERENCE_VISUAL_TILE_HEIGHT; y += 1) {
+        for (let x = x0; x < x0 + REFERENCE_VISUAL_TILE_WIDTH; x += 1) {
+          const offset =
+            (y * REFERENCE_VISUAL_WIDTH + x) * REFERENCE_VISUAL_RGB_CHANNELS;
+          const red = frame[offset];
+          const green = frame[offset + 1];
+          const blue = frame[offset + 2];
+          const value = referenceVisualLumaV3(red, green, blue);
+
+          sumLuma += value;
+          sumRed += red;
+          sumGreen += green;
+          sumBlue += blue;
+          minimumLuma = Math.min(minimumLuma, value);
+          maximumLuma = Math.max(maximumLuma, value);
+
+          if (x + 1 < x0 + REFERENCE_VISUAL_TILE_WIDTH) {
+            const right = offset + REFERENCE_VISUAL_RGB_CHANNELS;
+            gradient += Math.abs(
+              value -
+                referenceVisualLumaV3(
+                  frame[right],
+                  frame[right + 1],
+                  frame[right + 2],
+                ),
+            );
+            gradientCount += 1;
+          }
+          if (y + 1 < y0 + REFERENCE_VISUAL_TILE_HEIGHT) {
+            const below =
+              ((y + 1) * REFERENCE_VISUAL_WIDTH + x) *
+              REFERENCE_VISUAL_RGB_CHANNELS;
+            gradient += Math.abs(
+              value -
+                referenceVisualLumaV3(
+                  frame[below],
+                  frame[below + 1],
+                  frame[below + 2],
+                ),
+            );
+            gradientCount += 1;
+          }
+        }
+      }
+
+      const pixels =
+        REFERENCE_VISUAL_TILE_WIDTH * REFERENCE_VISUAL_TILE_HEIGHT;
+      local[out++] = Math.round(sumLuma / pixels);
+      local[out++] = maximumLuma - minimumLuma;
+      local[out++] = gradientCount ? Math.round(gradient / gradientCount) : 0;
+      local[out++] = Math.round(sumRed / pixels);
+      local[out++] = Math.round(sumGreen / pixels);
+      local[out++] = Math.round(sumBlue / pixels);
+    }
+  }
+
+  const macroMeans = [];
+  for (let my = 0; my < 8; my += 1) {
+    for (let mx = 0; mx < 8; mx += 1) {
+      let sum = 0;
+      for (let y = my * 9; y < (my + 1) * 9; y += 1) {
+        for (let x = mx * 16; x < (mx + 1) * 16; x += 1) {
+          const offset =
+            (y * REFERENCE_VISUAL_WIDTH + x) * REFERENCE_VISUAL_RGB_CHANNELS;
+          sum += referenceVisualLumaV3(
+            frame[offset],
+            frame[offset + 1],
+            frame[offset + 2],
+          );
+        }
+      }
+      macroMeans.push(Math.round(sum / (16 * 9)));
+    }
+  }
+
+  const globalMean =
+    macroMeans.reduce((total, value) => total + value, 0) / macroMeans.length;
+  let bits = 0n;
+  for (const value of macroMeans) {
+    bits = (bits << 1n) | (value >= globalMean ? 1n : 0n);
+  }
+
+  return {
+    globalHash: bits.toString(16).padStart(16, '0'),
+    localFeatures: local.toString('base64'),
+  };
+}
+
+function referenceVisualFingerprintV3FromRaw(raw, mediaType) {
+  if (!Buffer.isBuffer(raw) ||
+      !raw.length ||
+      raw.length % REFERENCE_VISUAL_FRAME_BYTES !== 0 ||
+      (mediaType !== 'photo' && mediaType !== 'video')) {
+    throw new Error('REFERENCE_VISUAL_V3_RAW_INVALID');
+  }
+  const rawFrameCount = raw.length / REFERENCE_VISUAL_FRAME_BYTES;
+  const frameCount = mediaType === 'photo'
+    ? 1
+    : Math.min(rawFrameCount, REFERENCE_VISUAL_MAX_VIDEO_FRAMES);
+  const frames = [];
+  for (let index = 0; index < frameCount; index += 1) {
+    const start = index * REFERENCE_VISUAL_FRAME_BYTES;
+    frames.push(
+      referenceVisualFrameV3(
+        raw.subarray(start, start + REFERENCE_VISUAL_FRAME_BYTES),
+      ),
+    );
+  }
+  return {
+    type: REFERENCE_VISUAL_FINGERPRINT_TYPE,
+    version: REFERENCE_VISUAL_FINGERPRINT_VERSION,
+    algorithm: REFERENCE_VISUAL_FINGERPRINT_ALGORITHM,
+    mediaType,
+    width: REFERENCE_VISUAL_WIDTH,
+    height: REFERENCE_VISUAL_HEIGHT,
+    gridColumns: REFERENCE_VISUAL_GRID_COLUMNS,
+    gridRows: REFERENCE_VISUAL_GRID_ROWS,
+    featureBytesPerTile: REFERENCE_VISUAL_FEATURE_BYTES_PER_TILE,
+    samplingFps: mediaType === 'video' ? REFERENCE_VISUAL_VIDEO_FPS : 0,
+    maxFrames: mediaType === 'video' ? REFERENCE_VISUAL_MAX_VIDEO_FRAMES : 1,
+    frameCount: frames.length,
+    frames,
+  };
+}
+
+function validReferenceVisualFingerprintV3(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw) ||
+      raw.type !== REFERENCE_VISUAL_FINGERPRINT_TYPE ||
+      raw.version !== REFERENCE_VISUAL_FINGERPRINT_VERSION ||
+      raw.algorithm !== REFERENCE_VISUAL_FINGERPRINT_ALGORITHM ||
+      raw.width !== REFERENCE_VISUAL_WIDTH ||
+      raw.height !== REFERENCE_VISUAL_HEIGHT ||
+      raw.gridColumns !== REFERENCE_VISUAL_GRID_COLUMNS ||
+      raw.gridRows !== REFERENCE_VISUAL_GRID_ROWS ||
+      raw.featureBytesPerTile !== REFERENCE_VISUAL_FEATURE_BYTES_PER_TILE ||
+      (raw.mediaType !== 'photo' && raw.mediaType !== 'video') ||
+      !Array.isArray(raw.frames) ||
+      !raw.frames.length ||
+      raw.frameCount !== raw.frames.length ||
+      raw.frames.length > REFERENCE_VISUAL_MAX_VIDEO_FRAMES) {
+    return false;
+  }
+  if (raw.mediaType === 'photo' && raw.frames.length !== 1) return false;
+  const expectedFeatureBytes =
+    REFERENCE_VISUAL_GRID_COLUMNS *
+    REFERENCE_VISUAL_GRID_ROWS *
+    REFERENCE_VISUAL_FEATURE_BYTES_PER_TILE;
+  return raw.frames.every(frame => {
+    if (!frame || typeof frame !== 'object' ||
+        !/^[a-f0-9]{16}$/.test(String(frame.globalHash || ''))) {
+      return false;
+    }
+    try {
+      return Buffer.from(
+        String(frame.localFeatures || ''),
+        'base64',
+      ).length === expectedFeatureBytes;
+    } catch (_) {
+      return false;
+    }
+  });
+}
+
+function referenceVisualHexDistanceV3(left, right) {
+  const a = String(left || '');
+  const b = String(right || '');
+  if (a.length !== b.length) return 9999;
+  let distance = 0;
+  for (let index = 0; index < a.length; index += 1) {
+    const av = Number.parseInt(a[index], 16);
+    const bv = Number.parseInt(b[index], 16);
+    if (!Number.isInteger(av) || !Number.isInteger(bv)) return 9999;
+    let diff = av ^ bv;
+    while (diff !== 0) {
+      distance += diff & 1;
+      diff >>= 1;
+    }
+  }
+  return distance;
+}
+
+function compareReferenceVisualFrameV3(expected, current) {
+  const globalDistance = referenceVisualHexDistanceV3(
+    expected?.globalHash,
+    current?.globalHash,
+  );
+  if (globalDistance > 18) {
+    return { comparable: false, tampered: false };
+  }
+
+  let left;
+  let right;
+  try {
+    left = Buffer.from(String(expected?.localFeatures || ''), 'base64');
+    right = Buffer.from(String(current?.localFeatures || ''), 'base64');
+  } catch (_) {
+    return { comparable: false, tampered: false };
+  }
+
+  const expectedLength =
+    REFERENCE_VISUAL_GRID_COLUMNS *
+    REFERENCE_VISUAL_GRID_ROWS *
+    REFERENCE_VISUAL_FEATURE_BYTES_PER_TILE;
+  if (left.length !== right.length || left.length !== expectedLength) {
+    return { comparable: false, tampered: false };
+  }
+
+  let totalMeanDifference = 0;
+  let totalLumaDifference = 0;
+  let maximumLumaDifference = 0;
+  let totalChromaDifference = 0;
+  let totalRgbDifference = 0;
+  let severeCount = 0;
+  const moderate = new Set();
+  const tileCount = REFERENCE_VISUAL_GRID_COLUMNS * REFERENCE_VISUAL_GRID_ROWS;
+
+  for (let tile = 0; tile < tileCount; tile += 1) {
+    const offset = tile * REFERENCE_VISUAL_FEATURE_BYTES_PER_TILE;
+    const expectedMean = left[offset];
+    const expectedRange = left[offset + 1];
+    const expectedEdge = left[offset + 2];
+    const currentMean = right[offset];
+    const currentRange = right[offset + 1];
+    const currentEdge = right[offset + 2];
+
+    const meanDifference = Math.abs(expectedMean - currentMean);
+    const rangeDifference = Math.abs(expectedRange - currentRange);
+    const edgeDifference = Math.abs(expectedEdge - currentEdge);
+    totalMeanDifference += meanDifference;
+
+    const expectedSmooth = expectedRange <= 42 && expectedEdge <= 16;
+    const currentSmooth = currentRange <= 42 && currentEdge <= 16;
+    const smoothToStructured = expectedSmooth &&
+      (currentRange - expectedRange >= 30 ||
+       currentEdge - expectedEdge >= 14);
+    const structuredToSmooth = currentSmooth &&
+      (expectedRange - currentRange >= 30 ||
+       expectedEdge - currentEdge >= 14);
+    const severe = meanDifference >= 24 ||
+      smoothToStructured ||
+      structuredToSmooth ||
+      (rangeDifference >= 44 && edgeDifference >= 12);
+    const isModerate = meanDifference >= 11 &&
+      (rangeDifference >= 14 || edgeDifference >= 8);
+
+    if (severe) severeCount += 1;
+    if (isModerate) moderate.add(tile);
+
+    const expectedRed = left[offset + 3];
+    const expectedGreen = left[offset + 4];
+    const expectedBlue = left[offset + 5];
+    const currentRed = right[offset + 3];
+    const currentGreen = right[offset + 4];
+    const currentBlue = right[offset + 5];
+
+    const expectedLuma =
+      0.2126 * expectedRed +
+      0.7152 * expectedGreen +
+      0.0722 * expectedBlue;
+    const currentLuma =
+      0.2126 * currentRed +
+      0.7152 * currentGreen +
+      0.0722 * currentBlue;
+    const lumaDifference = Math.abs(expectedLuma - currentLuma);
+    totalLumaDifference += lumaDifference;
+    maximumLumaDifference = Math.max(
+      maximumLumaDifference,
+      lumaDifference,
+    );
+
+    const expectedChroma =
+      Math.max(expectedRed, expectedGreen, expectedBlue) -
+      Math.min(expectedRed, expectedGreen, expectedBlue);
+    const currentChroma =
+      Math.max(currentRed, currentGreen, currentBlue) -
+      Math.min(currentRed, currentGreen, currentBlue);
+    totalChromaDifference += Math.abs(expectedChroma - currentChroma);
+
+    totalRgbDifference +=
+      Math.abs(expectedRed - currentRed) +
+      Math.abs(expectedGreen - currentGreen) +
+      Math.abs(expectedBlue - currentBlue);
+  }
+
+  const meanResidual = totalMeanDifference / tileCount;
+  const meanLumaDifference = totalLumaDifference / tileCount;
+  const meanChromaDifference = totalChromaDifference / tileCount;
+  const meanRgbDifference = totalRgbDifference / (tileCount * 3);
+
+  const tonalOrColourTamper =
+    meanLumaDifference > REFERENCE_VISUAL_MAX_MEAN_LUMA_DIFFERENCE ||
+    maximumLumaDifference >
+      REFERENCE_VISUAL_MAX_SINGLE_TILE_LUMA_DIFFERENCE ||
+    meanChromaDifference > REFERENCE_VISUAL_MAX_MEAN_CHROMA_DIFFERENCE ||
+    meanRgbDifference > REFERENCE_VISUAL_MAX_MEAN_RGB_DIFFERENCE;
+
+  if (meanResidual > 12 && !tonalOrColourTamper) {
+    return { comparable: false, tampered: false };
+  }
+
+  let adjacent = false;
+  for (const tile of moderate) {
+    const x = tile % REFERENCE_VISUAL_GRID_COLUMNS;
+    const y = Math.floor(tile / REFERENCE_VISUAL_GRID_COLUMNS);
+    for (const other of moderate) {
+      if (other === tile) continue;
+      const ox = other % REFERENCE_VISUAL_GRID_COLUMNS;
+      const oy = Math.floor(other / REFERENCE_VISUAL_GRID_COLUMNS);
+      if (Math.abs(x - ox) <= 1 && Math.abs(y - oy) <= 1) {
+        adjacent = true;
+        break;
+      }
+    }
+    if (adjacent) break;
+  }
+
+  return {
+    comparable: true,
+    tampered: severeCount > 0 || adjacent || tonalOrColourTamper,
+  };
+}
+
+function compareReferenceVisualFingerprintsV3(expected, current) {
+  if (!validReferenceVisualFingerprintV3(expected) ||
+      !validReferenceVisualFingerprintV3(current) ||
+      expected.mediaType !== current.mediaType) {
+    return {
+      verdict: 'inconclusive',
+      alignedFrames: 0,
+      modifiedFrames: 0,
+      inconclusiveFrames: 0,
+      expectedFrames: 0,
+    };
+  }
+
+  const expectedFrames = expected.frames;
+  const currentFrames = current.frames;
+  if (expected.mediaType === 'photo') {
+    const residual = compareReferenceVisualFrameV3(
+      expectedFrames[0],
+      currentFrames[0],
+    );
+    return {
+      verdict: residual.tampered
+        ? 'modified'
+        : residual.comparable
+          ? 'conforming'
+          : 'inconclusive',
+      alignedFrames: residual.comparable ? 1 : 0,
+      modifiedFrames: residual.tampered ? 1 : 0,
+      inconclusiveFrames: residual.comparable ? 0 : 1,
+      expectedFrames: 1,
+    };
+  }
+
+  const used = new Set();
+  let aligned = 0;
+  let modified = 0;
+  let inconclusive = 0;
+
+  for (let e = 0; e < expectedFrames.length; e += 1) {
+    const center = expectedFrames.length <= 1 || currentFrames.length <= 1
+      ? 0
+      : Math.round(
+          e * (currentFrames.length - 1) / (expectedFrames.length - 1),
+        );
+    const low = Math.max(0, center - 4);
+    const high = Math.min(currentFrames.length - 1, center + 4);
+    let bestIndex = -1;
+    let bestDistance = 9999;
+
+    for (let i = low; i <= high; i += 1) {
+      if (used.has(i)) continue;
+      const distance = referenceVisualHexDistanceV3(
+        expectedFrames[e].globalHash,
+        currentFrames[i].globalHash,
+      );
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        bestIndex = i;
+      }
+    }
+
+    if (bestIndex < 0 || bestDistance > 18) {
+      inconclusive += 1;
+      continue;
+    }
+
+    used.add(bestIndex);
+    const residual = compareReferenceVisualFrameV3(
+      expectedFrames[e],
+      currentFrames[bestIndex],
+    );
+    if (!residual.comparable) {
+      inconclusive += 1;
+      continue;
+    }
+    aligned += 1;
+    if (residual.tampered) modified += 1;
+  }
+
+  const minimumAligned = Math.max(2, Math.ceil(expectedFrames.length * 0.55));
+  const verdict = modified > 0
+    ? 'modified'
+    : aligned >= minimumAligned &&
+        inconclusive <= Math.ceil(expectedFrames.length * 0.35)
+      ? 'conforming'
+      : 'inconclusive';
+
+  return {
+    verdict,
+    alignedFrames: aligned,
+    modifiedFrames: modified,
+    inconclusiveFrames: inconclusive,
+    expectedFrames: expectedFrames.length,
+  };
+}
+
+async function buildReferenceVisualFingerprintV3({
+  ffmpegPath,
+  filePath,
+  mediaType,
+  workDir,
+}) {
+  const rawPath = path.join(workDir, 'reference-visual-v3.raw');
+  const filter = mediaType === 'video'
+    ? 'fps=' + REFERENCE_VISUAL_VIDEO_FPS +
+      ',scale=' + REFERENCE_VISUAL_WIDTH + ':' + REFERENCE_VISUAL_HEIGHT +
+      ':force_original_aspect_ratio=decrease,pad=' +
+      REFERENCE_VISUAL_WIDTH + ':' + REFERENCE_VISUAL_HEIGHT +
+      ':(ow-iw)/2:(oh-ih)/2:color=black,format=rgb24'
+    : 'scale=' + REFERENCE_VISUAL_WIDTH + ':' + REFERENCE_VISUAL_HEIGHT +
+      ':force_original_aspect_ratio=decrease,pad=' +
+      REFERENCE_VISUAL_WIDTH + ':' + REFERENCE_VISUAL_HEIGHT +
+      ':(ow-iw)/2:(oh-ih)/2:color=black,format=rgb24';
+  const args = [
+    '-hide_banner', '-loglevel', 'error', '-nostdin', '-y',
+    '-i', filePath,
+    '-vf', filter,
+    '-frames:v',
+    String(
+      mediaType === 'video'
+        ? REFERENCE_VISUAL_MAX_VIDEO_FRAMES
+        : 1,
+    ),
+    '-f', 'rawvideo',
+    rawPath,
+  ];
+  try {
+    await execFileAsync(ffmpegPath, args, {
+      timeout: 180000,
+      maxBuffer: 4 * 1024 * 1024,
+    });
+    const raw = await fs.promises.readFile(rawPath);
+    return referenceVisualFingerprintV3FromRaw(raw, mediaType);
+  } finally {
+    try { await fs.promises.rm(rawPath, { force: true }); } catch (_) {}
+  }
 }
 
 function canonicalYoutubeReference(videoId) {
@@ -131,6 +646,10 @@ function verifyDerivationManifest({
         statement.parent?.sha256 !== contentHash ||
         statement.parent?.signedCertificateDigest !== hashString(certificateRaw) ||
         statement.output?.mediaType !== 'video' ||
+        (statement.output?.referenceVisualFingerprint != null &&
+          !validReferenceVisualFingerprintV3(
+            statement.output.referenceVisualFingerprint,
+          )) ||
         !Number.isSafeInteger(statement.output?.byteLength) ||
         statement.output.byteLength <= 0 ||
         !SHA256.test(statement.output?.sha256 || '') ||
@@ -150,6 +669,74 @@ function verifyDerivationManifest({
     const publicKey = crypto.createPublicKey(pem);
     if (publicKey.asymmetricKeyType !== 'rsa' ||
         publicKey.asymmetricKeyDetails?.modulusLength < 2048) return false;
+
+    return crypto.verify(
+      'RSA-SHA256',
+      Buffer.from(JSON.stringify(statement), 'utf8'),
+      publicKey,
+      Buffer.from(signature, 'base64'),
+    );
+  } catch (_) {
+    return false;
+  }
+}
+
+function verifySubtitleDerivationManifest({
+  manifest,
+  certificateRaw,
+  trustedKeys,
+  verifyCertificateRaw,
+}) {
+  try {
+    if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest) ||
+        !trustedKeys ||
+        manifest.schema !== SUBTITLE_DERIVATION_SCHEMA ||
+        !HCV_ID.test(manifest.hcvId)) {
+      return false;
+    }
+
+    const { signature, ...statement } = manifest;
+    if (Object.keys(statement).length !== 9 ||
+        typeof signature !== 'string' ||
+        !signature) {
+      return false;
+    }
+
+    const certificate = verifyCertificateRaw(certificateRaw, manifest.hcvId);
+    const contentHash = String(certificate?.content?.hash || '').toLowerCase();
+    const contentType = String(certificate?.content?.type || '');
+    if (contentType !== 'video' ||
+        !SHA256.test(contentHash) ||
+        statement.parent?.kind !== 'original' ||
+        statement.parent?.sha256 !== contentHash ||
+        statement.parent?.signedCertificateDigest !== hashString(certificateRaw) ||
+        statement.source?.kind !== 'captioned_video' ||
+        !SHA256.test(statement.source?.sha256 || '') ||
+        !SHA256.test(statement.source?.subtitleSha256 || '') ||
+        statement.output?.mediaType !== 'video' ||
+        !Number.isSafeInteger(statement.output?.byteLength) ||
+        statement.output.byteLength <= 0 ||
+        !SHA256.test(statement.output?.sha256 || '') ||
+        !validReferenceVisualFingerprintV3(
+          statement.output?.referenceVisualFingerprint,
+        ) ||
+        statement.transform?.operation !== SUBTITLE_DERIVATION_OPERATION ||
+        statement.transform?.editorialImpact !== 'caption_overlay' ||
+        statement.transform?.policyVersion !== SUBTITLE_DERIVATION_SCHEMA ||
+        statement.issuer?.signatureAlgorithm !== DERIVATION_SIGNATURE_ALGORITHM ||
+        !/^[A-Za-z0-9._-]{3,80}$/.test(statement.issuer?.keyId || '') ||
+        !/^[0-9a-f-]{36}$/i.test(statement.nonce || '') ||
+        !Number.isFinite(Date.parse(statement.createdAt))) {
+      return false;
+    }
+
+    const pem = trustedKeys[statement.issuer.keyId];
+    if (!pem) return false;
+    const publicKey = crypto.createPublicKey(pem);
+    if (publicKey.asymmetricKeyType !== 'rsa' ||
+        publicKey.asymmetricKeyDetails?.modulusLength < 2048) {
+      return false;
+    }
 
     return crypto.verify(
       'RSA-SHA256',
@@ -201,6 +788,11 @@ function createVerifiedOriginalsProduction({
   };
 
   let takedownTimer = null;
+  let youtubeAccessTokenCache = '';
+  let youtubeAccessTokenExpiresAt = 0;
+  let youtubeChannelVerifiedId = '';
+  let youtubeChannelVerifiedUntil = 0;
+  const youtubeReferenceStatusCache = new Map();
 
   function verifyHcvpackBindingSignature(req, original, hcvId, hcvpackSha256) {
     if (String(req.headers['x-sigillum-hcvpack-binding-version'] || '') !== '1') {
@@ -213,6 +805,48 @@ function createVerifiedOriginalsProduction({
     const statement =
       'SIGILLUM_HCVPACK_BINDING_V1|' + hcvId + '|' +
       original.contentHash + '|' + hcvpackSha256;
+    try {
+      return crypto.verify(
+        'RSA-SHA256',
+        Buffer.from(statement, 'utf8'),
+        publicKey,
+        Buffer.from(signature, 'base64'),
+      );
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function verifySubtitleDerivationBindingSignature(
+    req,
+    original,
+    hcvId,
+    captionedSha256,
+    subtitleSha256,
+    hcvpackSha256,
+  ) {
+    if (String(req.headers['x-sigillum-subtitle-binding-version'] || '') !== '1') {
+      return false;
+    }
+    const signature = String(
+      req.headers['x-sigillum-subtitle-derivation-signature'] || '',
+    );
+    if (!signature ||
+        !SHA256.test(captionedSha256) ||
+        !SHA256.test(subtitleSha256) ||
+        !SHA256.test(hcvpackSha256)) {
+      return false;
+    }
+    const publicKey = certificateRsaPublicKey(original.certificate);
+    if (!publicKey) return false;
+    const statement = [
+      'SIGILLUM_SUBTITLE_DERIVATION_BINDING_V1',
+      hcvId,
+      original.contentHash,
+      captionedSha256,
+      subtitleSha256,
+      hcvpackSha256,
+    ].join('|');
     try {
       return crypto.verify(
         'RSA-SHA256',
@@ -306,6 +940,12 @@ function createVerifiedOriginalsProduction({
       );
       ALTER TABLE verified_originals_publications
         ADD COLUMN IF NOT EXISTS hcvpack_sha256 TEXT NOT NULL DEFAULT '';
+      ALTER TABLE verified_originals_publications
+        ADD COLUMN IF NOT EXISTS reference_role TEXT NOT NULL DEFAULT 'ORIGINAL_REFERENCE';
+      ALTER TABLE verified_originals_publications
+        ADD COLUMN IF NOT EXISTS source_derivation_sha256 TEXT NOT NULL DEFAULT '';
+      ALTER TABLE verified_originals_publications
+        ADD COLUMN IF NOT EXISTS subtitle_sha256 TEXT NOT NULL DEFAULT '';
       CREATE INDEX IF NOT EXISTS verified_originals_publications_hcv_idx
         ON verified_originals_publications(hcv_id, published_at DESC);
 
@@ -480,10 +1120,12 @@ function createVerifiedOriginalsProduction({
       FROM verified_originals_publications p
       JOIN verified_originals_consents c ON c.record_id=p.consent_record_id
       JOIN verified_originals_platform_receipts r ON r.receipt_id=p.platform_receipt_id
-      WHERE p.hcv_id=$1 AND p.publication_status='PUBLISHED'
+      WHERE p.hcv_id=$1
+        AND p.publication_status='PUBLISHED'
+        AND p.reference_role=$2
       ORDER BY p.published_at DESC
       LIMIT 1
-    `, [hcvId])).rows[0];
+    `, [hcvId, ORIGINAL_REFERENCE_ROLE])).rows[0];
     if (!row ||
         row.consent_state !== 'ACTIVE' ||
         row.original_content_sha256 !== original.contentHash ||
@@ -515,6 +1157,129 @@ function createVerifiedOriginalsProduction({
       publicationStatus: row.publication_status,
       certificateVerdict: 'CERTIFICATE_RECORD_VERIFIED',
       socialFileVerdict: 'NOT_VERIFIED',
+      referenceVisualFingerprint: await (async () => {
+        try {
+          const derivationRow = (await pool.query(
+            'SELECT manifest_raw FROM trusted_derivations WHERE output_sha256=$1 AND hcv_id=$2',
+            [row.reference_sha256, hcvId],
+          )).rows[0];
+          if (!derivationRow) return null;
+          const manifest = JSON.parse(derivationRow.manifest_raw);
+          const trustedKeys = parsePinnedDerivationKeys();
+          if (!verifyDerivationManifest({
+            manifest,
+            certificateRaw: original.row.certificate_raw,
+            trustedKeys,
+            verifyCertificateRaw,
+          })) return null;
+          const fingerprint = manifest.output?.referenceVisualFingerprint;
+          return validReferenceVisualFingerprintV3(fingerprint)
+            ? fingerprint
+            : null;
+        } catch (_) {
+          return null;
+        }
+      })(),
+      publishedAt: row.published_at,
+    };
+  }
+
+  async function activeSubtitleReference(
+    hcvId,
+    captionedSha256,
+    subtitleSha256,
+  ) {
+    if (!SHA256.test(captionedSha256) || !SHA256.test(subtitleSha256)) {
+      return null;
+    }
+    const original = await verifiedOriginal(hcvId);
+    if (!original || original.contentType !== 'video') return null;
+
+    const row = (await pool.query(`
+      SELECT
+        p.*,
+        c.state AS consent_state,
+        r.hcv_id AS receipt_hcv_id,
+        r.platform AS receipt_platform,
+        r.platform_post_id AS receipt_platform_post_id,
+        r.uploaded_sha256 AS receipt_uploaded_sha256,
+        r.processing_status AS receipt_processing_status,
+        r.visibility AS receipt_visibility
+      FROM verified_originals_publications p
+      JOIN verified_originals_consents c ON c.record_id=p.consent_record_id
+      JOIN verified_originals_platform_receipts r
+        ON r.receipt_id=p.platform_receipt_id
+      WHERE p.hcv_id=$1
+        AND p.publication_status='PUBLISHED'
+        AND p.reference_role=$2
+        AND p.source_derivation_sha256=$3
+        AND p.subtitle_sha256=$4
+      ORDER BY p.published_at DESC
+      LIMIT 1
+    `, [
+      hcvId,
+      DERIVED_REFERENCE_ROLE,
+      captionedSha256,
+      subtitleSha256,
+    ])).rows[0];
+
+    if (!row ||
+        row.consent_state !== 'ACTIVE' ||
+        row.original_content_sha256 !== original.contentHash ||
+        row.derived_from !== original.contentHash ||
+        row.derivation_type !== SUBTITLE_DERIVATION_OPERATION ||
+        row.receipt_hcv_id !== hcvId ||
+        row.receipt_platform !== 'youtube' ||
+        row.receipt_platform_post_id !== row.platform_post_id ||
+        row.receipt_uploaded_sha256 !== row.reference_sha256 ||
+        row.receipt_processing_status !== 'succeeded' ||
+        row.receipt_visibility !== 'unlisted' ||
+        !SHA256.test(row.reference_sha256 || '')) {
+      return null;
+    }
+
+    const derivationRow = (await pool.query(
+      'SELECT manifest_raw FROM trusted_derivations WHERE output_sha256=$1 AND hcv_id=$2',
+      [row.reference_sha256, hcvId],
+    )).rows[0];
+    if (!derivationRow) return null;
+
+    let manifest;
+    try {
+      manifest = JSON.parse(derivationRow.manifest_raw);
+    } catch (_) {
+      return null;
+    }
+    const trustedKeys = parsePinnedDerivationKeys();
+    if (!verifySubtitleDerivationManifest({
+      manifest,
+      certificateRaw: original.row.certificate_raw,
+      trustedKeys,
+      verifyCertificateRaw,
+    })) {
+      return null;
+    }
+    if (manifest.source?.sha256 !== captionedSha256 ||
+        manifest.source?.subtitleSha256 !== subtitleSha256) {
+      return null;
+    }
+
+    const reference = canonicalYoutubeReference(row.platform_post_id);
+    if (!reference || reference.publicUrl !== row.public_url) return null;
+
+    return {
+      publicationId: row.publication_id,
+      hcvId,
+      platform: 'youtube',
+      platformPostId: row.platform_post_id,
+      publicUrl: row.public_url,
+      referenceSha256: row.reference_sha256,
+      originalContentSha256: row.original_content_sha256,
+      sourceDerivationSha256: row.source_derivation_sha256,
+      subtitleSha256: row.subtitle_sha256,
+      derivationType: row.derivation_type,
+      referenceRole: row.reference_role,
+      publicationStatus: row.publication_status,
       publishedAt: row.published_at,
     };
   }
@@ -532,14 +1297,42 @@ function createVerifiedOriginalsProduction({
       hcvpackSha256: reference.hcvpackSha256,
       certificateVerdict: 'CERTIFICATE_RECORD_VERIFIED',
       socialFileVerdict: 'NOT_VERIFIED',
+      referenceVisualFingerprint: reference.referenceVisualFingerprint,
       viewAccess: 'SUBSCRIPTION_REQUIRED',
+    };
+  }
+
+  async function verificationReference(hcvId) {
+    const startedAt = Date.now();
+    const reference = await activeReference(hcvId);
+    if (!reference) {
+      return {
+        hcvId,
+        availability: 'REFERENCE_NOT_AVAILABLE',
+        youtubeLive: false,
+        comparisonMode: 'YOUTUBE_LIVE_ATTESTED_SIGNED_V3',
+        totalMs: Date.now() - startedAt,
+      };
+    }
+    const live = await liveYoutubeReferenceStatus(reference);
+    return {
+      hcvId,
+      ...live,
+      platform: 'youtube',
+      comparisonMode: 'YOUTUBE_LIVE_ATTESTED_SIGNED_V3',
+      referenceVisualFingerprint:
+        live.availability === 'REFERENCE_AVAILABLE'
+          ? reference.referenceVisualFingerprint
+          : null,
+      totalMs: Date.now() - startedAt,
     };
   }
 
   async function publicHistory(hcvId) {
     const rows = (await pool.query(`
       SELECT publication_id,hcv_id,platform,publication_status,
-             created_at,published_at,revoked_at,unavailable_at
+             reference_role,derivation_type,source_derivation_sha256,
+             subtitle_sha256,created_at,published_at,revoked_at,unavailable_at
       FROM verified_originals_publications
       WHERE hcv_id=$1
       ORDER BY published_at DESC
@@ -550,6 +1343,10 @@ function createVerifiedOriginalsProduction({
       hcvId: row.hcv_id,
       platform: row.platform,
       publicationStatus: row.publication_status,
+      referenceRole: row.reference_role,
+      derivationType: row.derivation_type,
+      sourceDerivationSha256: row.source_derivation_sha256 || null,
+      subtitleSha256: row.subtitle_sha256 || null,
       createdAt: row.created_at,
       publishedAt: row.published_at,
       revokedAt: row.revoked_at,
@@ -651,6 +1448,11 @@ function createVerifiedOriginalsProduction({
   }
 
   async function oauthAccessToken(config) {
+    const now = Date.now();
+    if (youtubeAccessTokenCache && youtubeAccessTokenExpiresAt > now + 60_000) {
+      return youtubeAccessTokenCache;
+    }
+
     let response;
     try {
       response = await fetchImpl('https://oauth2.googleapis.com/token', {
@@ -670,10 +1472,24 @@ function createVerifiedOriginalsProduction({
     if (!response.ok || typeof payload.access_token !== 'string' || !payload.access_token) {
       fail('YOUTUBE_OAUTH_FAILED', 502);
     }
-    return payload.access_token;
+
+    const expiresInSeconds = Math.max(
+      120,
+      Math.min(3600, Number(payload.expires_in || 3600)),
+    );
+    youtubeAccessTokenCache = payload.access_token;
+    youtubeAccessTokenExpiresAt = now + expiresInSeconds * 1000;
+    youtubeChannelVerifiedUntil = 0;
+    return youtubeAccessTokenCache;
   }
 
   async function verifyYoutubeChannel(accessToken, expectedChannelId) {
+    const now = Date.now();
+    if (youtubeChannelVerifiedId === expectedChannelId &&
+        youtubeChannelVerifiedUntil > now) {
+      return;
+    }
+
     const response = await fetchImpl(
       'https://www.googleapis.com/youtube/v3/channels?part=id&mine=true',
       { headers: { authorization: 'Bearer ' + accessToken } },
@@ -682,9 +1498,23 @@ function createVerifiedOriginalsProduction({
     if (!response.ok || !Array.isArray(payload.items) || payload.items.length !== 1 || payload.items[0]?.id !== expectedChannelId) {
       fail('YOUTUBE_CHANNEL_ID_MISMATCH', 502);
     }
+    youtubeChannelVerifiedId = expectedChannelId;
+    youtubeChannelVerifiedUntil =
+      now + Math.max(
+        60_000,
+        Number(process.env.YOUTUBE_CHANNEL_VERIFY_TTL_MS || 300_000),
+      );
   }
 
-  async function startYoutubeUpload({ accessToken, hcvId, size, originalSha256, hcvpackSha256 }) {
+  async function startYoutubeUpload({
+    accessToken,
+    hcvId,
+    size,
+    originalSha256,
+    hcvpackSha256,
+    referenceRole = ORIGINAL_REFERENCE_ROLE,
+    subtitleSha256 = '',
+  }) {
     const endpoint = 'https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status';
     const response = await fetchImpl(endpoint, {
       method: 'POST',
@@ -696,12 +1526,17 @@ function createVerifiedOriginalsProduction({
       },
       body: JSON.stringify({
         snippet: {
-          title: 'SIGILLUM ' + hcvId,
+          title: referenceRole === DERIVED_REFERENCE_ROLE
+            ? 'SIGILLUM ' + hcvId + ' SUBTITLED'
+            : 'SIGILLUM ' + hcvId,
           description: [
-            'SIGILLUM VERIFIED ORIGINAL',
+            referenceRole === DERIVED_REFERENCE_ROLE
+              ? 'SIGILLUM VERIFIED DERIVATION — SUBTITLED VIDEO'
+              : 'SIGILLUM VERIFIED ORIGINAL',
             'HCV-ID: ' + hcvId,
             'Original SHA-256: ' + originalSha256,
             'HCVPACK SHA-256: ' + hcvpackSha256,
+            ...(subtitleSha256 ? ['Subtitle SHA-256: ' + subtitleSha256] : []),
             'Registry: https://sigillum-hcv.com/originals/' + hcvId,
           ].join('\n'),
         },
@@ -762,12 +1597,18 @@ function createVerifiedOriginalsProduction({
     fail('YOUTUBE_UPLOAD_INCOMPLETE', 502);
   }
 
-  async function youtubeStatus(accessToken, videoId) {
+  async function youtubeStatus(accessToken, videoId, allowMissing = false) {
     const response = await fetchImpl(
       'https://www.googleapis.com/youtube/v3/videos?part=status,processingDetails&id=' + encodeURIComponent(videoId),
       { headers: { authorization: 'Bearer ' + accessToken } },
     );
     const payload = await response.json().catch(() => ({}));
+    if (response.ok &&
+        allowMissing &&
+        Array.isArray(payload.items) &&
+        payload.items.length === 0) {
+      return null;
+    }
     if (!response.ok || !Array.isArray(payload.items) || payload.items.length !== 1 || payload.items[0]?.id !== videoId) {
       fail('YOUTUBE_STATUS_FAILED', 502);
     }
@@ -784,6 +1625,7 @@ function createVerifiedOriginalsProduction({
 
   async function deleteYoutubeVideo(accessToken, videoId) {
     if (!YOUTUBE_ID.test(videoId || '')) return false;
+    youtubeReferenceStatusCache.delete(videoId);
     const response = await fetchImpl(
       'https://www.googleapis.com/youtube/v3/videos?id=' + encodeURIComponent(videoId),
       { method: 'DELETE', headers: { authorization: 'Bearer ' + accessToken } },
@@ -803,6 +1645,116 @@ function createVerifiedOriginalsProduction({
       if (Date.now() >= deadline) return last;
       await sleep(pollMs);
     } while (true);
+  }
+
+  async function youtubeCommentsDisabled(accessToken, videoId) {
+    const response = await fetchImpl(
+      'https://www.googleapis.com/youtube/v3/commentThreads?part=id&maxResults=1&videoId=' +
+        encodeURIComponent(videoId),
+      { headers: { authorization: 'Bearer ' + accessToken } },
+    );
+    const payload = await response.json().catch(() => ({}));
+    if (response.ok) return false;
+    const reasons = Array.isArray(payload?.error?.errors)
+      ? payload.error.errors.map(item => String(item?.reason || ''))
+      : [];
+    if (response.status === 403 && reasons.includes('commentsDisabled')) {
+      return true;
+    }
+    fail('YOUTUBE_COMMENTS_STATUS_FAILED', 502);
+  }
+
+  async function liveYoutubeReferenceStatus(reference) {
+    if (!reference || !YOUTUBE_ID.test(reference.platformPostId || '')) {
+      return {
+        availability: 'REFERENCE_NOT_AVAILABLE',
+        youtubeLive: false,
+        commentsDisabled: false,
+      };
+    }
+
+    const videoId = reference.platformPostId;
+    const now = Date.now();
+    const cached = youtubeReferenceStatusCache.get(videoId);
+    if (cached && cached.expiresAt > now) {
+      return {
+        ...cached.value,
+        youtubeCheckMs: 0,
+        cacheHit: true,
+      };
+    }
+
+    const startedAt = now;
+    const config = youtubeConfig();
+    const accessToken = await oauthAccessToken(config);
+    await verifyYoutubeChannel(accessToken, config.channelId);
+    const status = await youtubeStatus(accessToken, videoId, true);
+
+    let value;
+    if (!status) {
+      value = {
+        availability: 'REFERENCE_NOT_AVAILABLE',
+        youtubeLive: false,
+        commentsDisabled: false,
+        processingStatus: 'missing',
+        privacyStatus: '',
+        checkedAt: new Date().toISOString(),
+      };
+    } else {
+      const ready =
+        status.processingStatus === 'succeeded' &&
+        status.privacyStatus === 'unlisted' &&
+        status.uploadStatus !== 'deleted' &&
+        status.uploadStatus !== 'failed';
+
+      if (!ready) {
+        value = {
+          availability: 'REFERENCE_NOT_AVAILABLE',
+          youtubeLive: false,
+          commentsDisabled: false,
+          processingStatus: status.processingStatus,
+          privacyStatus: status.privacyStatus,
+          checkedAt: new Date().toISOString(),
+        };
+      } else {
+        const commentsDisabled = await youtubeCommentsDisabled(
+          accessToken,
+          videoId,
+        );
+        value = {
+          availability: commentsDisabled
+            ? 'REFERENCE_AVAILABLE'
+            : 'REFERENCE_NOT_AVAILABLE',
+          youtubeLive: true,
+          commentsDisabled,
+          processingStatus: status.processingStatus,
+          privacyStatus: status.privacyStatus,
+          checkedAt: new Date().toISOString(),
+        };
+      }
+    }
+
+    const ttlMs = Math.max(
+      1_000,
+      Math.min(
+        30_000,
+        Number(process.env.YOUTUBE_REFERENCE_STATUS_TTL_MS || 5_000),
+      ),
+    );
+    youtubeReferenceStatusCache.set(videoId, {
+      value,
+      expiresAt: Date.now() + ttlMs,
+    });
+    if (youtubeReferenceStatusCache.size > 1000) {
+      const oldestKey = youtubeReferenceStatusCache.keys().next().value;
+      if (oldestKey) youtubeReferenceStatusCache.delete(oldestKey);
+    }
+
+    return {
+      ...value,
+      youtubeCheckMs: Date.now() - startedAt,
+      cacheHit: false,
+    };
   }
 
   async function registerReceipt({ hcvId, videoId, referenceSha256, uploadUrl, status, config }) {
@@ -826,11 +1778,28 @@ function createVerifiedOriginalsProduction({
     return receiptId;
   }
 
-  async function youtubePublish({ hcvId, filePath, referenceSha256, size, originalSha256, hcvpackSha256 }) {
+  async function youtubePublish({
+    hcvId,
+    filePath,
+    referenceSha256,
+    size,
+    originalSha256,
+    hcvpackSha256,
+    referenceRole = ORIGINAL_REFERENCE_ROLE,
+    subtitleSha256 = '',
+  }) {
     const config = youtubeConfig();
     const accessToken = await oauthAccessToken(config);
     await verifyYoutubeChannel(accessToken, config.channelId);
-    const uploadUrl = await startYoutubeUpload({ accessToken, hcvId, size, originalSha256, hcvpackSha256 });
+    const uploadUrl = await startYoutubeUpload({
+      accessToken,
+      hcvId,
+      size,
+      originalSha256,
+      hcvpackSha256,
+      referenceRole,
+      subtitleSha256,
+    });
     const videoId = await uploadYoutubeFile({ accessToken, uploadUrl, filePath, size });
     let status;
     try {
@@ -842,6 +1811,17 @@ function createVerifiedOriginalsProduction({
     if (status.processingStatus !== 'succeeded' || status.privacyStatus !== 'unlisted') {
       try { await deleteYoutubeVideo(accessToken, videoId); } catch (_) {}
       fail(status.privacyStatus !== 'unlisted' ? 'YOUTUBE_REFERENCE_NOT_UNLISTED' : 'YOUTUBE_PROCESSING_NOT_SUCCEEDED', 502);
+    }
+    let commentsDisabled;
+    try {
+      commentsDisabled = await youtubeCommentsDisabled(accessToken, videoId);
+    } catch (error) {
+      try { await deleteYoutubeVideo(accessToken, videoId); } catch (_) {}
+      throw error;
+    }
+    if (!commentsDisabled) {
+      try { await deleteYoutubeVideo(accessToken, videoId); } catch (_) {}
+      fail('YOUTUBE_COMMENTS_MUST_BE_DISABLED', 502);
     }
     const receiptId = await registerReceipt({ hcvId, videoId, referenceSha256, uploadUrl, status, config });
     return { videoId, publicUrl: canonicalYoutubeReference(videoId).publicUrl, receiptId, status, accessToken };
@@ -921,6 +1901,50 @@ function createVerifiedOriginalsProduction({
     if (!output.length) fail('DERIVATION_OUTPUT_INVALID', 500);
     const outputHash = hashBytes(output);
     if (outputHash === original.contentHash) fail('DERIVATION_OUTPUT_INVALID', 500);
+    const referenceVisualFingerprint = await buildReferenceVisualFingerprintV3({
+      ffmpegPath,
+      filePath: outputPath,
+      mediaType: contentType,
+      workDir: path.dirname(outputPath),
+    });
+    if (!validReferenceVisualFingerprintV3(referenceVisualFingerprint)) {
+      fail('REFERENCE_VISUAL_FINGERPRINT_INVALID', 500);
+    }
+
+    const existingDerivation = (await pool.query(
+      'SELECT hcv_id,manifest_raw FROM trusted_derivations WHERE output_sha256=$1',
+      [outputHash],
+    )).rows[0];
+    if (existingDerivation) {
+      let existingManifest;
+      try {
+        existingManifest = JSON.parse(existingDerivation.manifest_raw);
+      } catch (_) {
+        fail('DERIVATION_IMMUTABLE_RECORD_CONFLICT', 409);
+      }
+      const reusable =
+        existingDerivation.hcv_id === hcvId &&
+        verifyDerivationManifest({
+          manifest: existingManifest,
+          certificateRaw: original.row.certificate_raw,
+          trustedKeys,
+          verifyCertificateRaw,
+        }) &&
+        existingManifest.parent?.sha256 === original.contentHash &&
+        existingManifest.output?.sha256 === outputHash &&
+        existingManifest.output?.byteLength === output.length &&
+        existingManifest.transform?.operation === derivationOperation &&
+        JSON.stringify(existingManifest.output?.referenceVisualFingerprint) ===
+          JSON.stringify(referenceVisualFingerprint);
+      if (!reusable) {
+        fail('DERIVATION_IMMUTABLE_RECORD_CONFLICT', 409);
+      }
+      return {
+        manifest: existingManifest,
+        outputHash,
+        outputSize: output.length,
+      };
+    }
 
     const statement = {
       schema: DERIVATION_SCHEMA,
@@ -930,7 +1954,12 @@ function createVerifiedOriginalsProduction({
         sha256: original.contentHash,
         signedCertificateDigest: hashString(original.row.certificate_raw),
       },
-      output: { sha256: outputHash, byteLength: output.length, mediaType: 'video' },
+      output: {
+        sha256: outputHash,
+        byteLength: output.length,
+        mediaType: 'video',
+        referenceVisualFingerprint,
+      },
       transform: {
         operation: derivationOperation,
         editorialImpact: 'non_editorial',
@@ -959,7 +1988,199 @@ function createVerifiedOriginalsProduction({
     return { manifest, outputHash, outputSize: output.length };
   }
 
-  async function registerPublication({ hcvId, consentRecordId, original, derivation, youtube, monetizationEnabled, hcvpackSha256 }) {
+  async function createTrustedSubtitleDerivative({
+    hcvId,
+    original,
+    captionedPath,
+    outputPath,
+    captionedSha256,
+    subtitleSha256,
+  }) {
+    if (original.contentType !== 'video' ||
+        !SHA256.test(captionedSha256) ||
+        !SHA256.test(subtitleSha256)) {
+      fail('SUBTITLE_DERIVATION_INPUT_INVALID', 400);
+    }
+
+    const keyId = String(process.env.SIGILLUM_DERIVATION_KEY_ID || '');
+    const privatePem = String(
+      process.env.SIGILLUM_DERIVATION_PRIVATE_KEY_PEM || '',
+    ).replace(/\\n/g, '\n');
+    const trustedKeys = parsePinnedDerivationKeys();
+    if (!/^[A-Za-z0-9._-]{3,80}$/.test(keyId) ||
+        !privatePem ||
+        !trustedKeys?.[keyId]) {
+      fail('DERIVATION_SERVICE_NOT_CONFIGURED', 503);
+    }
+
+    const privateKey = crypto.createPrivateKey(privatePem);
+    if (privateKey.asymmetricKeyType !== 'rsa' ||
+        privateKey.asymmetricKeyDetails?.modulusLength < 2048) {
+      fail('DERIVATION_SIGNING_KEY_INVALID', 503);
+    }
+    const publicFromPrivate = crypto.createPublicKey(privateKey)
+      .export({ format: 'pem', type: 'spki' })
+      .toString();
+    const pinned = crypto.createPublicKey(trustedKeys[keyId])
+      .export({ format: 'pem', type: 'spki' })
+      .toString();
+    if (publicFromPrivate !== pinned) {
+      fail('DERIVATION_KEY_PIN_MISMATCH', 503);
+    }
+
+    await execFileAsync(ffmpegPath, [
+      '-hide_banner', '-loglevel', 'error', '-nostdin', '-y',
+      '-i', captionedPath,
+      '-map', '0:v:0', '-map', '0:a?',
+      '-map_metadata', '-1', '-map_chapters', '-1',
+      '-c:v', 'libx264', '-preset', 'medium', '-crf', '23',
+      '-pix_fmt', 'yuv420p',
+      '-c:a', 'aac', '-b:a', '160k',
+      '-movflags', '+faststart',
+      outputPath,
+    ], {
+      timeout: 180000,
+      maxBuffer: 4 * 1024 * 1024,
+    });
+
+    const output = await fs.promises.readFile(outputPath);
+    if (!output.length) fail('SUBTITLE_DERIVATION_OUTPUT_INVALID', 500);
+    const outputHash = hashBytes(output);
+    const referenceVisualFingerprint =
+      await buildReferenceVisualFingerprintV3({
+        ffmpegPath,
+        filePath: outputPath,
+        mediaType: 'video',
+        workDir: path.dirname(outputPath),
+      });
+    if (!validReferenceVisualFingerprintV3(referenceVisualFingerprint)) {
+      fail('REFERENCE_VISUAL_FINGERPRINT_INVALID', 500);
+    }
+
+    const existingDerivation = (await pool.query(
+      'SELECT hcv_id,manifest_raw FROM trusted_derivations WHERE output_sha256=$1',
+      [outputHash],
+    )).rows[0];
+    if (existingDerivation) {
+      let existingManifest;
+      try {
+        existingManifest = JSON.parse(existingDerivation.manifest_raw);
+      } catch (_) {
+        fail('DERIVATION_IMMUTABLE_RECORD_CONFLICT', 409);
+      }
+      const reusable =
+        existingDerivation.hcv_id === hcvId &&
+        verifySubtitleDerivationManifest({
+          manifest: existingManifest,
+          certificateRaw: original.row.certificate_raw,
+          trustedKeys,
+          verifyCertificateRaw,
+        }) &&
+        existingManifest.parent?.sha256 === original.contentHash &&
+        existingManifest.source?.sha256 === captionedSha256 &&
+        existingManifest.source?.subtitleSha256 === subtitleSha256 &&
+        existingManifest.output?.sha256 === outputHash &&
+        existingManifest.output?.byteLength === output.length &&
+        existingManifest.transform?.operation ===
+          SUBTITLE_DERIVATION_OPERATION &&
+        JSON.stringify(existingManifest.output?.referenceVisualFingerprint) ===
+          JSON.stringify(referenceVisualFingerprint);
+      if (!reusable) {
+        fail('DERIVATION_IMMUTABLE_RECORD_CONFLICT', 409);
+      }
+      return {
+        manifest: existingManifest,
+        outputHash,
+        outputSize: output.length,
+      };
+    }
+
+    const statement = {
+      schema: SUBTITLE_DERIVATION_SCHEMA,
+      hcvId,
+      parent: {
+        kind: 'original',
+        sha256: original.contentHash,
+        signedCertificateDigest: hashString(original.row.certificate_raw),
+      },
+      source: {
+        kind: 'captioned_video',
+        sha256: captionedSha256,
+        subtitleSha256,
+      },
+      output: {
+        sha256: outputHash,
+        byteLength: output.length,
+        mediaType: 'video',
+        referenceVisualFingerprint,
+      },
+      transform: {
+        operation: SUBTITLE_DERIVATION_OPERATION,
+        editorialImpact: 'caption_overlay',
+        policyVersion: SUBTITLE_DERIVATION_SCHEMA,
+      },
+      issuer: {
+        keyId,
+        signatureAlgorithm: DERIVATION_SIGNATURE_ALGORITHM,
+      },
+      createdAt: new Date().toISOString(),
+      nonce: crypto.randomUUID(),
+    };
+
+    const manifest = {
+      ...statement,
+      signature: crypto.sign(
+        'RSA-SHA256',
+        Buffer.from(JSON.stringify(statement), 'utf8'),
+        privateKey,
+      ).toString('base64'),
+    };
+
+    if (!verifySubtitleDerivationManifest({
+      manifest,
+      certificateRaw: original.row.certificate_raw,
+      trustedKeys,
+      verifyCertificateRaw,
+    })) {
+      fail('SUBTITLE_DERIVATION_ATTESTATION_INVALID', 500);
+    }
+
+    const raw = JSON.stringify(manifest);
+    await pool.query(`
+      INSERT INTO trusted_derivations(output_sha256,hcv_id,manifest_raw)
+      VALUES($1,$2,$3)
+      ON CONFLICT(output_sha256) DO NOTHING
+    `, [outputHash, hcvId, raw]);
+
+    const stored = (await pool.query(
+      'SELECT hcv_id,manifest_raw FROM trusted_derivations WHERE output_sha256=$1',
+      [outputHash],
+    )).rows[0];
+    if (!stored ||
+        stored.hcv_id !== hcvId ||
+        stored.manifest_raw !== raw) {
+      fail('DERIVATION_IMMUTABLE_RECORD_CONFLICT', 409);
+    }
+
+    return {
+      manifest,
+      outputHash,
+      outputSize: output.length,
+    };
+  }
+
+  async function registerPublication({
+    hcvId,
+    consentRecordId,
+    original,
+    derivation,
+    youtube,
+    monetizationEnabled,
+    hcvpackSha256,
+    referenceRole = ORIGINAL_REFERENCE_ROLE,
+    sourceDerivationSha256 = '',
+    subtitleSha256 = '',
+  }) {
     const client = await pool.connect();
     const publicationId = crypto.randomUUID();
     try {
@@ -981,8 +2202,9 @@ function createVerifiedOriginalsProduction({
           publication_id,hcv_id,platform,platform_post_id,public_url,
           reference_sha256,original_content_sha256,derived_from,derivation_type,
           derivation_manifest_sha256,platform_receipt_id,created_at,publication_status,
-          consent_record_id,consent_version,monetization_consent,published_by,hcvpack_sha256
-        ) VALUES($1,$2,'youtube',$3,$4,$5,$6,$6,$7,$8,$9,$10,'PUBLISHED',$11,$12,$13,$14,$15)
+          consent_record_id,consent_version,monetization_consent,published_by,hcvpack_sha256,
+          reference_role,source_derivation_sha256,subtitle_sha256
+        ) VALUES($1,$2,'youtube',$3,$4,$5,$6,$6,$7,$8,$9,$10,'PUBLISHED',$11,$12,$13,$14,$15,$16,$17,$18)
       `, [
         publicationId,
         hcvId,
@@ -999,6 +2221,9 @@ function createVerifiedOriginalsProduction({
         monetizationEnabled,
         String(process.env.SIGILLUM_PUBLISHER_ID || 'SIGILLUM_SERVER_V1'),
         hcvpackSha256,
+        referenceRole,
+        sourceDerivationSha256,
+        subtitleSha256,
       ]);
       await audit({
         hcvId,
@@ -1011,6 +2236,9 @@ function createVerifiedOriginalsProduction({
           platformVisibility: youtube.status.privacyStatus,
           workerVersion: 'verified_originals_production_v2',
           hcvpackSha256,
+          referenceRole,
+          sourceDerivationSha256: sourceDerivationSha256 || null,
+          subtitleSha256: subtitleSha256 || null,
         },
         client,
       });
@@ -1107,6 +2335,212 @@ function createVerifiedOriginalsProduction({
         try { await fs.promises.rm(item, { force: true }); } catch (_) {}
       }
       try { await fs.promises.rmdir(jobDir); } catch (_) {}
+    }
+  }
+
+  async function publishSubtitleDerivative(req, hcvId, url) {
+    const access = await creatorAccess(req);
+    const original = await ownedOriginal(hcvId, access.session);
+    if (original.contentType !== 'video') {
+      fail('SUBTITLE_DERIVATION_REQUIRES_VIDEO', 415);
+    }
+
+    const originalReference = await activeReference(hcvId);
+    if (!originalReference) {
+      fail('ORIGINAL_REFERENCE_REQUIRED', 409);
+    }
+
+    const requestMediaType = String(req.headers['content-type'] || '')
+      .split(';')[0]
+      .toLowerCase();
+    if (requestMediaType !== 'video/mp4') {
+      fail('SUBTITLE_DERIVATION_MEDIA_TYPE_UNSUPPORTED', 415);
+    }
+
+    const contentLength = Number(req.headers['content-length']);
+    const maxBytes = Math.max(
+      1,
+      Number(
+        process.env.SIGILLUM_VERIFIED_ORIGINALS_MAX_BYTES || 536870912,
+      ),
+    );
+    if (!Number.isSafeInteger(contentLength) ||
+        contentLength <= 0 ||
+        contentLength > maxBytes) {
+      fail('SUBTITLE_DERIVATION_CONTENT_LENGTH_INVALID', 411);
+    }
+
+    const consentRecordId = String(
+      url.searchParams.get('consentRecordId') || '',
+    );
+    const monetizationEnabled = strictBoolean(
+      url.searchParams.get('monetizationEnabled'),
+    );
+    const hcvpackSha256 = String(
+      url.searchParams.get('hcvpackSha256') || '',
+    ).toLowerCase();
+    const subtitleSha256 = String(
+      url.searchParams.get('subtitleSha256') || '',
+    ).toLowerCase();
+    const captionedSha256 = String(
+      req.headers['x-sigillum-captioned-sha256'] || '',
+    ).toLowerCase();
+
+    if (!consentRecordId ||
+        monetizationEnabled === null ||
+        !SHA256.test(hcvpackSha256) ||
+        !SHA256.test(subtitleSha256) ||
+        !SHA256.test(captionedSha256)) {
+      fail('SUBTITLE_DERIVATION_REQUEST_INVALID', 400);
+    }
+
+    const existing = await activeSubtitleReference(
+      hcvId,
+      captionedSha256,
+      subtitleSha256,
+    );
+    if (existing) {
+      return {
+        ok: true,
+        alreadyAvailable: true,
+        ...existing,
+        hcvpackSha256,
+      };
+    }
+
+    if (!verifySubtitleDerivationBindingSignature(
+      req,
+      original,
+      hcvId,
+      captionedSha256,
+      subtitleSha256,
+      hcvpackSha256,
+    )) {
+      fail('SUBTITLE_DERIVATION_BINDING_SIGNATURE_INVALID', 422);
+    }
+
+    const consent = (await pool.query(`
+      SELECT * FROM verified_originals_consents
+      WHERE record_id=$1
+        AND hcv_id=$2
+        AND account_id=$3
+        AND state='ACTIVE'
+    `, [
+      consentRecordId,
+      hcvId,
+      access.session.account_id,
+    ])).rows[0];
+    if (!consent ||
+        !consent.publication_consent ||
+        !consent.rights_confirmed) {
+      fail('ACTIVE_CREATOR_CONSENT_REQUIRED', 403);
+    }
+    if (monetizationEnabled && !consent.monetization_consent) {
+      fail('MONETIZATION_NOT_AUTHORIZED', 403);
+    }
+
+    const tmpRoot = String(
+      process.env.SIGILLUM_VERIFIED_ORIGINALS_TMP ||
+        path.join(os.tmpdir(), 'sigillum-verified-originals'),
+    );
+    await fs.promises.mkdir(tmpRoot, { recursive: true, mode: 0o700 });
+    const jobDir = await fs.promises.mkdtemp(
+      path.join(tmpRoot, 'subtitle-job-'),
+    );
+    const captionedPath = path.join(jobDir, 'captioned-source.mp4');
+    const outputPath = path.join(jobDir, 'reference-subtitled.mp4');
+
+    try {
+      const uploaded = await streamToFile(
+        req,
+        captionedPath,
+        contentLength,
+      );
+      if (uploaded.sha256 !== captionedSha256) {
+        fail('SUBTITLE_DERIVATION_SHA_MISMATCH', 422);
+      }
+
+      const derivation = await createTrustedSubtitleDerivative({
+        hcvId,
+        original,
+        captionedPath,
+        outputPath,
+        captionedSha256,
+        subtitleSha256,
+      });
+
+      const youtube = await youtubePublish({
+        hcvId,
+        filePath: outputPath,
+        referenceSha256: derivation.outputHash,
+        size: derivation.outputSize,
+        originalSha256: original.contentHash,
+        hcvpackSha256,
+        referenceRole: DERIVED_REFERENCE_ROLE,
+        subtitleSha256,
+      });
+
+      let publicationId;
+      try {
+        publicationId = await registerPublication({
+          hcvId,
+          consentRecordId,
+          original,
+          derivation,
+          youtube,
+          monetizationEnabled,
+          hcvpackSha256,
+          referenceRole: DERIVED_REFERENCE_ROLE,
+          sourceDerivationSha256: captionedSha256,
+          subtitleSha256,
+        });
+      } catch (error) {
+        try {
+          await deleteYoutubeVideo(youtube.accessToken, youtube.videoId);
+        } catch (_) {}
+        try {
+          await pool.query(`
+            UPDATE verified_originals_platform_receipts
+            SET processing_status='registration_failed',
+                visibility='unavailable',
+                verified_at=NOW()
+            WHERE receipt_id=$1
+          `, [youtube.receiptId]);
+        } catch (_) {}
+        throw error;
+      }
+
+      return {
+        ok: true,
+        alreadyAvailable: false,
+        publicationId,
+        hcvId,
+        platform: 'youtube',
+        publicUrl: youtube.publicUrl,
+        publicationStatus: 'PUBLISHED',
+        referenceRole: DERIVED_REFERENCE_ROLE,
+        originalContentSha256: original.contentHash,
+        sourceDerivationSha256: captionedSha256,
+        subtitleSha256,
+        referenceSha256: derivation.outputHash,
+        derivedFrom: original.contentHash,
+        derivationType: SUBTITLE_DERIVATION_OPERATION,
+        hcvpackSha256,
+        socialFileVerdict: 'NOT_VERIFIED',
+      };
+    } finally {
+      for (const item of [
+        outputPath + '.hcvderivation.json',
+        outputPath,
+        captionedPath,
+      ]) {
+        try {
+          await fs.promises.rm(item, { force: true });
+        } catch (_) {}
+      }
+      try {
+        await fs.promises.rmdir(jobDir);
+      } catch (_) {}
     }
   }
 
@@ -1292,13 +2726,19 @@ function createVerifiedOriginalsProduction({
     const publicLookup = /^\/api\/verified-originals\/(HCV-[A-F0-9]{16})$/.exec(url.pathname);
     const view = /^\/api\/verified-originals\/(HCV-[A-F0-9]{16})\/view$/.exec(url.pathname);
     const list = /^\/api\/verified-originals\/(HCV-[A-F0-9]{16})\/publications$/.exec(url.pathname);
+    const verifyReference = /^\/api\/verified-originals\/(HCV-[A-F0-9]{16})\/verification-reference$/.exec(url.pathname);
     const consentStatusMatch = /^\/api\/verified-originals\/consents\/(HCV-[A-F0-9]{16})$/.exec(url.pathname);
     const withdraw = /^\/api\/verified-originals\/consents\/(HCV-[A-F0-9]{16})\/withdraw$/.exec(url.pathname);
     const publish = /^\/api\/verified-originals\/publish\/(HCV-[A-F0-9]{16})$/.exec(url.pathname);
+    const publishSubtitle = /^\/api\/verified-originals\/publish-subtitle\/(HCV-[A-F0-9]{16})$/.exec(url.pathname);
     const page = /^\/originals\/(HCV-[A-F0-9]{16})$/.exec(url.pathname);
 
     if (req.method === 'GET' && publicLookup) {
       sendJson(res, 200, await publicAvailability(publicLookup[1]));
+      return true;
+    }
+    if (req.method === 'GET' && verifyReference) {
+      sendJson(res, 200, await verificationReference(verifyReference[1]));
       return true;
     }
     if (req.method === 'GET' && view) {
@@ -1328,6 +2768,14 @@ function createVerifiedOriginalsProduction({
     }
     if (req.method === 'POST' && publish) {
       sendJson(res, 201, await publishOriginal(req, publish[1], url));
+      return true;
+    }
+    if (req.method === 'POST' && publishSubtitle) {
+      sendJson(
+        res,
+        201,
+        await publishSubtitleDerivative(req, publishSubtitle[1], url),
+      );
       return true;
     }
     if (req.method === 'GET' && page) {
@@ -1389,8 +2837,13 @@ function createVerifiedOriginalsProduction({
     initSchema,
     handle,
     publicAvailability,
+    verificationReference,
     activeReference,
-    verifyDerivationManifest: args => verifyDerivationManifest({ ...args, verifyCertificateRaw }),
+    activeSubtitleReference,
+    verifyDerivationManifest: args =>
+      verifyDerivationManifest({ ...args, verifyCertificateRaw }),
+    verifySubtitleDerivationManifest: args =>
+      verifySubtitleDerivationManifest({ ...args, verifyCertificateRaw }),
   };
 }
 
@@ -1398,9 +2851,19 @@ module.exports = {
   CONSENT_VERSION,
   DERIVATION_OPERATION,
   PHOTO_DERIVATION_OPERATION,
+  SUBTITLE_DERIVATION_OPERATION,
+  SUBTITLE_DERIVATION_SCHEMA,
+  ORIGINAL_REFERENCE_ROLE,
+  DERIVED_REFERENCE_ROLE,
   DERIVATION_SCHEMA,
   YOUTUBE_SCOPE,
   canonicalYoutubeReference,
   createVerifiedOriginalsProduction,
   verifyDerivationManifest,
+  verifySubtitleDerivationManifest,
+  referenceVisualFrameV3,
+  referenceVisualFingerprintV3FromRaw,
+  validReferenceVisualFingerprintV3,
+  buildReferenceVisualFingerprintV3,
+  compareReferenceVisualFingerprintsV3,
 };
