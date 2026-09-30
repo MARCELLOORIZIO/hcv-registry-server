@@ -36,6 +36,10 @@ for (const token of [
   'X-Sigillum-Hcvpack-Signature'.toLowerCase(),
   'retryPendingTakedowns',
   "processing_status='takedown_pending'",
+  'youtubeCommentsDisabled',
+  'YOUTUBE_COMMENTS_MUST_BE_DISABLED',
+  'verification-reference',
+  'YOUTUBE_LIVE_ATTESTED_SIGNED_V3',
 ]) {
   assert(feature.includes(token), 'feature missing invariant: '+token);
 }
@@ -56,6 +60,14 @@ const lookupEnd = feature.indexOf('async function publicHistory', lookupStart);
 const lookup = feature.slice(lookupStart, lookupEnd);
 assert(!lookup.includes('publicUrl'));
 assert(!lookup.includes('platformPostId'));
+
+const verificationStart = feature.indexOf('async function verificationReference');
+const verificationEnd = feature.indexOf('async function publicHistory', verificationStart);
+const verification = feature.slice(verificationStart, verificationEnd);
+assert(verification.includes('liveYoutubeReferenceStatus'));
+assert(verification.includes("comparisonMode: 'YOUTUBE_LIVE_ATTESTED_SIGNED_V3'"));
+assert(verification.includes('referenceVisualFingerprint'));
+assert(!verification.includes('publicUrl'));
 
 assert(feature.includes("referenceVisualFingerprint = await buildReferenceVisualFingerprintV3"));
 assert(feature.includes("referenceVisualFingerprint,"));
