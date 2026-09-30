@@ -59,3 +59,13 @@ Resume from this file and the app checkpoint. Do not re-design already locked de
 - Real FFmpeg regression is mandatory in `npm run check`: H.264/JPEG recompression remains conforming; small UFO insertion, hue change, brightness change and crop are all classified modified for both video and photo workflows.
 - Photo regression uses the real SIGILLUM photo -> 5-second MP4 official-reference transform before comparison against recompressed JPEG social copies.
 - Backend validation GREEN after RGB hardening. No Render deployment performed.
+
+## 2026-09-30 Separate signed subtitle derivations
+
+- Registry schema now distinguishes `ORIGINAL_REFERENCE` from `DERIVED_REFERENCE`; `activeReference()` resolves only the original role, so a captioned publication can never replace the canonical official reference.
+- Added signed subtitle derivation contract `SIGILLUM_SUBTITLE_DERIVATION_V1` / `subtitle_burn_in_reference_v1`.
+- Captioned upload requires an already active original reference plus a device signature over `SIGILLUM_SUBTITLE_DERIVATION_BINDING_V1|HCV-ID|original SHA-256|captioned SHA-256|SRT SHA-256|HCVPACK SHA-256`.
+- Server normalizes the captioned MP4, computes V3 visual fingerprint, signs/persists a trusted derivation manifest, uploads an unlisted YouTube derived reference, verifies platform receipt, then stores a `DERIVED_REFERENCE` publication containing source and subtitle hashes.
+- Idempotent lookup reuses an existing active captioned reference only when captioned-video SHA-256 and SRT SHA-256 both match.
+- Backend validation GREEN at commit `a111f8ade851edb721056553c97f94f43ebe1c07`.
+- No Render deployment performed.
