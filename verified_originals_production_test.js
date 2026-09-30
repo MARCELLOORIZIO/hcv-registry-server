@@ -208,6 +208,8 @@ function response(status, payload = {}, headers = {}) {
 
 let uploadSessionCount = 0;
 let uploadPutCount = 0;
+let oauthTokenRequestCount = 0;
+let channelCheckCount = 0;
 let deleteCount = 0;
 let deleteFailuresRemaining = 0;
 let commentsCheckCount = 0;
@@ -220,12 +222,14 @@ const uploadUrl =
 async function fakeFetch(url, options = {}) {
   const target = String(url);
   if (target === 'https://oauth2.googleapis.com/token') {
+    oauthTokenRequestCount += 1;
     const body = new URLSearchParams(options.body);
     assert.equal(body.get('client_secret'),'server-secret');
     assert.equal(body.get('grant_type'),'refresh_token');
     return response(200,{access_token:'access-token'});
   }
   if (target.includes('/youtube/v3/channels?part=id&mine=true')) {
+    channelCheckCount += 1;
     return response(200,{items:[{id:CHANNEL_ID}]});
   }
   if (target.includes('uploadType=resumable') && options.method === 'POST') {
@@ -574,6 +578,8 @@ async function run() {
     assert.ok(Number.isInteger(liveVerification.json.youtubeCheckMs));
     assert.ok(Number.isInteger(liveVerification.json.totalMs));
     assert.equal(commentsCheckCount,3);
+    assert.equal(oauthTokenRequestCount,1);
+    assert.equal(channelCheckCount,1);
 
     const freeView=await request(base,'GET','/api/verified-originals/'+HCV_ID+'/view',{
       bearer:'free-token',
