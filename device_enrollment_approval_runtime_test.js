@@ -9,7 +9,12 @@ function requireToken(token, label = token) {
 }
 
 requireToken('CREATE TABLE IF NOT EXISTS device_enrollment_challenges');
-requireToken('ALTER TABLE account_devices ADD COLUMN IF NOT EXISTS revoked_at TIMESTAMPTZ');
+if (
+  !source.includes('ALTER TABLE account_devices ADD COLUMN IF NOT EXISTS revoked_at TIMESTAMPTZ') &&
+  !source.includes('revoked_at TIMESTAMPTZ')
+) {
+  throw new Error('Missing device enrollment contract: revoked_at schema');
+}
 requireToken('function deviceEnrollmentCopy(language)');
 requireToken("req.method === 'GET' && url.pathname === '/device/approve'");
 requireToken("req.method === 'POST' && url.pathname === '/device/approve'");
