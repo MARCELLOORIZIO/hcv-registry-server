@@ -16,6 +16,24 @@ function requiredEnv(env, key) {
   return value;
 }
 
+function refreshToken(env = process.env) {
+  const direct = String(env.YOUTUBE_REFRESH_TOKEN || '').trim();
+  if (direct) return direct;
+
+  const filePath = String(
+    env.YOUTUBE_REFRESH_TOKEN_FILE ||
+    '.sigillum-youtube-refresh-token.txt'
+  ).trim();
+  if (filePath && fs.existsSync(filePath)) {
+    const value = fs.readFileSync(filePath, 'utf8').trim();
+    if (value) return value;
+  }
+
+  throw new Error(
+    'Missing YOUTUBE_REFRESH_TOKEN and no local refresh-token file was found.',
+  );
+}
+
 async function accessToken({
   fetchImpl = fetch,
   clientId,
@@ -234,7 +252,7 @@ function waitForEnter(message) {
 async function main(env = process.env) {
   const clientId = requiredEnv(env, 'YOUTUBE_CLIENT_ID');
   const clientSecret = requiredEnv(env, 'YOUTUBE_CLIENT_SECRET');
-  const refreshToken = requiredEnv(env, 'YOUTUBE_REFRESH_TOKEN');
+  const storedRefreshToken = refreshToken(env);
   const channelId = requiredEnv(env, 'YOUTUBE_CHANNEL_ID');
 
   console.log('');
@@ -243,7 +261,11 @@ async function main(env = process.env) {
   console.log('Flow: token refresh -> channel check -> unlisted upload -> status -> comments -> delete');
   console.log('');
 
-  const token = await accessToken({ clientId, clientSecret, refreshToken });
+  const token = await accessToken({
+    clientId,
+    clientSecret,
+    refreshToken: storedRefreshToken,
+  });
   const actualChannel = await verifyChannel({
     accessToken: token,
     expectedChannelId: channelId,
@@ -311,6 +333,7 @@ if (require.main === module) {
 
 module.exports = {
   SCOPE,
+  refreshToken,
   accessToken,
   startUpload,
   uploadFile,
