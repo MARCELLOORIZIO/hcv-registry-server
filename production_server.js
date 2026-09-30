@@ -172,8 +172,20 @@ async function initSchema() {
       public_key_json JSONB NOT NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      revoked_at TIMESTAMPTZ,
       PRIMARY KEY(account_id, device_key_fingerprint)
     );
+    CREATE TABLE IF NOT EXISTS device_enrollment_challenges (
+      account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+      device_key_fingerprint TEXT NOT NULL,
+      public_key_json JSONB NOT NULL,
+      token_hash TEXT NOT NULL UNIQUE,
+      expires_at TIMESTAMPTZ NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY(account_id, device_key_fingerprint)
+    );
+    CREATE INDEX IF NOT EXISTS device_enrollment_challenges_expiry_idx
+      ON device_enrollment_challenges(expires_at);
     CREATE TABLE IF NOT EXISTS sessions (
       token_hash TEXT PRIMARY KEY,
       account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
