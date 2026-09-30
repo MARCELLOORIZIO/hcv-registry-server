@@ -179,3 +179,14 @@ Resume from this file and the app checkpoint. Do not re-design already locked de
 - The submitted unlisted demo shows the OAuth grant, authorized SIGILLUM channel verification, temporary unlisted upload, processing/privacy status inspection and permanent `videos.delete` cleanup.
 - No Google approval is claimed yet. `YOUTUBE_COMPLIANCE_APPROVED` and `PRODUCTION_LIVE` remain unchanged while review is pending.
 - The demo video must remain available as unlisted throughout review.
+
+
+## 2026-10-01 latest PRELAUNCH Render deployment
+
+- User explicitly confirmed workspace Render `HCV` (`tea-d81i50reo5us738dgcs0`).
+- Service `sigillum-registry-production` (`srv-d9u3inbm8hqs73eee5g0`) still tracks `release/reconciled-prelaunch-backend-clean-20260824` with auto-deploy OFF.
+- Latest release HEAD `41f92c9efc573b834a7c6b2bdd3cf43e57d17546` was deployed manually to Render as deploy `dep-daup5te0tbcc73c5570g`.
+- Render completed the build and deployment successfully; the deploy is LIVE.
+- Startup logs confirm device-enrollment schema verification, Verified Originals PostgreSQL integration, and `SIGILLUM production server running in PRELAUNCH mode` followed by the server listening on port 10000.
+- Previous live deploy `dep-dauge0mgekts73ec1kcg` at `50b3727e5cc13bd01a7eb49b7c3227a87a4d4fa0` is now deactivated.
+- No `PRODUCTION_LIVE` activation or compliance approval claim was made. Google Data Access review remains pending.
