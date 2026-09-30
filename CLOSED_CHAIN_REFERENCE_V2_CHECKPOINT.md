@@ -90,3 +90,13 @@ Resume from this file and the app checkpoint. Do not re-design already locked de
 - Extended the real-media V3 regression through four consecutive social-like recompression generations for both video and photo. Generations 1–4 remain conforming, while the existing small-object insertion, hue, brightness and crop mutations remain modified.
 - Latest functional backend validation GREEN at commit `692be12f354911e4a04979c1fef7a9827cfc6149`: run `36701623366`.
 - Current branch comparison against `release/reconciled-prelaunch-backend-clean-20260824`: diverged, 38 commits ahead and 1 behind. Reconciliation remains intentionally deferred to the final release consolidation.
+
+
+### 2026-09-30 final follow-up before production/live test
+
+- YouTube publication cleanup is fail-closed across comment-status failures: if the post-upload comment-state API call errors, the just-uploaded candidate is deleted before the error is propagated; comments-enabled candidates are likewise deleted.
+- Closed-chain validation GREEN at exact feature HEAD `7786ba037af9f28ab454fc5e784897b15fb567dc`, run `36701824508`, including comments-status cleanup, idempotent retry, live-reference attestation/cache expiry and the four-generation V3 real-media regression.
+- Current branch is diverged from `release/reconciled-prelaunch-backend-clean-20260824`: 41 commits ahead and 1 behind. Reconciliation remains deferred until the final release consolidation.
+- Render production inspection confirms `sigillum-registry-production` uses that release branch with auto-deploy OFF. Current live deployment is commit `3e62c5afc2c94f2585dbfefbe7c0981a1233b083` deployed 2026-09-25; none of this feature branch's live-reference/cache/comment-status changes are production-deployed yet.
+- Render connector exposes service/deploy configuration but no read operation for environment-variable values. Therefore OAuth client/refresh-token/channel readiness is not marked complete from configuration inspection alone; it remains a live production test item.
+- No Render deploy, production environment-variable mutation, release merge/rebase or credential rotation was performed.
