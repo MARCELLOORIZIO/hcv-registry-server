@@ -112,8 +112,8 @@ async function main() {
   if (account.preferredLanguage !== 'es') throw new Error(`preferred language not persisted: ${account.preferredLanguage}`);
   if (account.contractLanguage !== 'es') throw new Error(`contract language not persisted: ${account.contractLanguage}`);
   if (account.acceptanceMethod !== 'clickwrap') throw new Error(`acceptance method not persisted: ${account.acceptanceMethod}`);
-  if (account.termsVersion !== '2026-08-18') throw new Error(`unexpected Terms revision: ${account.termsVersion}`);
-  if (account.privacyVersion !== '2026-08-18') throw new Error(`unexpected Privacy revision: ${account.privacyVersion}`);
+  if (account.termsVersion !== '2026-09-25') throw new Error(`unexpected Terms revision: ${account.termsVersion}`);
+  if (account.privacyVersion !== '2026-09-25') throw new Error(`unexpected Privacy revision: ${account.privacyVersion}`);
   assertSha256(account.termsDocumentSha256, 'Terms document hash');
   assertSha256(account.privacyDocumentSha256, 'Privacy document hash');
 
