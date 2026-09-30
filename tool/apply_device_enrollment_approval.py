@@ -304,7 +304,6 @@ source = source.replace(
 
 required = [
     'CREATE TABLE IF NOT EXISTS device_enrollment_challenges',
-    'ALTER TABLE account_devices ADD COLUMN IF NOT EXISTS revoked_at',
     'function deviceEnrollmentCopy(language)',
     "req.method === 'GET' && url.pathname === '/device/approve'",
     "req.method === 'POST' && url.pathname === '/device/approve'",
@@ -324,6 +323,12 @@ required = [
 for token in required:
     if token not in source:
         raise RuntimeError(f'device enrollment invariant missing: {token}')
+
+if (
+    'ALTER TABLE account_devices ADD COLUMN IF NOT EXISTS revoked_at' not in source
+    and 'revoked_at TIMESTAMPTZ' not in source
+):
+    raise RuntimeError('device enrollment revoked_at schema invariant missing')
 
 # Explicit safety invariants: device enrollment must not weaken certificate,
 # billing or KYC gates already materialized by earlier patches.
