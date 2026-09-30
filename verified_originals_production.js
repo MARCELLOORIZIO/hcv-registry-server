@@ -1812,7 +1812,13 @@ function createVerifiedOriginalsProduction({
       try { await deleteYoutubeVideo(accessToken, videoId); } catch (_) {}
       fail(status.privacyStatus !== 'unlisted' ? 'YOUTUBE_REFERENCE_NOT_UNLISTED' : 'YOUTUBE_PROCESSING_NOT_SUCCEEDED', 502);
     }
-    const commentsDisabled = await youtubeCommentsDisabled(accessToken, videoId);
+    let commentsDisabled;
+    try {
+      commentsDisabled = await youtubeCommentsDisabled(accessToken, videoId);
+    } catch (error) {
+      try { await deleteYoutubeVideo(accessToken, videoId); } catch (_) {}
+      throw error;
+    }
     if (!commentsDisabled) {
       try { await deleteYoutubeVideo(accessToken, videoId); } catch (_) {}
       fail('YOUTUBE_COMMENTS_MUST_BE_DISABLED', 502);
