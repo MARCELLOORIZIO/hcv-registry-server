@@ -202,10 +202,20 @@ for invariant in [
     'function verifyCertificateRaw(raw, expectedId)',
     "crypto.verify('RSA-SHA256'",
     'const rootHash = hash(JSON.stringify(chain));',
-    "INSERT INTO certificates(hcv_id,account_id,certificate_raw,certificate_sha256)",
 ]:
     if invariant not in source:
         raise RuntimeError(f'HCV/Registry invariant missing after legal patch: {invariant}')
+
+# The certificate insert is progressively hardened by later prestart patches
+# (account/device binding and Registry provenance v2). On a second prestart
+# pass its formatting/columns are intentionally different, so verify the
+# semantic storage anchors instead of requiring the legacy one-line SQL.
+for invariant in [
+    'INSERT INTO certificates',
+    'certificate_raw,certificate_sha256',
+]:
+    if invariant not in source:
+        raise RuntimeError(f'certificate storage invariant missing after legal patch: {invariant}')
 
 PATH.write_text(source, encoding='utf-8')
 print('Applied multilingual legal pages, clickwrap evidence and email localization; HCV verification/storage unchanged')
