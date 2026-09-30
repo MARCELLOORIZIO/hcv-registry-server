@@ -1596,12 +1596,18 @@ function createVerifiedOriginalsProduction({
     fail('YOUTUBE_UPLOAD_INCOMPLETE', 502);
   }
 
-  async function youtubeStatus(accessToken, videoId) {
+  async function youtubeStatus(accessToken, videoId, allowMissing = false) {
     const response = await fetchImpl(
       'https://www.googleapis.com/youtube/v3/videos?part=status,processingDetails&id=' + encodeURIComponent(videoId),
       { headers: { authorization: 'Bearer ' + accessToken } },
     );
     const payload = await response.json().catch(() => ({}));
+    if (response.ok &&
+        allowMissing &&
+        Array.isArray(payload.items) &&
+        payload.items.length === 0) {
+      return null;
+    }
     if (!response.ok || !Array.isArray(payload.items) || payload.items.length !== 1 || payload.items[0]?.id !== videoId) {
       fail('YOUTUBE_STATUS_FAILED', 502);
     }
@@ -1668,16 +1674,42 @@ function createVerifiedOriginalsProduction({
     const config = youtubeConfig();
     const accessToken = await oauthAccessToken(config);
     await verifyYoutubeChannel(accessToken, config.channelId);
-    const status = await youtubeStatus(accessToken, reference.platformPostId);
-    const commentsDisabled = await youtubeCommentsDisabled(
+    const status = await youtubeStatus(
       accessToken,
       reference.platformPostId,
+      true,
     );
+    if (!status) {
+      return {
+        availability: 'REFERENCE_NOT_AVAILABLE',
+        youtubeLive: false,
+        commentsDisabled: false,
+        processingStatus: 'missing',
+        privacyStatus: '',
+        checkedAt: new Date().toISOString(),
+        youtubeCheckMs: Date.now() - startedAt,
+      };
+    }
     const ready =
       status.processingStatus === 'succeeded' &&
       status.privacyStatus === 'unlisted' &&
       status.uploadStatus !== 'deleted' &&
       status.uploadStatus !== 'failed';
+    if (!ready) {
+      return {
+        availability: 'REFERENCE_NOT_AVAILABLE',
+        youtubeLive: false,
+        commentsDisabled: false,
+        processingStatus: status.processingStatus,
+        privacyStatus: status.privacyStatus,
+        checkedAt: new Date().toISOString(),
+        youtubeCheckMs: Date.now() - startedAt,
+      };
+    }
+    const commentsDisabled = await youtubeCommentsDisabled(
+      accessToken,
+      reference.platformPostId,
+    );
     return {
       availability: ready ? 'REFERENCE_AVAILABLE' : 'REFERENCE_NOT_AVAILABLE',
       youtubeLive: ready,
