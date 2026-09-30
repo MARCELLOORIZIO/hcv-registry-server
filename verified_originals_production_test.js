@@ -214,6 +214,7 @@ let deleteCount = 0;
 let deleteFailuresRemaining = 0;
 let commentsCheckCount = 0;
 let commentsEnabledChecksRemaining = 1;
+let forceYoutubeReferenceMissing = false;
 let uploadMetadata = null;
 let uploadedBytes = null;
 const uploadUrl =
@@ -246,6 +247,9 @@ async function fakeFetch(url, options = {}) {
     return response(201,{id});
   }
   if (target.includes('/youtube/v3/videos?part=status,processingDetails')) {
+    if (forceYoutubeReferenceMissing) {
+      return response(200,{items:[]});
+    }
     const id = target.includes(encodeURIComponent(PHOTO_VIDEO_ID))
       ? PHOTO_VIDEO_ID
       : VIDEO_ID;
@@ -580,6 +584,20 @@ async function run() {
     assert.equal(commentsCheckCount,3);
     assert.equal(oauthTokenRequestCount,1);
     assert.equal(channelCheckCount,1);
+
+    forceYoutubeReferenceMissing = true;
+    const missingLiveReference=await request(
+      base,'GET','/api/verified-originals/'+HCV_ID+'/verification-reference',
+    );
+    assert.equal(missingLiveReference.status,200,missingLiveReference.text);
+    assert.equal(
+      missingLiveReference.json.availability,
+      'REFERENCE_NOT_AVAILABLE',
+    );
+    assert.equal(missingLiveReference.json.youtubeLive,false);
+    assert.equal(missingLiveReference.json.referenceVisualFingerprint,undefined);
+    assert.equal(missingLiveReference.json.processingStatus,'missing');
+    forceYoutubeReferenceMissing = false;
 
     const freeView=await request(base,'GET','/api/verified-originals/'+HCV_ID+'/view',{
       bearer:'free-token',
