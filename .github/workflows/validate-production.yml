@@ -5,6 +5,7 @@ on:
     branches:
       - commercial/prelaunch-20260811
       - commercial/reconciled-prelaunch-20260824
+      - release/reconciled-prelaunch-backend-clean-20260824
   pull_request:
     branches:
       - main
@@ -95,7 +96,10 @@ jobs:
           curl -fsS 'http://127.0.0.1:8080/terms?lang=it' | grep -q 'Termini di Servizio SIGILLUM'
           curl -fsS 'http://127.0.0.1:8080/support?lang=it' | grep -q 'Supporto SIGILLUM'
           curl -fsS 'http://127.0.0.1:8080/delete-data?lang=it' | grep -q 'Cancellazione account e dati'
+          curl -fsS 'http://127.0.0.1:8080/' | grep -q 'SIGILLUM — Human Chain Verifier'
+          curl -fsS 'http://127.0.0.1:8080/' | grep -q 'YouTube'
           curl -fsS 'http://127.0.0.1:8080/privacy?lang=en' | grep -q 'SIGILLUM Privacy Policy'
+          curl -fsS 'http://127.0.0.1:8080/privacy?lang=en' | grep -q 'Google/YouTube data and OAuth'
           curl -fsS 'http://127.0.0.1:8080/terms?lang=en' | grep -q 'SIGILLUM Terms of Service'
           curl -fsS 'http://127.0.0.1:8080/privacy?lang=es' | grep -q 'Política de Privacidad de SIGILLUM'
           curl -fsS 'http://127.0.0.1:8080/terms?lang=es' | grep -q 'Términos de Servicio de SIGILLUM'
