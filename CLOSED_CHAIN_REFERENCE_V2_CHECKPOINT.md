@@ -161,3 +161,12 @@ Resume from this file and the app checkpoint. Do not re-design already locked de
 - Release merge commit: `da942596e9efaf7397a3c365ab84165cfab54d26`.
 - Full `Validate SIGILLUM production backend` run `36734940439` completed GREEN on the release merge, including `npm run check`, strict PRELAUNCH startup, health/legal/account/billing/device checks and PostgreSQL load probe.
 - Render auto-deploy remains OFF; this merge did not deploy production and did not change production flags or credentials.
+
+
+### 2026-09-30 final live youtube.force-ssl demo
+
+- After the comments-advisory correction was merged and validated, the real admin demo was rerun from the clean release checkout with the production OAuth client.
+- The demo verified the configured SIGILLUM channel, generated temporary media, uploaded it through resumable `videos.insert`, reached `processingStatus=succeeded`, confirmed `privacyStatus=unlisted`, reported comment state diagnostically (`commentsDisabled=false`) without rejecting the reference, then completed `videos.delete`.
+- Final terminal result: `Temporary YouTube video deleted successfully.` followed by `youtube.force-ssl demo completed successfully.`
+- This closes the technical proof that the requested `youtube.force-ssl` scope is actually used for channel verification, unlisted reference upload/status inspection and deletion/cleanup.
+- Google verification submission itself is still external/pending. No compliance flag, production-live flag, Render credential, deployment or TestFlight build was changed by this live demo.
