@@ -210,6 +210,7 @@ let uploadSessionCount = 0;
 let uploadPutCount = 0;
 let deleteCount = 0;
 let deleteFailuresRemaining = 0;
+let commentsCheckCount = 0;
 let uploadMetadata = null;
 let uploadedBytes = null;
 const uploadUrl =
@@ -250,6 +251,14 @@ async function fakeFetch(url, options = {}) {
         status:{privacyStatus:'unlisted',uploadStatus:'processed'},
         processingDetails:{processingStatus:'succeeded'},
       }],
+    });
+  }
+  if (target.includes('/youtube/v3/commentThreads?part=id&maxResults=1&videoId=')) {
+    commentsCheckCount += 1;
+    return response(403,{
+      error:{
+        errors:[{reason:'commentsDisabled'}],
+      },
     });
   }
   if (target.includes('/youtube/v3/videos?id=') && options.method === 'DELETE') {
@@ -513,6 +522,7 @@ async function run() {
     assert.equal(uploadPutCount,1);
     assert.ok(uploadedBytes && uploadedBytes.length > 0);
     assert.equal(uploadMetadata.status.privacyStatus,'unlisted');
+    assert.equal(commentsCheckCount,1);
     assert.equal(uploadMetadata.snippet.title,'SIGILLUM '+HCV_ID);
     assert.ok(uploadMetadata.snippet.description.includes('Original SHA-256: '+originalHash));
     assert.ok(uploadMetadata.snippet.description.includes('HCVPACK SHA-256: '+HCVPACK_HASH));
@@ -524,6 +534,22 @@ async function run() {
     assert.equal(freeLookup.json.viewAccess,'SUBSCRIPTION_REQUIRED');
     assert.equal(freeLookup.json.publicUrl,undefined);
     assert.equal(freeLookup.json.platformPostId,undefined);
+
+    const liveVerification=await request(
+      base,'GET','/api/verified-originals/'+HCV_ID+'/verification-reference',
+    );
+    assert.equal(liveVerification.status,200,liveVerification.text);
+    assert.equal(liveVerification.json.availability,'REFERENCE_AVAILABLE');
+    assert.equal(liveVerification.json.youtubeLive,true);
+    assert.equal(liveVerification.json.commentsDisabled,true);
+    assert.equal(
+      liveVerification.json.comparisonMode,
+      'YOUTUBE_LIVE_ATTESTED_SIGNED_V3',
+    );
+    assert.ok(liveVerification.json.referenceVisualFingerprint);
+    assert.ok(Number.isInteger(liveVerification.json.youtubeCheckMs));
+    assert.ok(Number.isInteger(liveVerification.json.totalMs));
+    assert.equal(commentsCheckCount,2);
 
     const freeView=await request(base,'GET','/api/verified-originals/'+HCV_ID+'/view',{
       bearer:'free-token',
@@ -607,6 +633,7 @@ async function run() {
     );
     assert.equal(photoPublished.status,201,photoPublished.text);
     assert.equal(photoPublished.json.platform,'youtube');
+    assert.equal(commentsCheckCount,3);
     assert.equal(
       photoPublished.json.derivationType,
       'photo_to_reference_video_v1',
