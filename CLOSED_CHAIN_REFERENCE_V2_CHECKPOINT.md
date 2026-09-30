@@ -170,3 +170,12 @@ Resume from this file and the app checkpoint. Do not re-design already locked de
 - Final terminal result: `Temporary YouTube video deleted successfully.` followed by `youtube.force-ssl demo completed successfully.`
 - This closes the technical proof that the requested `youtube.force-ssl` scope is actually used for channel verification, unlisted reference upload/status inspection and deletion/cleanup.
 - Google verification submission itself is still external/pending. No compliance flag, production-live flag, Render credential, deployment or TestFlight build was changed by this live demo.
+
+
+## 2026-10-01 Google Data Access verification submitted
+
+- Google Auth Platform Data Access verification for the single sensitive scope `https://www.googleapis.com/auth/youtube.force-ssl` was submitted successfully from Verification Center.
+- Verification Center now reports that the app data-access request is under review.
+- The submitted unlisted demo shows the OAuth grant, authorized SIGILLUM channel verification, temporary unlisted upload, processing/privacy status inspection and permanent `videos.delete` cleanup.
+- No Google approval is claimed yet. `YOUTUBE_COMPLIANCE_APPROVED` and `PRODUCTION_LIVE` remain unchanged while review is pending.
+- The demo video must remain available as unlisted throughout review.
