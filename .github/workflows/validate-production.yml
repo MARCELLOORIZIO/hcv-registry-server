@@ -73,7 +73,7 @@ jobs:
           cat production-config.json
       - name: Start strict PRELAUNCH server
         run: |
-          npm start > server.log 2>&1 &
+          node production_server.js > server.log 2>&1 &
           echo $! > server.pid
           for i in {1..30}; do
             if curl -fsS http://127.0.0.1:8080/health > health.json; then exit 0; fi
@@ -114,7 +114,7 @@ jobs:
           grep -q 'CERTIFICATE_WRITES_DISABLED' unauth.json
       - name: Start isolated CI server on 8081 with writes enabled for Creator gate test
         run: |
-          PORT=8081 CERTIFICATE_WRITES_ENABLED=true npm start > server-smoke.log 2>&1 &
+          PORT=8081 CERTIFICATE_WRITES_ENABLED=true node production_server.js > server-smoke.log 2>&1 &
           echo $! > server-smoke.pid
           for i in {1..30}; do
             if curl -fsS http://127.0.0.1:8081/health > health-smoke.json; then
