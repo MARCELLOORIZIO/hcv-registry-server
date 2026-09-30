@@ -52,6 +52,9 @@ function assertModified(result, label) {
     const videoOriginal = path.join(root, 'video-original.mp4');
     const videoOfficial = path.join(root, 'video-official.mp4');
     const videoSocial = path.join(root, 'video-social.mp4');
+    const videoSocial2 = path.join(root, 'video-social-gen2.mp4');
+    const videoSocial3 = path.join(root, 'video-social-gen3.mp4');
+    const videoSocial4 = path.join(root, 'video-social-gen4.mp4');
     const videoUfo = path.join(root, 'video-social-ufo.mp4');
     const videoHue = path.join(root, 'video-social-hue.mp4');
     const videoBrightness = path.join(root, 'video-social-brightness.mp4');
@@ -92,6 +95,21 @@ function assertModified(result, label) {
       videoSocial,
     ]);
 
+    for (const [input, output] of [
+      [videoSocial, videoSocial2],
+      [videoSocial2, videoSocial3],
+      [videoSocial3, videoSocial4],
+    ]) {
+      run([
+        '-hide_banner', '-loglevel', 'error', '-nostdin', '-y',
+        '-i', input,
+        '-vf', 'scale=480:-2',
+        '-c:v', 'libx264', '-preset', 'medium', '-crf', '35',
+        '-pix_fmt', 'yuv420p', '-an',
+        output,
+      ]);
+    }
+
     run([
       '-hide_banner', '-loglevel', 'error', '-nostdin', '-y',
       '-i', videoSocial,
@@ -131,6 +149,9 @@ function assertModified(result, label) {
 
     const videoExpected = await fingerprint(videoOfficial, 'video', root);
     const videoCompressed = await fingerprint(videoSocial, 'video', root);
+    const videoCompressed2 = await fingerprint(videoSocial2, 'video', root);
+    const videoCompressed3 = await fingerprint(videoSocial3, 'video', root);
+    const videoCompressed4 = await fingerprint(videoSocial4, 'video', root);
     const videoModified = await fingerprint(videoUfo, 'video', root);
     const videoHueFingerprint = await fingerprint(videoHue, 'video', root);
     const videoBrightnessFingerprint =
@@ -140,6 +161,18 @@ function assertModified(result, label) {
     const videoCompressedResult = compareReferenceVisualFingerprintsV3(
       videoExpected,
       videoCompressed,
+    );
+    const videoCompressed2Result = compareReferenceVisualFingerprintsV3(
+      videoExpected,
+      videoCompressed2,
+    );
+    const videoCompressed3Result = compareReferenceVisualFingerprintsV3(
+      videoExpected,
+      videoCompressed3,
+    );
+    const videoCompressed4Result = compareReferenceVisualFingerprintsV3(
+      videoExpected,
+      videoCompressed4,
     );
     const videoModifiedResult = compareReferenceVisualFingerprintsV3(
       videoExpected,
@@ -158,8 +191,15 @@ function assertModified(result, label) {
       videoCropFingerprint,
     );
 
-    assert.equal(videoCompressedResult.verdict, 'conforming');
-    assert.equal(videoCompressedResult.modifiedFrames, 0);
+    for (const [label, result] of [
+      ['video social generation 1', videoCompressedResult],
+      ['video social generation 2', videoCompressed2Result],
+      ['video social generation 3', videoCompressed3Result],
+      ['video social generation 4', videoCompressed4Result],
+    ]) {
+      assert.equal(result.verdict, 'conforming', label);
+      assert.equal(result.modifiedFrames, 0, label);
+    }
     assertModified(videoModifiedResult, 'video small UFO');
     assertModified(videoHueResult, 'video hue change');
     assertModified(videoBrightnessResult, 'video brightness change');
@@ -168,6 +208,9 @@ function assertModified(result, label) {
     const photoOriginal = path.join(root, 'photo-original.jpg');
     const photoOfficial = path.join(root, 'photo-official.mp4');
     const photoSocial = path.join(root, 'photo-social.jpg');
+    const photoSocial2 = path.join(root, 'photo-social-gen2.jpg');
+    const photoSocial3 = path.join(root, 'photo-social-gen3.jpg');
+    const photoSocial4 = path.join(root, 'photo-social-gen4.jpg');
     const photoUfo = path.join(root, 'photo-social-ufo.jpg');
     const photoHue = path.join(root, 'photo-social-hue.jpg');
     const photoBrightness = path.join(root, 'photo-social-brightness.jpg');
@@ -206,6 +249,20 @@ function assertModified(result, label) {
       photoSocial,
     ]);
 
+    for (const [input, output] of [
+      [photoSocial, photoSocial2],
+      [photoSocial2, photoSocial3],
+      [photoSocial3, photoSocial4],
+    ]) {
+      run([
+        '-hide_banner', '-loglevel', 'error', '-nostdin', '-y',
+        '-i', input,
+        '-vf', 'scale=480:-2',
+        '-frames:v', '1', '-q:v', '18',
+        output,
+      ]);
+    }
+
     run([
       '-hide_banner', '-loglevel', 'error', '-nostdin', '-y',
       '-i', photoSocial,
@@ -240,6 +297,9 @@ function assertModified(result, label) {
 
     const photoExpected = await fingerprint(photoOfficial, 'photo', root);
     const photoCompressed = await fingerprint(photoSocial, 'photo', root);
+    const photoCompressed2 = await fingerprint(photoSocial2, 'photo', root);
+    const photoCompressed3 = await fingerprint(photoSocial3, 'photo', root);
+    const photoCompressed4 = await fingerprint(photoSocial4, 'photo', root);
     const photoModified = await fingerprint(photoUfo, 'photo', root);
     const photoHueFingerprint = await fingerprint(photoHue, 'photo', root);
     const photoBrightnessFingerprint =
@@ -249,6 +309,18 @@ function assertModified(result, label) {
     const photoCompressedResult = compareReferenceVisualFingerprintsV3(
       photoExpected,
       photoCompressed,
+    );
+    const photoCompressed2Result = compareReferenceVisualFingerprintsV3(
+      photoExpected,
+      photoCompressed2,
+    );
+    const photoCompressed3Result = compareReferenceVisualFingerprintsV3(
+      photoExpected,
+      photoCompressed3,
+    );
+    const photoCompressed4Result = compareReferenceVisualFingerprintsV3(
+      photoExpected,
+      photoCompressed4,
     );
     const photoModifiedResult = compareReferenceVisualFingerprintsV3(
       photoExpected,
@@ -267,8 +339,15 @@ function assertModified(result, label) {
       photoCropFingerprint,
     );
 
-    assert.equal(photoCompressedResult.verdict, 'conforming');
-    assert.equal(photoCompressedResult.modifiedFrames, 0);
+    for (const [label, result] of [
+      ['photo social generation 1', photoCompressedResult],
+      ['photo social generation 2', photoCompressed2Result],
+      ['photo social generation 3', photoCompressed3Result],
+      ['photo social generation 4', photoCompressed4Result],
+    ]) {
+      assert.equal(result.verdict, 'conforming', label);
+      assert.equal(result.modifiedFrames, 0, label);
+    }
     assertModified(photoModifiedResult, 'photo small UFO');
     assertModified(photoHueResult, 'photo hue change');
     assertModified(photoBrightnessResult, 'photo brightness change');
@@ -277,11 +356,17 @@ function assertModified(result, label) {
     console.log(JSON.stringify({
       ok: true,
       videoCompressed: videoCompressedResult,
+      videoCompressedGen2: videoCompressed2Result,
+      videoCompressedGen3: videoCompressed3Result,
+      videoCompressedGen4: videoCompressed4Result,
       videoSmallUfo: videoModifiedResult,
       videoHue: videoHueResult,
       videoBrightness: videoBrightnessResult,
       videoCrop: videoCropResult,
       photoCompressed: photoCompressedResult,
+      photoCompressedGen2: photoCompressed2Result,
+      photoCompressedGen3: photoCompressed3Result,
+      photoCompressedGen4: photoCompressed4Result,
       photoSmallUfo: photoModifiedResult,
       photoHue: photoHueResult,
       photoBrightness: photoBrightnessResult,
