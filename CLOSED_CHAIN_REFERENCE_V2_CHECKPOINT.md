@@ -82,3 +82,11 @@ Resume from this file and the app checkpoint. Do not re-design already locked de
 - Platform limitation recorded explicitly: the official YouTube Data API exposes video metadata/status operations but no supported endpoint for downloading the transcoded media bytes. No scraping/yt-dlp/undocumented extraction is used. The current compliant chain therefore attests the real YouTube object live and binds it to the RSA-signed V3 generated from the exact trusted derivative uploaded to that object. Direct fresh-transcode byte/frame comparison remains unavailable without a supported media-byte source.
 - Closed-chain backend validation GREEN at commit 79efb2923280d89a97d31620f6a8b79470ae4025: run 36700673428.
 - No Render deploy, release-branch merge/rebase or production credential change was performed.
+
+
+### 2026-09-30 follow-up hardening
+
+- Added a bounded live-reference status cache to reduce repeated YouTube API latency. Positive/negative status is cached by platform video ID with `YOUTUBE_REFERENCE_STATUS_TTL_MS`; accepted range is 1–30 seconds and the production default is 5 seconds. The endpoint exposes `cacheHit` and reports `youtubeCheckMs=0` on a cache hit. Tests verify cache expiry returns an out-of-band removed YouTube object as REFERENCE_NOT_AVAILABLE.
+- Extended the real-media V3 regression through four consecutive social-like recompression generations for both video and photo. Generations 1–4 remain conforming, while the existing small-object insertion, hue, brightness and crop mutations remain modified.
+- Latest functional backend validation GREEN at commit `692be12f354911e4a04979c1fef7a9827cfc6149`: run `36701623366`.
+- Current branch comparison against `release/reconciled-prelaunch-backend-clean-20260824`: diverged, 38 commits ahead and 1 behind. Reconciliation remains intentionally deferred to the final release consolidation.
