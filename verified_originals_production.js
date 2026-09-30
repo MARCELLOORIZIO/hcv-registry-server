@@ -1735,10 +1735,10 @@ function createVerifiedOriginalsProduction({
     }
 
     const ttlMs = Math.max(
-      5_000,
+      1_000,
       Math.min(
-        60_000,
-        Number(process.env.YOUTUBE_REFERENCE_STATUS_TTL_MS || 30_000),
+        30_000,
+        Number(process.env.YOUTUBE_REFERENCE_STATUS_TTL_MS || 5_000),
       ),
     );
     youtubeReferenceStatusCache.set(videoId, {
