@@ -152,3 +152,12 @@ Resume from this file and the app checkpoint. Do not re-design already locked de
 - `verification-reference` continues to return comment diagnostics (`commentsDisabled` and `commentsStatus`) when available, but signed V3 disclosure and reference availability no longer depend on them.
 - The OAuth demo continues to show the observed comment state and proceeds to `videos.delete` even when comments are enabled or cannot be confirmed.
 - No production flags were changed. `YOUTUBE_COMPLIANCE_APPROVED`, `YOUTUBE_UNLISTED_UPLOAD_CONFIRMED` and `PRODUCTION_LIVE` remain untouched pending the required external approvals/readiness steps.
+
+
+### Validation / merge status for comments-advisory correction
+
+- Backend functional correction commit: `0e12fdb3b10d2c548ef1ac8a15e53fe441706116` on `fix/youtube-comments-advisory-20260930`.
+- PR #37 passed `Verified Originals production PostgreSQL` run `36734705851` GREEN and was merged into `release/reconciled-prelaunch-backend-clean-20260824`.
+- Release merge commit: `da942596e9efaf7397a3c365ab84165cfab54d26`.
+- Full `Validate SIGILLUM production backend` run `36734940439` completed GREEN on the release merge, including `npm run check`, strict PRELAUNCH startup, health/legal/account/billing/device checks and PostgreSQL load probe.
+- Render auto-deploy remains OFF; this merge did not deploy production and did not change production flags or credentials.
