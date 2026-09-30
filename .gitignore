@@ -3,3 +3,4 @@ registry.db
 data/
 .env
 .DS_Store
+.sigillum-youtube-refresh-token.txt
