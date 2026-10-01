@@ -4,3 +4,5 @@ data/
 .env
 .DS_Store
 .sigillum-youtube-refresh-token.txt
+.sigillum-telegram-bot-token.txt
+telegram-acceptance-report.json

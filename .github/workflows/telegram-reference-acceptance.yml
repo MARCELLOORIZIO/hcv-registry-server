@@ -1,0 +1,62 @@
+name: Telegram reference acceptance
+
+on:
+  workflow_dispatch:
+    inputs:
+      stress_count:
+        description: "Optional throttled message count (0 disables)"
+        required: false
+        default: "0"
+      large_mb:
+        description: "Optional large-file MB test; >50 requires Local Bot API"
+        required: false
+        default: "0"
+      keep_evidence:
+        description: "Keep test channel posts for manual inspection"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  telegram-acceptance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_REFERENCE_CHAT_ID: ${{ secrets.TELEGRAM_REFERENCE_CHAT_ID }}
+      TELEGRAM_BOT_API_BASE: ${{ vars.TELEGRAM_BOT_API_BASE }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - run: npm ci
+
+      - name: Run Telegram acceptance gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          args=(--json telegram-acceptance-report.json)
+          if [ "${{ inputs.stress_count }}" != "0" ]; then
+            args+=(--stress "${{ inputs.stress_count }}")
+          fi
+          if [ "${{ inputs.large_mb }}" != "0" ]; then
+            args+=(--large-mb "${{ inputs.large_mb }}")
+          fi
+          if [ "${{ inputs.keep_evidence }}" = "true" ]; then
+            args+=(--keep-evidence)
+          fi
+          node tool/telegram_reference_acceptance.js "${args[@]}"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: telegram-reference-acceptance-report
+          path: telegram-acceptance-report.json
+          if-no-files-found: ignore
