@@ -295,6 +295,16 @@ function requestObject({
   });
 }
 
+function safeS3Error(response) {
+  const body = String(response?.body || '');
+  const code = /<Code>([^<]{1,120})<\/Code>/i.exec(body)?.[1] || '';
+  const message = /<Message>([^<]{1,300})<\/Message>/i.exec(body)?.[1] || '';
+  const parts = [];
+  if (code) parts.push(code);
+  if (message) parts.push(message);
+  return parts.length ? ' [' + parts.join(': ') + ']' : '';
+}
+
 async function putObject(args) {
   const payloadHash = await sha256File(args.sourcePath);
   const stat = await fs.promises.stat(args.sourcePath);
@@ -305,7 +315,7 @@ async function putObject(args) {
     contentLength: stat.size,
   });
   if (response.status < 200 || response.status >= 300) {
-    throw new Error('R2 PUT failed: HTTP ' + response.status);
+    throw new Error('R2 PUT failed: HTTP ' + response.status + safeS3Error(response));
   }
   return { ...response, payloadHash, size: stat.size };
 }
@@ -317,7 +327,7 @@ async function getObject(args) {
     payloadHash: EMPTY_SHA256,
   });
   if (response.status < 200 || response.status >= 300) {
-    throw new Error('R2 GET failed: HTTP ' + response.status);
+    throw new Error('R2 GET failed: HTTP ' + response.status + safeS3Error(response));
   }
   return response;
 }
@@ -337,7 +347,7 @@ async function deleteObject(args) {
     payloadHash: EMPTY_SHA256,
   });
   if (response.status < 200 || response.status >= 300) {
-    throw new Error('R2 DELETE failed: HTTP ' + response.status);
+    throw new Error('R2 DELETE failed: HTTP ' + response.status + safeS3Error(response));
   }
   return response;
 }
