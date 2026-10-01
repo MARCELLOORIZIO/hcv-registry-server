@@ -1547,7 +1547,28 @@ function createVerifiedOriginalsProduction({
         },
       }),
     });
-    if (!response.ok) fail('YOUTUBE_UPLOAD_SESSION_FAILED', 502);
+    if (!response.ok) {
+      const failurePayload = await response.json().catch(() => ({}));
+      const failureError =
+        failurePayload && typeof failurePayload === 'object'
+          ? failurePayload.error
+          : null;
+      const failureItems = Array.isArray(failureError?.errors)
+        ? failureError.errors
+        : [];
+      const failureReason = String(
+        failureItems[0]?.reason || failureError?.status || '',
+      ).slice(0, 120);
+      const failureMessage = String(
+        failureError?.message || '',
+      ).slice(0, 240);
+      console.error('[verified-originals] YouTube upload session rejected', {
+        status: response.status,
+        reason: failureReason,
+        message: failureMessage,
+      });
+      fail('YOUTUBE_UPLOAD_SESSION_FAILED', 502);
+    }
     const raw = String(response.headers.get('location') || '');
     let url;
     try { url = new URL(raw); } catch (_) { fail('YOUTUBE_UPLOAD_LOCATION_INVALID', 502); }
