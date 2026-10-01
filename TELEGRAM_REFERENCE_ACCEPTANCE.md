@@ -1,7 +1,11 @@
 # SIGILLUM — Telegram reference acceptance gate
 
-Status: **research/test only**. This does not change the production SIGILLUM
-reference provider and does not make Telegram part of the app yet.
+Status: **REJECTED AS PRIMARY PROVIDER — research artifact only**. A deeper
+review of the Telegram Bot Platform Developer Terms found that section 5.2(e)
+prohibits using a TPA with external interfaces to build external services that
+diverge significantly from intended Bot Platform use cases, explicitly citing
+cloud storage sites. Telegram also disclaims persistence/availability guarantees
+for TPA data. Do not migrate SIGILLUM reference storage to Telegram.
 
 ## Why this gate exists
 
@@ -25,7 +29,13 @@ Official documentation checked for this gate:
 - Telegram privacy policy:
   https://telegram.org/privacy
 
-## Architecture under test
+## Why this experiment is not proceeding to production
+
+The technical tests below remain useful as evidence of what was evaluated, but
+passing them would not cure the contractual/storage-role problem. The canonical
+provider decision is recorded in `REFERENCE_PROVIDER_DECISION_20261001.md`.
+
+## Architecture that was under test
 
 Telegram is **not** trusted with plaintext reference media in this design.
 
@@ -175,7 +185,9 @@ messages after inspection.
 
 Do **not** replace YouTube in production merely because Phase A passes.
 
-Telegram becomes an approved SIGILLUM reference provider only after:
+Telegram is **not** an approved SIGILLUM primary reference provider. The list
+below is preserved only as the technical acceptance criteria that had been
+planned before the terms blocker was found:
 
 - Phase A green;
 - Phase B >50 MB green;
