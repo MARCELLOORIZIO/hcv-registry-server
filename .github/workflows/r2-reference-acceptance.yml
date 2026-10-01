@@ -1,0 +1,43 @@
+name: R2 reference acceptance
+
+on:
+  workflow_dispatch:
+    inputs:
+      payload_mb:
+        description: "Encrypted round-trip test payload size in MB"
+        required: false
+        default: "8"
+
+permissions:
+  contents: read
+
+jobs:
+  r2-acceptance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+      R2_BUCKET: ${{ secrets.R2_BUCKET }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      R2_REQUIRE_EU: "true"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - run: npm ci
+
+      - name: Run R2 acceptance gate
+        run: |
+          node tool/r2_reference_acceptance.js             --mb "${{ inputs.payload_mb }}"             --json r2-acceptance-report.json
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: r2-reference-acceptance-report
+          path: r2-acceptance-report.json
+          if-no-files-found: ignore
