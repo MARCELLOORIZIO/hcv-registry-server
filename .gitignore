@@ -6,3 +6,4 @@ data/
 .sigillum-youtube-refresh-token.txt
 .sigillum-telegram-bot-token.txt
 telegram-acceptance-report.json
+r2-acceptance-report.json
