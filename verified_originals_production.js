@@ -13,13 +13,16 @@ const {
 } = require('./primary_reference_provider');
 const {
   availableReference: availablePrimaryReference,
+  claimDeleteJob,
   claimUploadJob,
   createOrGetReferenceJob,
   initPrimaryReferenceLifecycleSchema,
   markCommitted: markPrimaryReferenceCommitted,
+  markDeleteRetry,
   markDeleted: markPrimaryReferenceDeleted,
   markUploadRetry,
-  requestDelete: requestPrimaryReferenceDelete,
+  referenceJobByProviderObject,
+  requestDeleteByProviderObject,
 } = require('./primary_reference_lifecycle');
 const {
   OPERATION: PRIMARY_REFERENCE_OPERATION,
@@ -1327,6 +1330,39 @@ function createVerifiedOriginalsProduction({
       return activeR2Reference(hcvId);
     }
     return activeYoutubeReference(hcvId);
+  }
+
+  function referenceViewEnvelope(reference) {
+    if (!reference || typeof reference !== 'object') return null;
+    const common = {
+      publicationId: reference.publicationId,
+      hcvId: reference.hcvId,
+      platform: reference.platform,
+      referenceSha256: reference.referenceSha256,
+      originalContentSha256: reference.originalContentSha256,
+      hcvpackSha256: reference.hcvpackSha256,
+      derivedFrom: reference.derivedFrom,
+      derivationType: reference.derivationType,
+      publicationStatus: reference.publicationStatus,
+      certificateVerdict: reference.certificateVerdict,
+      socialFileVerdict: reference.socialFileVerdict,
+      referenceVisualFingerprint: reference.referenceVisualFingerprint,
+      publishedAt: reference.publishedAt,
+    };
+    if (reference.platform === 'youtube') {
+      return {
+        ...common,
+        platformPostId: reference.platformPostId,
+        publicUrl: reference.publicUrl,
+      };
+    }
+    if (reference.platform === 'r2') {
+      return {
+        ...common,
+        referenceAccess: 'SHORT_LIVED_AUTHORIZATION',
+      };
+    }
+    return common;
   }
 
   async function activeSubtitleReference(
@@ -3485,7 +3521,14 @@ function createVerifiedOriginalsProduction({
       if (account.subscriptionStatus !== 'active') fail('SUBSCRIPTION_REQUIRED', 402);
       const reference = await activeReference(view[1]);
       if (!reference) fail('REFERENCE_NOT_AVAILABLE', 404);
-      sendJson(res, 200, { hcvId: view[1], availability: 'REFERENCE_AVAILABLE', access: 'ENTITLED', ...reference });
+      const safeReference = referenceViewEnvelope(reference);
+      if (!safeReference) fail('REFERENCE_NOT_AVAILABLE', 404);
+      sendJson(res, 200, {
+        hcvId: view[1],
+        availability: 'REFERENCE_AVAILABLE',
+        access: 'ENTITLED',
+        ...safeReference,
+      });
       return true;
     }
     if (req.method === 'GET' && list) {
