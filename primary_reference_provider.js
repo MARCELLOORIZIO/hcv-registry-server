@@ -595,6 +595,35 @@ function createR2ReferenceProvider({
       }
     }
 
+    async referenceExists(receipt) {
+      if (!receipt || receipt.provider !== 'r2' || !receipt.objectKey) {
+        throw new Error('R2_REFERENCE_RECEIPT_INVALID');
+      }
+      try {
+        const head = await this.client.send(
+          new deps.HeadObjectCommand({
+            Bucket: this.bucket,
+            Key: receipt.objectKey,
+          }),
+        );
+        const metadata = head.Metadata || {};
+        const lengthMatches =
+          Number(head.ContentLength ?? -1) === Number(receipt.ciphertextBytes);
+        const hashMatches =
+          String(metadata['cipher-sha256'] || '') ===
+          String(receipt.ciphertextSha256 || '');
+        const formatMatches =
+          String(metadata['sigillum-format'] || '') === 'sgr2ref2';
+        return lengthMatches && hashMatches && formatMatches;
+      } catch (error) {
+        const status = Number(error?.$metadata?.httpStatusCode || 0);
+        if (status === 404 || String(error?.name || '') === 'NotFound') {
+          return false;
+        }
+        throw new Error('R2_REFERENCE_HEAD_FAILED: ' + safeAwsError(error));
+      }
+    }
+
     async createEncryptedReadAuthorization(receipt) {
       if (!receipt || receipt.provider !== 'r2' || !receipt.objectKey) {
         throw new Error('R2_REFERENCE_RECEIPT_INVALID');
