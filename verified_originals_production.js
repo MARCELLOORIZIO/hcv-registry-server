@@ -3357,20 +3357,30 @@ function createVerifiedOriginalsProduction({
         fail('PRIMARY_REFERENCE_RECEIPT_BINDING_MISMATCH', 422);
       }
 
-      const publicationId = await registerR2Publication({
-        hcvId,
-        consentRecordId,
-        original,
-        manifest: primaryManifest.manifest,
-        manifestSha256: primaryManifest.manifestSha256,
-        referenceSha256: primaryManifest.outputHash,
-        derivationType: PRIMARY_REFERENCE_OPERATION,
-        referenceCreatedAt: primaryManifest.manifest.createdAt,
-        receipt,
-        lifecycleJobId: lifecycleJob.jobId,
-        monetizationEnabled,
-        hcvpackSha256,
-      });
+      let publicationId;
+      try {
+        publicationId = await registerR2Publication({
+          hcvId,
+          consentRecordId,
+          original,
+          manifest: primaryManifest.manifest,
+          manifestSha256: primaryManifest.manifestSha256,
+          referenceSha256: primaryManifest.outputHash,
+          derivationType: PRIMARY_REFERENCE_OPERATION,
+          referenceCreatedAt: primaryManifest.manifest.createdAt,
+          receipt,
+          lifecycleJobId: lifecycleJob.jobId,
+          monetizationEnabled,
+          hcvpackSha256,
+        });
+      } catch (error) {
+        await cleanupUnregisteredR2Reference({
+          hcvId,
+          receipt,
+          lifecycleJobId: lifecycleJob.jobId,
+        });
+        throw error;
+      }
 
       return {
         ok: true,
@@ -3832,23 +3842,33 @@ function createVerifiedOriginalsProduction({
         fail('PRIMARY_REFERENCE_RECEIPT_BINDING_MISMATCH', 422);
       }
 
-      const publicationId = await registerR2Publication({
-        hcvId,
-        consentRecordId,
-        original,
-        manifest: derivation.manifest,
-        manifestSha256,
-        referenceSha256: derivation.outputHash,
-        derivationType: SUBTITLE_DERIVATION_OPERATION,
-        referenceCreatedAt: derivation.manifest.createdAt,
-        receipt,
-        lifecycleJobId: lifecycleJob.jobId,
-        monetizationEnabled,
-        hcvpackSha256,
-        referenceRole: DERIVED_REFERENCE_ROLE,
-        sourceDerivationSha256: captionedSha256,
-        subtitleSha256,
-      });
+      let publicationId;
+      try {
+        publicationId = await registerR2Publication({
+          hcvId,
+          consentRecordId,
+          original,
+          manifest: derivation.manifest,
+          manifestSha256,
+          referenceSha256: derivation.outputHash,
+          derivationType: SUBTITLE_DERIVATION_OPERATION,
+          referenceCreatedAt: derivation.manifest.createdAt,
+          receipt,
+          lifecycleJobId: lifecycleJob.jobId,
+          monetizationEnabled,
+          hcvpackSha256,
+          referenceRole: DERIVED_REFERENCE_ROLE,
+          sourceDerivationSha256: captionedSha256,
+          subtitleSha256,
+        });
+      } catch (error) {
+        await cleanupUnregisteredR2Reference({
+          hcvId,
+          receipt,
+          lifecycleJobId: lifecycleJob.jobId,
+        });
+        throw error;
+      }
 
       return {
         ok: true,
