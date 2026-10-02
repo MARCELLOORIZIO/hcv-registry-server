@@ -3675,7 +3675,6 @@ function createVerifiedOriginalsProduction({
         outputPath,
         captionedSha256,
         subtitleSha256,
-        exactReference: true,
       });
 
       const youtube = await youtubePublish({
@@ -3894,6 +3893,7 @@ function createVerifiedOriginalsProduction({
         outputPath,
         captionedSha256,
         subtitleSha256,
+        exactReference: true,
       });
       const manifestRaw = JSON.stringify(derivation.manifest);
       const manifestSha256 = hashString(manifestRaw);
