@@ -3749,6 +3749,8 @@ function createVerifiedOriginalsProduction({
     const view = /^\/api\/verified-originals\/(HCV-[A-F0-9]{16})\/view$/.exec(url.pathname);
     const list = /^\/api\/verified-originals\/(HCV-[A-F0-9]{16})\/publications$/.exec(url.pathname);
     const verifyReference = /^\/api\/verified-originals\/(HCV-[A-F0-9]{16})\/verification-reference$/.exec(url.pathname);
+    const readAuthorization = /^\/api\/verified-originals\/(HCV-[A-F0-9]{16})\/read-authorization$/.exec(url.pathname);
+    const readReference = /^\/api\/verified-originals\/reference-read\/([A-Za-z0-9_-]{40,256})$/.exec(url.pathname);
     const consentStatusMatch = /^\/api\/verified-originals\/consents\/(HCV-[A-F0-9]{16})$/.exec(url.pathname);
     const withdraw = /^\/api\/verified-originals\/consents\/(HCV-[A-F0-9]{16})\/withdraw$/.exec(url.pathname);
     const publish = /^\/api\/verified-originals\/publish\/(HCV-[A-F0-9]{16})$/.exec(url.pathname);
@@ -3761,6 +3763,18 @@ function createVerifiedOriginalsProduction({
     }
     if (req.method === 'GET' && verifyReference) {
       sendJson(res, 200, await verificationReference(verifyReference[1]));
+      return true;
+    }
+    if (req.method === 'POST' && readAuthorization) {
+      sendJson(
+        res,
+        201,
+        await createR2ReadAuthorization(req, readAuthorization[1]),
+      );
+      return true;
+    }
+    if (req.method === 'GET' && readReference) {
+      await streamAuthorizedR2Reference(req, res, readReference[1]);
       return true;
     }
     if (req.method === 'GET' && view) {
