@@ -48,6 +48,7 @@ const readyEnv = {
   APPLE_IAP_PRIVATE_KEY_BASE64: 'dGVzdA==',
   TERMS_VERSION: '2026-09-25',
   PRIVACY_VERSION: '2026-09-25',
+  SIGILLUM_PRIMARY_REFERENCE_PROVIDER: 'youtube',
   YOUTUBE_CLIENT_ID: 'youtube-client-id.apps.googleusercontent.com',
   YOUTUBE_CLIENT_SECRET: 'youtube-client-secret',
   YOUTUBE_REFRESH_TOKEN: 'youtube-refresh-token',
@@ -62,6 +63,58 @@ const readyEnv = {
 };
 const ready = assertProductionConfig(readyEnv);
 expect(ready.live === true && ready.ready === true, 'complete LIVE configuration must be accepted');
+
+const r2MasterKey = crypto.randomBytes(32).toString('base64');
+const r2ReadyEnv = {
+  ...readyEnv,
+  SIGILLUM_PRIMARY_REFERENCE_PROVIDER: 'r2',
+  YOUTUBE_CLIENT_ID: '',
+  YOUTUBE_CLIENT_SECRET: '',
+  YOUTUBE_REFRESH_TOKEN: '',
+  YOUTUBE_CHANNEL_ID: '',
+  YOUTUBE_COMPLIANCE_APPROVED: 'false',
+  YOUTUBE_UNLISTED_UPLOAD_CONFIRMED: 'false',
+  R2_ENDPOINT: 'https://account-id.eu.r2.cloudflarestorage.com',
+  R2_BUCKET: 'sigillum-hcv-references-eu',
+  R2_ACCESS_KEY_ID: 'r2-access-key',
+  R2_SECRET_ACCESS_KEY: 'r2-secret-key',
+  R2_REQUIRE_EU: 'true',
+  R2_REFERENCE_ACTIVE_KEY_ID: 'r2-primary-2026-10',
+  R2_REFERENCE_MASTER_KEYS_JSON: JSON.stringify({
+    'r2-primary-2026-10': r2MasterKey,
+  }),
+};
+const r2Ready = assertProductionConfig(r2ReadyEnv);
+expect(
+  r2Ready.live === true && r2Ready.ready === true,
+  'R2 LIVE configuration must not depend on YouTube credentials or approval',
+);
+
+const r2WrongJurisdiction = {
+  ...r2ReadyEnv,
+  R2_ENDPOINT: 'https://account-id.r2.cloudflarestorage.com',
+};
+expect(
+  validateProductionConfig(r2WrongJurisdiction).ready === false,
+  'R2 LIVE must require the EU jurisdiction endpoint',
+);
+
+const r2MissingSecret = { ...r2ReadyEnv, R2_SECRET_ACCESS_KEY: '' };
+expect(
+  validateProductionConfig(r2MissingSecret).ready === false,
+  'R2 LIVE must require the R2 secret access key',
+);
+
+const r2BadKeyRing = {
+  ...r2ReadyEnv,
+  R2_REFERENCE_MASTER_KEYS_JSON: JSON.stringify({
+    'r2-primary-2026-10': Buffer.alloc(16).toString('base64'),
+  }),
+};
+expect(
+  validateProductionConfig(r2BadKeyRing).ready === false,
+  'R2 LIVE must require a 32-byte active encryption master key',
+);
 
 const writesOff = { ...readyEnv, CERTIFICATE_WRITES_ENABLED: 'false' };
 expect(validateProductionConfig(writesOff).ready === false, 'LIVE must reject disabled certificate writes');
@@ -135,6 +188,9 @@ console.log(JSON.stringify({
   prelaunchAllowed: true,
   incompleteLiveRejected: true,
   completeLiveAccepted: true,
+  r2PrimaryLiveAcceptedWithoutYoutube: true,
+  r2EuJurisdictionRequired: true,
+  r2EncryptionMasterKeyRequired: true,
   writesMustBeEnabledForLive: true,
   testStripeRejectedForLive: true,
   resendDevRejectedForLive: true,
