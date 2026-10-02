@@ -3318,39 +3318,136 @@ function createVerifiedOriginalsProduction({
     }
   }
 
-  async function attemptTakedowns(publications) {
-    if (!publications.length) return 'COMPLETED';
+  async function markPlatformReceiptWithdrawn(receiptId) {
+    await pool.query(`
+      UPDATE verified_originals_platform_receipts
+      SET processing_status='withdrawn',
+          visibility='unavailable',
+          verified_at=NOW()
+      WHERE receipt_id=$1
+    `, [receiptId]);
+  }
+
+  async function attemptR2Takedown(publication) {
+    let job = await referenceJobByProviderObject(pool, {
+      provider: 'r2',
+      objectId: publication.platform_post_id,
+      hcvId: publication.hcv_id,
+    });
+    if (!job) return false;
+
+    if (job.state === 'COMMITTED') {
+      job = await requestDeleteByProviderObject(pool, {
+        provider: 'r2',
+        objectId: publication.platform_post_id,
+        hcvId: publication.hcv_id,
+      });
+    }
+    if (job.state === 'DELETED') {
+      await markPlatformReceiptWithdrawn(publication.platform_receipt_id);
+      return true;
+    }
+    if (job.state !== 'DELETE_PENDING') return false;
+
     try {
-      const config = youtubeConfig();
-      const accessToken = await oauthAccessToken(config);
-      await verifyYoutubeChannel(accessToken, config.channelId);
-      let allDeleted = true;
-      for (const publication of publications) {
-        if (publication.processing_status === 'withdrawn') continue;
-        const deleted = await deleteYoutubeVideo(
-          accessToken,
-          publication.platform_post_id,
-        );
-        allDeleted = allDeleted && deleted;
-        if (deleted) {
-          await pool.query(`
-            UPDATE verified_originals_platform_receipts
-            SET processing_status='withdrawn',visibility='unavailable',verified_at=NOW()
-            WHERE receipt_id=$1
-          `, [publication.platform_receipt_id]);
-        }
+      job = await claimDeleteJob(pool, job.jobId);
+    } catch (error) {
+      if (String(error?.message || '') ===
+          'PRIMARY_REFERENCE_DELETE_STATE_CONFLICT') {
+        return false;
       }
-      return allDeleted ? 'COMPLETED' : 'PARTIAL';
-    } catch (_) {
-      return 'PENDING';
+      throw error;
+    }
+    if (job.state === 'DELETED') {
+      await markPlatformReceiptWithdrawn(publication.platform_receipt_id);
+      return true;
+    }
+
+    try {
+      const deleted = await requireR2ReferenceProvider()
+        .deleteReference(job.receipt);
+      if (!deleted?.deleted) {
+        await markDeleteRetry(
+          pool,
+          job.jobId,
+          'R2_DELETE_NOT_CONFIRMED',
+        );
+        return false;
+      }
+      await markPrimaryReferenceDeleted(pool, job.jobId);
+      await markPlatformReceiptWithdrawn(publication.platform_receipt_id);
+      return true;
+    } catch (error) {
+      try {
+        await markDeleteRetry(
+          pool,
+          job.jobId,
+          'R2_DELETE_PROVIDER_UNAVAILABLE',
+        );
+      } catch (_) {}
+      console.error(
+        '[verified-originals] R2 primary reference delete deferred',
+        String(error?.message || error),
+      );
+      return false;
     }
   }
 
+  async function attemptYoutubeTakedown(publication, youtubeState) {
+    if (!youtubeServiceConfigured()) return false;
+    if (!youtubeState.accessToken) {
+      const config = youtubeConfig();
+      youtubeState.accessToken = await oauthAccessToken(config);
+      await verifyYoutubeChannel(youtubeState.accessToken, config.channelId);
+    }
+    const deleted = await deleteYoutubeVideo(
+      youtubeState.accessToken,
+      publication.platform_post_id,
+    );
+    if (deleted) {
+      await markPlatformReceiptWithdrawn(publication.platform_receipt_id);
+    }
+    return deleted;
+  }
+
+  async function attemptTakedowns(publications) {
+    if (!publications.length) return 'COMPLETED';
+    let completed = 0;
+    let failed = 0;
+    const youtubeState = { accessToken: '' };
+
+    for (const publication of publications) {
+      if (publication.processing_status === 'withdrawn') {
+        completed += 1;
+        continue;
+      }
+
+      try {
+        let deleted = false;
+        if (publication.platform === 'r2') {
+          deleted = await attemptR2Takedown(publication);
+        } else if (publication.platform === 'youtube') {
+          deleted = await attemptYoutubeTakedown(
+            publication,
+            youtubeState,
+          );
+        }
+        if (deleted) completed += 1;
+        else failed += 1;
+      } catch (_) {
+        failed += 1;
+      }
+    }
+
+    if (failed === 0) return 'COMPLETED';
+    if (completed > 0) return 'PARTIAL';
+    return 'PENDING';
+  }
+
   async function retryPendingTakedowns() {
-    if (!youtubeServiceConfigured()) return { attempted: 0, completed: 0 };
     const rows = (await pool.query(`
-      SELECT p.hcv_id,p.publication_id,p.platform_post_id,p.platform_receipt_id,
-             r.processing_status
+      SELECT p.hcv_id,p.publication_id,p.platform,p.platform_post_id,
+             p.platform_receipt_id,p.reference_role,r.processing_status
       FROM verified_originals_publications p
       JOIN verified_originals_platform_receipts r
         ON r.receipt_id=p.platform_receipt_id
@@ -3373,7 +3470,10 @@ function createVerifiedOriginalsProduction({
             actorSubjectHash: hashString(
               String(process.env.SIGILLUM_PUBLISHER_ID || 'SIGILLUM_SERVER_V1'),
             ),
-            metadata: { retryWorker: true },
+            metadata: {
+              retryWorker: true,
+              platform: row.platform,
+            },
           });
         } catch (_) {}
       }
@@ -3382,14 +3482,21 @@ function createVerifiedOriginalsProduction({
   }
 
   function startTakedownWorker() {
-    if (takedownTimer || !youtubeServiceConfigured()) return;
+    if (takedownTimer) return;
+    if (!youtubeServiceConfigured() &&
+        primaryReferenceProviderName !== 'r2') {
+      return;
+    }
     const intervalMs = Math.max(
       60_000,
       Number(process.env.SIGILLUM_TAKEDOWN_RETRY_MS || 300_000),
     );
     takedownTimer = setInterval(() => {
       retryPendingTakedowns().catch(error => {
-        console.error('SIGILLUM_TAKEDOWN_RETRY_FAILED', error?.message || error);
+        console.error(
+          'SIGILLUM_TAKEDOWN_RETRY_FAILED',
+          error?.message || error,
+        );
       });
     }, intervalMs);
     if (typeof takedownTimer.unref === 'function') takedownTimer.unref();
@@ -3413,7 +3520,8 @@ function createVerifiedOriginalsProduction({
       if (consent) {
         newlyWithdrawn = true;
         publications = (await client.query(`
-          SELECT p.publication_id,p.platform_post_id,p.platform_receipt_id,
+          SELECT p.hcv_id,p.publication_id,p.platform,p.platform_post_id,
+                 p.platform_receipt_id,p.reference_role,
                  r.processing_status
           FROM verified_originals_publications p
           JOIN verified_originals_platform_receipts r
@@ -3430,6 +3538,13 @@ function createVerifiedOriginalsProduction({
           [hcvId, consent.record_id],
         );
         for (const publication of publications) {
+          if (publication.platform === 'r2') {
+            await requestDeleteByProviderObject(client, {
+              provider: 'r2',
+              objectId: publication.platform_post_id,
+              hcvId,
+            });
+          }
           await client.query(`
             UPDATE verified_originals_platform_receipts
             SET processing_status='takedown_pending',verified_at=NOW()
@@ -3442,7 +3557,10 @@ function createVerifiedOriginalsProduction({
           eventType: 'CREATOR_CONSENT_WITHDRAWN',
           actorType: 'CREATOR',
           actorSubjectHash: hashString(session.account_id),
-          metadata: { platformStatus: 'TAKEDOWN_REQUESTED' },
+          metadata: {
+            platformStatus: 'TAKEDOWN_REQUESTED',
+            providers: [...new Set(publications.map(item => item.platform))],
+          },
           client,
         });
       } else {
@@ -3454,7 +3572,8 @@ function createVerifiedOriginalsProduction({
         `, [hcvId, session.account_id])).rows[0];
         if (!consent) fail('WITHDRAWN_CONSENT_NOT_FOUND', 404);
         publications = (await client.query(`
-          SELECT p.publication_id,p.platform_post_id,p.platform_receipt_id,
+          SELECT p.hcv_id,p.publication_id,p.platform,p.platform_post_id,
+                 p.platform_receipt_id,p.reference_role,
                  r.processing_status
           FROM verified_originals_publications p
           JOIN verified_originals_platform_receipts r
