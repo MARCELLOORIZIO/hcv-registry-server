@@ -4344,6 +4344,40 @@ function createVerifiedOriginalsProduction({
     };
   }
 
+  async function withdrawAllForAccount(req, accountId) {
+    const session = await authenticate(req);
+    if (!session?.account_id || session.account_id !== accountId) {
+      fail('CREATOR_OWNERSHIP_NOT_VERIFIED', 403);
+    }
+
+    const rows = (await pool.query(`
+      SELECT DISTINCT hcv_id
+      FROM verified_originals_consents
+      WHERE account_id=$1
+      ORDER BY hcv_id
+    `, [accountId])).rows;
+
+    const results = [];
+    for (const row of rows) {
+      const hcvId = String(row.hcv_id || '');
+      if (!HCV_ID.test(hcvId)) continue;
+      const result = await withdrawConsent(req, hcvId);
+      results.push(result);
+      if (result.platformTakedown !== 'COMPLETED') {
+        fail(
+          'ACCOUNT_DELETE_REFERENCE_CLEANUP_PENDING',
+          503,
+          'La cancellazione account è sospesa finché la rimozione delle reference tecniche non è completata.',
+        );
+      }
+    }
+    return {
+      ok: true,
+      referenceCount: results.length,
+      allReferencesDeleted: true,
+    };
+  }
+
   async function handle(req, res, url) {
     const publicLookup = /^\/api\/verified-originals\/(HCV-[A-F0-9]{16})$/.exec(url.pathname);
     const view = /^\/api\/verified-originals\/(HCV-[A-F0-9]{16})\/view$/.exec(url.pathname);
@@ -4483,6 +4517,7 @@ function createVerifiedOriginalsProduction({
     verificationReference,
     activeReference,
     activeSubtitleReference,
+    withdrawAllForAccount,
     verifyDerivationManifest: args =>
       verifyDerivationManifest({ ...args, verifyCertificateRaw }),
     verifySubtitleDerivationManifest: args =>
