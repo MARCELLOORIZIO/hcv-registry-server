@@ -1928,6 +1928,129 @@ function createVerifiedOriginalsProduction({
     return { size: received, sha256: digest.digest('hex') };
   }
 
+  async function createExactPrimaryReferenceManifest({
+    hcvId,
+    original,
+    originalPath,
+  }) {
+    const contentType =
+      original.contentType || original.certificate?.content?.type;
+    if (contentType !== 'video' && contentType !== 'photo') {
+      fail('PRIMARY_REFERENCE_MEDIA_TYPE_UNSUPPORTED', 415);
+    }
+    const referenceVisualFingerprint = await buildReferenceVisualFingerprintV3({
+      ffmpegPath,
+      filePath: originalPath,
+      mediaType: contentType,
+      workDir: path.dirname(originalPath),
+    });
+    if (!validReferenceVisualFingerprintV3(referenceVisualFingerprint)) {
+      fail('REFERENCE_VISUAL_FINGERPRINT_INVALID', 500);
+    }
+
+    const trustedKeys = parsePinnedDerivationKeys();
+    const keyId = String(process.env.SIGILLUM_DERIVATION_KEY_ID || '');
+    if (!trustedKeys?.[keyId]) {
+      fail('DERIVATION_SERVICE_NOT_CONFIGURED', 503);
+    }
+
+    const existing = (await pool.query(
+      'SELECT hcv_id,manifest_raw FROM trusted_derivations WHERE output_sha256=$1',
+      [original.contentHash],
+    )).rows[0];
+    if (existing) {
+      let manifest;
+      try {
+        manifest = JSON.parse(existing.manifest_raw);
+      } catch (_) {
+        fail('PRIMARY_REFERENCE_IMMUTABLE_RECORD_CONFLICT', 409);
+      }
+      const valid =
+        existing.hcv_id === hcvId &&
+        verifyPrimaryReferenceManifest({
+          manifest,
+          certificateRaw: original.row.certificate_raw,
+          trustedKeys,
+        }) &&
+        manifest.schema === PRIMARY_REFERENCE_SCHEMA &&
+        manifest.output?.sha256 === original.contentHash &&
+        manifest.output?.byteLength === original.contentSize &&
+        manifest.output?.mediaType === contentType &&
+        JSON.stringify(manifest.output?.referenceVisualFingerprint) ===
+          JSON.stringify(referenceVisualFingerprint);
+      if (!valid) {
+        fail('PRIMARY_REFERENCE_IMMUTABLE_RECORD_CONFLICT', 409);
+      }
+      return {
+        manifest,
+        outputHash: original.contentHash,
+        outputSize: original.contentSize,
+        manifestSha256: hashString(existing.manifest_raw),
+      };
+    }
+
+    const privatePem = String(
+      process.env.SIGILLUM_DERIVATION_PRIVATE_KEY_PEM || '',
+    ).replace(/\\n/g, '\n');
+    if (!/^[A-Za-z0-9._-]{3,80}$/.test(keyId) || !privatePem) {
+      fail('DERIVATION_SERVICE_NOT_CONFIGURED', 503);
+    }
+    const privateKey = crypto.createPrivateKey(privatePem);
+    if (privateKey.asymmetricKeyType !== 'rsa' ||
+        privateKey.asymmetricKeyDetails?.modulusLength < 2048) {
+      fail('DERIVATION_SIGNING_KEY_INVALID', 503);
+    }
+    const publicFromPrivate = crypto.createPublicKey(privateKey)
+      .export({ format: 'pem', type: 'spki' })
+      .toString();
+    const pinned = crypto.createPublicKey(trustedKeys[keyId])
+      .export({ format: 'pem', type: 'spki' })
+      .toString();
+    if (publicFromPrivate !== pinned) {
+      fail('DERIVATION_KEY_PIN_MISMATCH', 503);
+    }
+
+    const created = createPrimaryReferenceManifest({
+      hcvId,
+      originalContentSha256: original.contentHash,
+      byteLength: original.contentSize,
+      mediaType: contentType,
+      referenceVisualFingerprint,
+      certificateRaw: original.row.certificate_raw,
+      keyId,
+      privateKeyPem: privatePem,
+    });
+    if (!verifyPrimaryReferenceManifest({
+      manifest: created.manifest,
+      certificateRaw: original.row.certificate_raw,
+      trustedKeys,
+    })) {
+      fail('PRIMARY_REFERENCE_ATTESTATION_INVALID', 500);
+    }
+
+    await pool.query(`
+      INSERT INTO trusted_derivations(output_sha256,hcv_id,manifest_raw)
+      VALUES($1,$2,$3)
+      ON CONFLICT(output_sha256) DO NOTHING
+    `, [original.contentHash, hcvId, created.raw]);
+
+    const stored = (await pool.query(
+      'SELECT hcv_id,manifest_raw FROM trusted_derivations WHERE output_sha256=$1',
+      [original.contentHash],
+    )).rows[0];
+    if (!stored ||
+        stored.hcv_id !== hcvId ||
+        stored.manifest_raw !== created.raw) {
+      fail('PRIMARY_REFERENCE_IMMUTABLE_RECORD_CONFLICT', 409);
+    }
+    return {
+      manifest: created.manifest,
+      outputHash: original.contentHash,
+      outputSize: original.contentSize,
+      manifestSha256: created.sha256,
+    };
+  }
+
   async function createTrustedDerivative({ hcvId, original, originalPath, outputPath }) {
     const keyId = String(process.env.SIGILLUM_DERIVATION_KEY_ID || '');
     const privatePem = String(process.env.SIGILLUM_DERIVATION_PRIVATE_KEY_PEM || '').replace(/\\n/g, '\n');
