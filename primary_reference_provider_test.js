@@ -230,6 +230,8 @@ async function main() {
       receipt.ciphertextSha256,
     );
 
+    assert.equal(await provider.referenceExists(receipt), true);
+
     await provider.materializeReference({
       receipt,
       destinationPath: materializedPath,
@@ -261,6 +263,7 @@ async function main() {
     const deletion = await provider.deleteReference(receipt);
     assert.deepEqual(deletion, { deleted: true, provider: 'r2' });
     assert.equal(objects.has(receipt.objectKey), false);
+    assert.equal(await provider.referenceExists(receipt), false);
 
     console.log(
       'primary_reference_provider_test: PASS — provider selection, EU guard, opaque keys, AES-256-GCM binding, multipart-capable commit, exact decrypt, short-lived encrypted read auth, delete confirmation',
