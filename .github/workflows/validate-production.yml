@@ -7,6 +7,7 @@ on:
       - commercial/reconciled-prelaunch-20260824
       - release/reconciled-prelaunch-backend-clean-20260824
       - feature/r2-primary-reference-lifecycle-20261002
+      - fix/r2-legal-copy-20261002
   pull_request:
     branches:
       - main
@@ -98,7 +99,8 @@ jobs:
           curl -fsS 'http://127.0.0.1:8080/support?lang=it' | grep -q 'Supporto SIGILLUM'
           curl -fsS 'http://127.0.0.1:8080/delete-data?lang=it' | grep -q 'Cancellazione account e dati'
           curl -fsS 'http://127.0.0.1:8080/' | grep -q 'SIGILLUM — Human Chain Verifier'
-          curl -fsS 'http://127.0.0.1:8080/' | grep -q 'YouTube'
+          curl -fsS 'http://127.0.0.1:8080/' | grep -q 'private infrastructure'
+          curl -fsS 'http://127.0.0.1:8080/privacy?lang=en' | grep -q 'Cloudflare R2'
           curl -fsS 'http://127.0.0.1:8080/privacy?lang=en' | grep -q 'SIGILLUM Privacy Policy'
           curl -fsS 'http://127.0.0.1:8080/privacy?lang=en' | grep -q 'Google/YouTube data and OAuth'
           curl -fsS 'http://127.0.0.1:8080/terms?lang=en' | grep -q 'SIGILLUM Terms of Service'

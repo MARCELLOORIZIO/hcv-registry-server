@@ -8,7 +8,7 @@ const {
   emailCopy,
 } = require('./legal_documents');
 
-const versions = { termsVersion: '2026-09-25', privacyVersion: '2026-09-25' };
+const versions = { termsVersion: '2026-10-02', privacyVersion: '2026-10-02' };
 
 assert.deepStrictEqual(SUPPORTED_LANGUAGES, ['it', 'en', 'es', 'ru']);
 assert.strictEqual(normalizeLanguage('es-ES'), 'es');
@@ -22,11 +22,12 @@ for (const lang of SUPPORTED_LANGUAGES) {
   const deletion = legalDocument('delete-data', lang, versions);
 
   assert.ok(terms.title.length > 5);
-  assert.ok(terms.body.includes('2026-09-25'));
+  assert.ok(terms.body.includes('2026-10-02'));
   assert.ok(terms.body.toLowerCase().includes('hcvpack'));
-  assert.ok(terms.body.includes('YouTube'));
+  assert.ok(!terms.body.includes('YouTube'));
   assert.ok(privacy.title.length > 5);
-  assert.ok(privacy.body.includes('2026-09-25'));
+  assert.ok(privacy.body.includes('2026-10-02'));
+  assert.ok(privacy.body.includes('Cloudflare R2'));
   assert.ok(privacy.body.includes('YouTube'));
   assert.ok(support.body.includes('marcelloorizio@legalmail.it'));
   assert.ok(deletion.body.length > 200);
