@@ -45,6 +45,32 @@ function packageHeaders(hcvId, mediaHash, packHash) {
     ).toString('base64'),
   };
 }
+function subtitleHeaders(
+  hcvId,
+  originalHashValue,
+  captionedSha256,
+  subtitleSha256,
+  packHash,
+) {
+  const statement = [
+    'SIGILLUM_SUBTITLE_DERIVATION_BINDING_V1',
+    hcvId,
+    originalHashValue,
+    captionedSha256,
+    subtitleSha256,
+    packHash,
+  ].join('|');
+  return {
+    'x-sigillum-captioned-sha256': captionedSha256,
+    'x-sigillum-subtitle-binding-version': '1',
+    'x-sigillum-subtitle-derivation-signature': crypto.sign(
+      'RSA-SHA256',
+      Buffer.from(statement, 'utf8'),
+      deviceKeys.privateKey,
+    ).toString('base64'),
+  };
+}
+
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sigillum-r2-vo-'));
 const originalPath = path.join(tmp, 'original.mp4');
@@ -593,6 +619,9 @@ async function run() {
     );
     assert.equal(paidView.json.publicUrl, undefined);
     assert.equal(paidView.json.platformPostId, undefined);
+    assert.equal(paidView.json.providerReceipt, undefined);
+    assert.equal(paidView.json.lifecycleJobId, undefined);
+    assert.equal(paidView.json.objectKey, undefined);
 
     const auth = await request(
       base,
@@ -626,6 +655,54 @@ async function run() {
     assert.equal(replay.status, 403);
     assert.equal(replay.json.error, 'REFERENCE_READ_AUTH_INVALID');
 
+    const captionedBytes = Buffer.from(originalBytes);
+    const captionedSha256 = crypto
+      .createHash('sha256')
+      .update(captionedBytes)
+      .digest('hex');
+    const subtitleSha256 = sha('r2-subtitle-file');
+    const subtitlePublication = await request(
+      base,
+      'POST',
+      '/api/verified-originals/publish-subtitle/' + HCV_ID +
+        '?consentRecordId=' + encodeURIComponent(consent.json.recordId) +
+        '&monetizationEnabled=false' +
+        '&hcvpackSha256=' + HCVPACK_HASH +
+        '&subtitleSha256=' + subtitleSha256,
+      {
+        bearer: 'owner-token',
+        bytes: captionedBytes,
+        headers: subtitleHeaders(
+          HCV_ID,
+          originalHash,
+          captionedSha256,
+          subtitleSha256,
+          HCVPACK_HASH,
+        ),
+      },
+    );
+    assert.equal(
+      subtitlePublication.status,
+      201,
+      subtitlePublication.text,
+    );
+    assert.equal(subtitlePublication.json.platform, 'r2');
+    assert.equal(
+      subtitlePublication.json.referenceRole,
+      'DERIVED_REFERENCE',
+    );
+    assert.equal(
+      subtitlePublication.json.sourceDerivationSha256,
+      captionedSha256,
+    );
+    assert.equal(
+      subtitlePublication.json.subtitleSha256,
+      subtitleSha256,
+    );
+    assert.equal(subtitlePublication.json.publicUrl, undefined);
+    assert.equal(providerCommitCount, 2);
+    assert.equal(providerObjects.size, 2);
+
     const wrongBytes = Buffer.from(originalBytes);
     wrongBytes[wrongBytes.length - 1] ^= 0xff;
     const secondConsentAttempt = await request(
@@ -645,7 +722,7 @@ async function run() {
     );
     assert.equal(secondConsentAttempt.status, 409);
 
-    providerDeleteFailuresRemaining = 1;
+    providerDeleteFailuresRemaining = 2;
     const withdrawalPending = await request(
       base,
       'POST',
@@ -665,7 +742,7 @@ async function run() {
       afterPendingDelete.json.availability,
       'REFERENCE_NOT_AVAILABLE',
     );
-    assert.equal(providerObjects.size, 1);
+    assert.equal(providerObjects.size, 2);
 
     // Production deletion retries use bounded backoff. Make the durable retry
     // due now so this test can exercise recovery without sleeping.
@@ -683,7 +760,7 @@ async function run() {
     );
     assert.equal(withdrawalRetry.status, 200, withdrawalRetry.text);
     assert.equal(withdrawalRetry.json.platformTakedown, 'COMPLETED');
-    assert.equal(providerDeleteCount, 1);
+    assert.equal(providerDeleteCount, 2);
     assert.equal(providerObjects.size, 0);
 
     const stored = await pool.query(`
@@ -698,22 +775,29 @@ async function run() {
         ON j.object_id=p.platform_post_id
       WHERE p.hcv_id=$1
     `, [HCV_ID]);
-    assert.equal(stored.rows.length, 1);
-    assert.equal(stored.rows[0].platform, 'r2');
-    assert.equal(stored.rows[0].public_url, '');
-    assert.equal(stored.rows[0].reference_sha256, originalHash);
-    assert.equal(
-      stored.rows[0].derivation_type,
-      'exact_original_reference_v1',
+    assert.equal(stored.rows.length, 2);
+    for (const row of stored.rows) {
+      assert.equal(row.platform, 'r2');
+      assert.equal(row.public_url, '');
+      assert.equal(row.publication_status, 'REVOKED');
+      assert.equal(row.visibility, 'unavailable');
+      assert.equal(row.processing_status, 'withdrawn');
+      assert.equal(row.state, 'DELETED');
+      assert.equal(row.provider, 'r2');
+    }
+    const originalStored = stored.rows.find(
+      row => row.derivation_type === 'exact_original_reference_v1',
     );
-    assert.equal(stored.rows[0].publication_status, 'REVOKED');
-    assert.equal(stored.rows[0].visibility, 'unavailable');
-    assert.equal(stored.rows[0].processing_status, 'withdrawn');
-    assert.equal(stored.rows[0].state, 'DELETED');
-    assert.equal(stored.rows[0].provider, 'r2');
+    const subtitleStored = stored.rows.find(
+      row => row.derivation_type === 'subtitle_burn_in_reference_v1',
+    );
+    assert.ok(originalStored);
+    assert.ok(subtitleStored);
+    assert.equal(originalStored.reference_sha256, originalHash);
+    assert.notEqual(subtitleStored.reference_sha256, originalHash);
 
     console.log(
-      'verified_originals_r2_production_test: PASS — exact private R2 reference, provider-neutral discovery, live HEAD attestation, subscription gate, one-use authenticated read, fail-closed withdrawal and delete retry',
+      'verified_originals_r2_production_test: PASS — exact private R2 original, encrypted trusted subtitle derivative, provider-neutral discovery, safe view, live HEAD attestation, subscription gate, one-use authenticated read, fail-closed withdrawal and delete retry',
     );
   } finally {
     server.closeAllConnections?.();
