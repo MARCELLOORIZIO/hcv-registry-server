@@ -2748,6 +2748,7 @@ function createVerifiedOriginalsProduction({
     outputPath,
     captionedSha256,
     subtitleSha256,
+    exactReference = false,
   }) {
     if (original.contentType !== 'video' ||
         !SHA256.test(captionedSha256) ||
@@ -2781,30 +2782,46 @@ function createVerifiedOriginalsProduction({
       fail('DERIVATION_KEY_PIN_MISMATCH', 503);
     }
 
-    await execFileAsync(ffmpegPath, [
-      '-hide_banner', '-loglevel', 'error', '-nostdin', '-y',
-      '-i', captionedPath,
-      '-map', '0:v:0', '-map', '0:a?',
-      '-map_metadata', '-1', '-map_chapters', '-1',
-      '-c:v', 'libx264', '-preset', 'medium', '-crf', '23',
-      '-pix_fmt', 'yuv420p',
-      '-c:a', 'aac', '-b:a', '160k',
-      '-movflags', '+faststart',
-      outputPath,
-    ], {
-      timeout: 180000,
-      maxBuffer: 4 * 1024 * 1024,
-    });
+    let referencePath = outputPath;
+    let outputHash;
+    let outputSize;
 
-    const output = await fs.promises.readFile(outputPath);
-    if (!output.length) fail('SUBTITLE_DERIVATION_OUTPUT_INVALID', 500);
-    const outputHash = hashBytes(output);
+    if (exactReference) {
+      const sourceStat = await fs.promises.stat(captionedPath);
+      if (!sourceStat.isFile() || sourceStat.size <= 0) {
+        fail('SUBTITLE_DERIVATION_OUTPUT_INVALID', 500);
+      }
+      referencePath = captionedPath;
+      outputHash = captionedSha256;
+      outputSize = sourceStat.size;
+    } else {
+      await execFileAsync(ffmpegPath, [
+        '-hide_banner', '-loglevel', 'error', '-nostdin', '-y',
+        '-i', captionedPath,
+        '-map', '0:v:0', '-map', '0:a?',
+        '-map_metadata', '-1', '-map_chapters', '-1',
+        '-c:v', 'libx264', '-preset', 'medium', '-crf', '23',
+        '-pix_fmt', 'yuv420p',
+        '-c:a', 'aac', '-b:a', '160k',
+        '-movflags', '+faststart',
+        outputPath,
+      ], {
+        timeout: 180000,
+        maxBuffer: 4 * 1024 * 1024,
+      });
+
+      const output = await fs.promises.readFile(outputPath);
+      if (!output.length) fail('SUBTITLE_DERIVATION_OUTPUT_INVALID', 500);
+      outputHash = hashBytes(output);
+      outputSize = output.length;
+    }
+
     const referenceVisualFingerprint =
       await buildReferenceVisualFingerprintV3({
         ffmpegPath,
-        filePath: outputPath,
+        filePath: referencePath,
         mediaType: 'video',
-        workDir: path.dirname(outputPath),
+        workDir: path.dirname(referencePath),
       });
     if (!validReferenceVisualFingerprintV3(referenceVisualFingerprint)) {
       fail('REFERENCE_VISUAL_FINGERPRINT_INVALID', 500);
@@ -2833,7 +2850,7 @@ function createVerifiedOriginalsProduction({
         existingManifest.source?.sha256 === captionedSha256 &&
         existingManifest.source?.subtitleSha256 === subtitleSha256 &&
         existingManifest.output?.sha256 === outputHash &&
-        existingManifest.output?.byteLength === output.length &&
+        existingManifest.output?.byteLength === outputSize &&
         existingManifest.transform?.operation ===
           SUBTITLE_DERIVATION_OPERATION &&
         JSON.stringify(existingManifest.output?.referenceVisualFingerprint) ===
@@ -2844,7 +2861,8 @@ function createVerifiedOriginalsProduction({
       return {
         manifest: existingManifest,
         outputHash,
-        outputSize: output.length,
+        outputSize,
+        referencePath,
       };
     }
 
@@ -2863,7 +2881,7 @@ function createVerifiedOriginalsProduction({
       },
       output: {
         sha256: outputHash,
-        byteLength: output.length,
+        byteLength: outputSize,
         mediaType: 'video',
         referenceVisualFingerprint,
       },
@@ -2918,7 +2936,8 @@ function createVerifiedOriginalsProduction({
     return {
       manifest,
       outputHash,
-      outputSize: output.length,
+      outputSize,
+      referencePath,
     };
   }
 
@@ -3656,6 +3675,7 @@ function createVerifiedOriginalsProduction({
         outputPath,
         captionedSha256,
         subtitleSha256,
+        exactReference: true,
       });
 
       const youtube = await youtubePublish({
@@ -3912,7 +3932,7 @@ function createVerifiedOriginalsProduction({
         if (lifecycleJob.state !== 'COMMITTED') {
           try {
             receipt = await requireR2ReferenceProvider().commitReference({
-              sourcePath: outputPath,
+              sourcePath: derivation.referencePath,
               hcvId,
               referenceRole: DERIVED_REFERENCE_ROLE,
               referenceSha256: derivation.outputHash,
