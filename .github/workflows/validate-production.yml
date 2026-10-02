@@ -8,6 +8,7 @@ on:
       - release/reconciled-prelaunch-backend-clean-20260824
       - feature/r2-primary-reference-lifecycle-20261002
       - hardening/r2-failfast-config-20261002
+      - ops/r2-live-health-attestation-20261002
       - fix/r2-legal-copy-20261002
   pull_request:
     branches:
