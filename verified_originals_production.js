@@ -6,6 +6,7 @@ const os = require('os');
 const path = require('path');
 const { promisify } = require('util');
 const { execFile } = require('child_process');
+const { pipeline } = require('stream/promises');
 const {
   createR2ReferenceProvider,
   opaqueObjectKey,
@@ -30,6 +31,11 @@ const {
   createPrimaryReferenceManifest,
   verifyPrimaryReferenceManifest,
 } = require('./primary_reference_manifest');
+const {
+  consumeReadAuthorization,
+  initPrimaryReferenceReadAuthSchema,
+  issueReadAuthorization,
+} = require('./primary_reference_read_auth');
 
 const execFileAsync = promisify(execFile);
 
@@ -1006,6 +1012,7 @@ function createVerifiedOriginalsProduction({
         ON verified_originals_audit(hcv_id, id DESC);
     `);
     await initPrimaryReferenceLifecycleSchema(pool);
+    await initPrimaryReferenceReadAuthSchema(pool);
     startTakedownWorker();
   }
 
@@ -1360,6 +1367,10 @@ function createVerifiedOriginalsProduction({
       return {
         ...common,
         referenceAccess: 'SHORT_LIVED_AUTHORIZATION',
+        readAuthorizationPath:
+          '/api/verified-originals/' +
+          encodeURIComponent(reference.hcvId) +
+          '/read-authorization',
       };
     }
     return common;
@@ -1551,6 +1562,124 @@ function createVerifiedOriginalsProduction({
           : null,
       totalMs: Date.now() - startedAt,
     };
+  }
+
+  async function createR2ReadAuthorization(req, hcvId) {
+    if (primaryReferenceProviderName !== 'r2') {
+      fail('REFERENCE_READ_AUTH_NOT_SUPPORTED', 404);
+    }
+    const session = await authenticate(req);
+    const account = await accountEnvelope(
+      session.account_id,
+      session.device_key_fingerprint,
+    );
+    if (account.subscriptionStatus !== 'active') {
+      fail('SUBSCRIPTION_REQUIRED', 402);
+    }
+
+    const reference = await activeR2Reference(hcvId);
+    if (!reference) fail('REFERENCE_NOT_AVAILABLE', 404);
+    const ttlSeconds = Math.max(
+      15,
+      Math.min(
+        300,
+        Number(process.env.R2_REFERENCE_READ_TTL_SECONDS || 60),
+      ),
+    );
+    const authorization = await issueReadAuthorization(pool, {
+      jobId: reference.lifecycleJobId,
+      hcvId,
+      accountId: session.account_id,
+      ttlSeconds,
+    });
+    return {
+      hcvId,
+      platform: 'r2',
+      access: 'ENTITLED',
+      referenceAccess: 'SHORT_LIVED_AUTHORIZATION',
+      readPath:
+        '/api/verified-originals/reference-read/' +
+        encodeURIComponent(authorization.token),
+      expiresAt: authorization.expiresAt,
+      expiresInSeconds: authorization.expiresInSeconds,
+    };
+  }
+
+  async function streamAuthorizedR2Reference(req, res, token) {
+    if (primaryReferenceProviderName !== 'r2') {
+      fail('REFERENCE_READ_AUTH_NOT_SUPPORTED', 404);
+    }
+    const session = await authenticate(req);
+    const account = await accountEnvelope(
+      session.account_id,
+      session.device_key_fingerprint,
+    );
+    if (account.subscriptionStatus !== 'active') {
+      fail('SUBSCRIPTION_REQUIRED', 402);
+    }
+
+    const authorization = await consumeReadAuthorization(pool, {
+      token,
+      accountId: session.account_id,
+    });
+    const reference = await activeR2Reference(authorization.hcvId);
+    if (!reference ||
+        reference.lifecycleJobId !== authorization.jobId ||
+        !reference.providerReceipt) {
+      fail('REFERENCE_NOT_AVAILABLE', 404);
+    }
+
+    const receipt = reference.providerReceipt;
+    const tempRoot = String(
+      process.env.SIGILLUM_VERIFIED_ORIGINALS_TMP ||
+        path.join(os.tmpdir(), 'sigillum-verified-originals'),
+    );
+    await fs.promises.mkdir(tempRoot, { recursive: true, mode: 0o700 });
+    const tempDir = await fs.promises.mkdtemp(
+      path.join(tempRoot, 'r2-read-'),
+    );
+    const mediaType = String(receipt.mediaType || '');
+    const extension = mediaType === 'video'
+      ? '.mp4'
+      : mediaType === 'photo'
+        ? '.jpg'
+        : '.bin';
+    const destinationPath = path.join(tempDir, 'reference' + extension);
+
+    try {
+      await requireR2ReferenceProvider().materializeReference({
+        receipt,
+        destinationPath,
+        binding: {
+          hcvId: authorization.hcvId,
+          referenceRole: receipt.referenceRole,
+          referenceSha256: receipt.referenceSha256,
+          originalContentSha256: receipt.originalContentSha256,
+          hcvpackSha256: receipt.hcvpackSha256,
+          derivationManifestSha256: receipt.derivationManifestSha256,
+          objectId: receipt.objectId,
+          mediaType: receipt.mediaType,
+        },
+      });
+      const stat = await fs.promises.stat(destinationPath);
+      res.writeHead(200, {
+        'content-type':
+          mediaType === 'video'
+            ? 'video/mp4'
+            : mediaType === 'photo'
+              ? 'image/jpeg'
+              : 'application/octet-stream',
+        'content-length': String(stat.size),
+        'cache-control': 'private, no-store, max-age=0',
+        pragma: 'no-cache',
+        'x-content-type-options': 'nosniff',
+        'content-disposition': 'inline; filename="sigillum-reference' +
+          extension + '"',
+      });
+      await pipeline(fs.createReadStream(destinationPath), res);
+    } finally {
+      await fs.promises.rm(tempDir, { recursive: true, force: true });
+    }
   }
 
   async function publicHistory(hcvId) {
