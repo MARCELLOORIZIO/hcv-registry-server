@@ -1,0 +1,27 @@
+name: Verify live R2 health
+
+on:
+  push:
+    branches:
+      - ops/verify-live-r2-health-20261002
+    paths:
+      - '.github/workflows/verify-live-r2-health.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-live-r2:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Verify public health reports R2
+        shell: bash
+        run: |
+          set -euo pipefail
+          body="$(curl --fail-with-body --silent --show-error --max-time 30 https://sigillum-hcv.com/health)"
+          echo "$body" | jq -e '.ok == true' >/dev/null
+          echo "$body" | jq -e '.database == true' >/dev/null
+          echo "$body" | jq -e '.primaryReferenceProvider == "r2"' >/dev/null
+          echo "LIVE_R2_HEALTH=PASS"
