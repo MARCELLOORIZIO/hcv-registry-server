@@ -10,6 +10,7 @@ on:
       - hardening/r2-failfast-config-20261002
       - ops/r2-live-health-attestation-20261002
       - fix/r2-legal-copy-20261002
+      - feature/r2-subtitle-derived-verification-20261002
   pull_request:
     branches:
       - main
