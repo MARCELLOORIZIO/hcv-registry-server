@@ -4093,6 +4093,51 @@ function createVerifiedOriginalsProduction({
     return 'PENDING';
   }
 
+  async function retryPendingPrimaryReferenceDeletes() {
+    if (primaryReferenceProviderName !== 'r2') {
+      return { attempted: 0, completed: 0 };
+    }
+    const jobs = await claimDeleteJobs(pool, {
+      provider: 'r2',
+      limit: 50,
+    });
+    let completed = 0;
+    for (const job of jobs) {
+      try {
+        const result = await requireR2ReferenceProvider()
+          .deleteReference(job.receipt);
+        if (!result?.deleted) {
+          await markDeleteRetry(
+            pool,
+            job.jobId,
+            'R2_DELETE_NOT_CONFIRMED',
+          );
+          continue;
+        }
+        await markPrimaryReferenceDeleted(pool, job.jobId);
+        await pool.query(`
+          UPDATE verified_originals_platform_receipts
+          SET processing_status='withdrawn',
+              visibility='unavailable',
+              verified_at=NOW()
+          WHERE platform='r2'
+            AND platform_post_id=$1
+            AND processing_status<>'withdrawn'
+        `, [job.objectId]);
+        completed += 1;
+      } catch (_) {
+        try {
+          await markDeleteRetry(
+            pool,
+            job.jobId,
+            'R2_DELETE_PROVIDER_UNAVAILABLE',
+          );
+        } catch (_) {}
+      }
+    }
+    return { attempted: jobs.length, completed };
+  }
+
   async function retryPendingTakedowns() {
     const rows = (await pool.query(`
       SELECT p.hcv_id,p.publication_id,p.platform,p.platform_post_id,
