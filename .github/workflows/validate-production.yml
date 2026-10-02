@@ -6,6 +6,7 @@ on:
       - commercial/prelaunch-20260811
       - commercial/reconciled-prelaunch-20260824
       - release/reconciled-prelaunch-backend-clean-20260824
+      - feature/r2-primary-reference-lifecycle-20261002
   pull_request:
     branches:
       - main
