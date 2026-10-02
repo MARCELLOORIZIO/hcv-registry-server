@@ -23,7 +23,7 @@ jobs:
       R2_REQUIRE_EU: "true"
 
     steps:
-      - name: Checkout current SIGILLUM release branch
+      - name: Checkout selected SIGILLUM branch
         uses: actions/checkout@v4
 
       - name: Set up Node.js
@@ -32,7 +32,7 @@ jobs:
           node-version: "20"
 
       - name: Install acceptance-only AWS SDK
-        run: npm install --no-save @aws-sdk/client-s3@3 @aws-sdk/s3-request-presigner@3
+        run: npm install --no-save @aws-sdk/client-s3@3 @aws-sdk/lib-storage@3 @aws-sdk/s3-request-presigner@3
 
       - name: Run R2 acceptance gate with AWS SDK signer
         run: |
@@ -45,4 +45,17 @@ jobs:
         with:
           name: r2-reference-acceptance-report
           path: r2-acceptance-report.json
+          if-no-files-found: ignore
+
+      - name: Run primary R2 provider V2 acceptance
+        run: |
+          node tool/r2_primary_reference_provider_acceptance.js \
+            --mb "${{ inputs.payload_mb }}" \
+            --json r2-primary-provider-acceptance-report.json
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: r2-primary-provider-acceptance-report
+          path: r2-primary-provider-acceptance-report.json
           if-no-files-found: ignore

@@ -6,6 +6,37 @@ const os = require('os');
 const path = require('path');
 const { promisify } = require('util');
 const { execFile } = require('child_process');
+const { pipeline } = require('stream/promises');
+const {
+  createR2ReferenceProvider,
+  opaqueObjectKey,
+  selectPrimaryReferenceProvider,
+} = require('./primary_reference_provider');
+const {
+  availableReference: availablePrimaryReference,
+  claimDeleteJob,
+  claimDeleteJobs,
+  claimUploadJob,
+  createOrGetReferenceJob,
+  initPrimaryReferenceLifecycleSchema,
+  markCommitted: markPrimaryReferenceCommitted,
+  markDeleteRetry,
+  markDeleted: markPrimaryReferenceDeleted,
+  markUploadRetry,
+  referenceJobByProviderObject,
+  requestDeleteByProviderObject,
+} = require('./primary_reference_lifecycle');
+const {
+  OPERATION: PRIMARY_REFERENCE_OPERATION,
+  SCHEMA: PRIMARY_REFERENCE_SCHEMA,
+  createPrimaryReferenceManifest,
+  verifyPrimaryReferenceManifest,
+} = require('./primary_reference_manifest');
+const {
+  consumeReadAuthorization,
+  initPrimaryReferenceReadAuthSchema,
+  issueReadAuthorization,
+} = require('./primary_reference_read_auth');
 
 const execFileAsync = promisify(execFile);
 
@@ -764,6 +795,7 @@ function createVerifiedOriginalsProduction({
   fetchImpl = global.fetch,
   sleep = sleepMs,
   ffmpegPath = configuredFfmpegPath(),
+  primaryReferenceProviderOverride = null,
 } = {}) {
   for (const [name, value] of Object.entries({
     pool,
@@ -786,6 +818,24 @@ function createVerifiedOriginalsProduction({
   const fail = (code, status = 400, message) => {
     throw publicError(code, status, message);
   };
+
+  const primaryReferenceProviderName =
+    primaryReferenceProviderOverride?.name ||
+    selectPrimaryReferenceProvider(process.env);
+  let r2ReferenceProvider =
+    primaryReferenceProviderName === 'r2'
+      ? primaryReferenceProviderOverride
+      : null;
+
+  function requireR2ReferenceProvider() {
+    if (primaryReferenceProviderName !== 'r2') {
+      fail('PRIMARY_REFERENCE_PROVIDER_NOT_R2', 500);
+    }
+    if (!r2ReferenceProvider) {
+      r2ReferenceProvider = createR2ReferenceProvider({ env: process.env });
+    }
+    return r2ReferenceProvider;
+  }
 
   let takedownTimer = null;
   let youtubeAccessTokenCache = '';
@@ -962,6 +1012,8 @@ function createVerifiedOriginalsProduction({
       CREATE INDEX IF NOT EXISTS verified_originals_audit_hcv_idx
         ON verified_originals_audit(hcv_id, id DESC);
     `);
+    await initPrimaryReferenceLifecycleSchema(pool);
+    await initPrimaryReferenceReadAuthSchema(pool);
     startTakedownWorker();
   }
 
@@ -1104,7 +1156,7 @@ function createVerifiedOriginalsProduction({
     `, [hcvId])).rows[0] || null;
   }
 
-  async function activeReference(hcvId) {
+  async function activeYoutubeReference(hcvId) {
     const original = await verifiedOriginal(hcvId);
     if (!original) return null;
     const row = (await pool.query(`
@@ -1184,7 +1236,148 @@ function createVerifiedOriginalsProduction({
     };
   }
 
-  async function activeSubtitleReference(
+  async function activeR2Reference(hcvId) {
+    const original = await verifiedOriginal(hcvId);
+    if (!original) return null;
+    const job = await availablePrimaryReference(
+      pool,
+      hcvId,
+      ORIGINAL_REFERENCE_ROLE,
+    );
+    if (!job || job.provider !== 'r2' || !job.receipt) return null;
+
+    const row = (await pool.query(`
+      SELECT
+        p.*,
+        c.state AS consent_state,
+        r.hcv_id AS receipt_hcv_id,
+        r.platform AS receipt_platform,
+        r.platform_post_id AS receipt_platform_post_id,
+        r.uploaded_sha256 AS receipt_uploaded_sha256,
+        r.processing_status AS receipt_processing_status,
+        r.visibility AS receipt_visibility
+      FROM verified_originals_publications p
+      JOIN verified_originals_consents c ON c.record_id=p.consent_record_id
+      JOIN verified_originals_platform_receipts r
+        ON r.receipt_id=p.platform_receipt_id
+      WHERE p.hcv_id=$1
+        AND p.platform='r2'
+        AND p.platform_post_id=$2
+        AND p.publication_status='PUBLISHED'
+        AND p.reference_role=$3
+      ORDER BY p.published_at DESC
+      LIMIT 1
+    `, [
+      hcvId,
+      job.objectId,
+      ORIGINAL_REFERENCE_ROLE,
+    ])).rows[0];
+
+    if (!row ||
+        row.consent_state !== 'ACTIVE' ||
+        row.original_content_sha256 !== original.contentHash ||
+        row.derived_from !== original.contentHash ||
+        row.reference_sha256 !== job.referenceSha256 ||
+        row.hcvpack_sha256 !== job.hcvpackSha256 ||
+        row.receipt_hcv_id !== hcvId ||
+        row.receipt_platform !== 'r2' ||
+        row.receipt_platform_post_id !== job.objectId ||
+        row.receipt_uploaded_sha256 !== job.receipt.ciphertextSha256 ||
+        row.receipt_processing_status !== 'succeeded' ||
+        row.receipt_visibility !== 'private' ||
+        !SHA256.test(row.reference_sha256 || '')) {
+      return null;
+    }
+
+    let manifest;
+    try {
+      const derivationRow = (await pool.query(
+        'SELECT manifest_raw FROM trusted_derivations WHERE output_sha256=$1 AND hcv_id=$2',
+        [row.reference_sha256, hcvId],
+      )).rows[0];
+      if (!derivationRow) return null;
+      manifest = JSON.parse(derivationRow.manifest_raw);
+      const trustedKeys = parsePinnedDerivationKeys();
+      if (!verifyPrimaryReferenceManifest({
+        manifest,
+        certificateRaw: original.row.certificate_raw,
+        trustedKeys,
+      })) {
+        return null;
+      }
+    } catch (_) {
+      return null;
+    }
+
+    const fingerprint = manifest.output?.referenceVisualFingerprint;
+    if (!validReferenceVisualFingerprintV3(fingerprint)) return null;
+
+    return {
+      publicationId: row.publication_id,
+      hcvId,
+      platform: 'r2',
+      referenceSha256: row.reference_sha256,
+      originalContentSha256: row.original_content_sha256,
+      hcvpackSha256: row.hcvpack_sha256,
+      derivedFrom: row.derived_from,
+      derivationType: row.derivation_type,
+      publicationStatus: row.publication_status,
+      certificateVerdict: 'CERTIFICATE_RECORD_VERIFIED',
+      socialFileVerdict: 'NOT_VERIFIED',
+      referenceVisualFingerprint: fingerprint,
+      referenceAccess: 'SHORT_LIVED_AUTHORIZATION',
+      referenceRole: row.reference_role,
+      publishedAt: row.published_at,
+      lifecycleJobId: job.jobId,
+      providerReceipt: job.receipt,
+    };
+  }
+
+  async function activeReference(hcvId) {
+    if (primaryReferenceProviderName === 'r2') {
+      return activeR2Reference(hcvId);
+    }
+    return activeYoutubeReference(hcvId);
+  }
+
+  function referenceViewEnvelope(reference) {
+    if (!reference || typeof reference !== 'object') return null;
+    const common = {
+      publicationId: reference.publicationId,
+      hcvId: reference.hcvId,
+      platform: reference.platform,
+      referenceSha256: reference.referenceSha256,
+      originalContentSha256: reference.originalContentSha256,
+      hcvpackSha256: reference.hcvpackSha256,
+      derivedFrom: reference.derivedFrom,
+      derivationType: reference.derivationType,
+      publicationStatus: reference.publicationStatus,
+      certificateVerdict: reference.certificateVerdict,
+      socialFileVerdict: reference.socialFileVerdict,
+      referenceVisualFingerprint: reference.referenceVisualFingerprint,
+      publishedAt: reference.publishedAt,
+    };
+    if (reference.platform === 'youtube') {
+      return {
+        ...common,
+        platformPostId: reference.platformPostId,
+        publicUrl: reference.publicUrl,
+      };
+    }
+    if (reference.platform === 'r2') {
+      return {
+        ...common,
+        referenceAccess: 'SHORT_LIVED_AUTHORIZATION',
+        readAuthorizationPath:
+          '/api/verified-originals/' +
+          encodeURIComponent(reference.hcvId) +
+          '/read-authorization',
+      };
+    }
+    return common;
+  }
+
+  async function activeYoutubeSubtitleReference(
     hcvId,
     captionedSha256,
     subtitleSha256,
@@ -1284,6 +1477,136 @@ function createVerifiedOriginalsProduction({
     };
   }
 
+  async function activeR2SubtitleReference(
+    hcvId,
+    captionedSha256,
+    subtitleSha256,
+  ) {
+    if (!SHA256.test(captionedSha256) ||
+        !SHA256.test(subtitleSha256)) {
+      return null;
+    }
+    const original = await verifiedOriginal(hcvId);
+    if (!original || original.contentType !== 'video') return null;
+
+    const job = await availablePrimaryReference(
+      pool,
+      hcvId,
+      DERIVED_REFERENCE_ROLE,
+    );
+    if (!job || job.provider !== 'r2' || !job.receipt) return null;
+
+    const row = (await pool.query(`
+      SELECT
+        p.*,
+        c.state AS consent_state,
+        r.hcv_id AS receipt_hcv_id,
+        r.platform AS receipt_platform,
+        r.platform_post_id AS receipt_platform_post_id,
+        r.uploaded_sha256 AS receipt_uploaded_sha256,
+        r.processing_status AS receipt_processing_status,
+        r.visibility AS receipt_visibility
+      FROM verified_originals_publications p
+      JOIN verified_originals_consents c ON c.record_id=p.consent_record_id
+      JOIN verified_originals_platform_receipts r
+        ON r.receipt_id=p.platform_receipt_id
+      WHERE p.hcv_id=$1
+        AND p.platform='r2'
+        AND p.platform_post_id=$2
+        AND p.publication_status='PUBLISHED'
+        AND p.reference_role=$3
+        AND p.source_derivation_sha256=$4
+        AND p.subtitle_sha256=$5
+      ORDER BY p.published_at DESC
+      LIMIT 1
+    `, [
+      hcvId,
+      job.objectId,
+      DERIVED_REFERENCE_ROLE,
+      captionedSha256,
+      subtitleSha256,
+    ])).rows[0];
+
+    if (!row ||
+        row.consent_state !== 'ACTIVE' ||
+        row.original_content_sha256 !== original.contentHash ||
+        row.derived_from !== original.contentHash ||
+        row.derivation_type !== SUBTITLE_DERIVATION_OPERATION ||
+        row.receipt_hcv_id !== hcvId ||
+        row.receipt_platform !== 'r2' ||
+        row.receipt_platform_post_id !== job.objectId ||
+        row.receipt_uploaded_sha256 !== job.receipt.ciphertextSha256 ||
+        row.receipt_processing_status !== 'succeeded' ||
+        row.receipt_visibility !== 'private' ||
+        row.reference_sha256 !== job.referenceSha256 ||
+        !SHA256.test(row.reference_sha256 || '')) {
+      return null;
+    }
+
+    const derivationRow = (await pool.query(
+      'SELECT manifest_raw FROM trusted_derivations WHERE output_sha256=$1 AND hcv_id=$2',
+      [row.reference_sha256, hcvId],
+    )).rows[0];
+    if (!derivationRow) return null;
+
+    let manifest;
+    try {
+      manifest = JSON.parse(derivationRow.manifest_raw);
+    } catch (_) {
+      return null;
+    }
+    const trustedKeys = parsePinnedDerivationKeys();
+    if (!verifySubtitleDerivationManifest({
+      manifest,
+      certificateRaw: original.row.certificate_raw,
+      trustedKeys,
+      verifyCertificateRaw,
+    })) {
+      return null;
+    }
+    if (manifest.source?.sha256 !== captionedSha256 ||
+        manifest.source?.subtitleSha256 !== subtitleSha256) {
+      return null;
+    }
+
+    return {
+      publicationId: row.publication_id,
+      hcvId,
+      platform: 'r2',
+      referenceSha256: row.reference_sha256,
+      originalContentSha256: row.original_content_sha256,
+      hcvpackSha256: row.hcvpack_sha256,
+      sourceDerivationSha256: row.source_derivation_sha256,
+      subtitleSha256: row.subtitle_sha256,
+      derivationType: row.derivation_type,
+      referenceRole: row.reference_role,
+      publicationStatus: row.publication_status,
+      referenceAccess: 'SHORT_LIVED_AUTHORIZATION',
+      publishedAt: row.published_at,
+      lifecycleJobId: job.jobId,
+      providerReceipt: job.receipt,
+    };
+  }
+
+  async function activeSubtitleReference(
+    hcvId,
+    captionedSha256,
+    subtitleSha256,
+  ) {
+    if (primaryReferenceProviderName === 'r2') {
+      return activeR2SubtitleReference(
+        hcvId,
+        captionedSha256,
+        subtitleSha256,
+      );
+    }
+    return activeYoutubeSubtitleReference(
+      hcvId,
+      captionedSha256,
+      subtitleSha256,
+    );
+  }
+
   async function publicAvailability(hcvId) {
     const reference = await activeReference(hcvId);
     if (!reference) {
@@ -1293,7 +1616,7 @@ function createVerifiedOriginalsProduction({
       hcvId,
       availability: 'REFERENCE_AVAILABLE',
       publicationStatus: 'PUBLISHED',
-      platform: 'youtube',
+      platform: reference.platform,
       hcvpackSha256: reference.hcvpackSha256,
       certificateVerdict: 'CERTIFICATE_RECORD_VERIFIED',
       socialFileVerdict: 'NOT_VERIFIED',
@@ -1310,15 +1633,59 @@ function createVerifiedOriginalsProduction({
         hcvId,
         availability: 'REFERENCE_NOT_AVAILABLE',
         youtubeLive: false,
-        comparisonMode: 'YOUTUBE_LIVE_ATTESTED_SIGNED_V3',
+        r2Live: false,
+        referenceLive: false,
+        comparisonMode:
+          primaryReferenceProviderName === 'r2'
+            ? 'R2_PRIVATE_EXACT_REFERENCE_SIGNED_V1'
+            : 'YOUTUBE_LIVE_ATTESTED_SIGNED_V3',
         totalMs: Date.now() - startedAt,
       };
     }
+
+    if (reference.platform === 'r2') {
+      const providerStartedAt = Date.now();
+      try {
+        const exists = await requireR2ReferenceProvider()
+          .referenceExists(reference.providerReceipt);
+        return {
+          hcvId,
+          availability: exists
+            ? 'REFERENCE_AVAILABLE'
+            : 'REFERENCE_NOT_AVAILABLE',
+          platform: 'r2',
+          youtubeLive: false,
+          r2Live: exists,
+          referenceLive: exists,
+          comparisonMode: 'R2_PRIVATE_EXACT_REFERENCE_SIGNED_V1',
+          referenceVisualFingerprint:
+            exists ? reference.referenceVisualFingerprint : null,
+          providerCheckMs: Date.now() - providerStartedAt,
+          totalMs: Date.now() - startedAt,
+        };
+      } catch (_) {
+        return {
+          hcvId,
+          availability: 'REFERENCE_TEMPORARILY_UNAVAILABLE',
+          platform: 'r2',
+          youtubeLive: false,
+          r2Live: false,
+          referenceLive: false,
+          comparisonMode: 'R2_PRIVATE_EXACT_REFERENCE_SIGNED_V1',
+          referenceVisualFingerprint: null,
+          providerCheckMs: Date.now() - providerStartedAt,
+          totalMs: Date.now() - startedAt,
+        };
+      }
+    }
+
     const live = await liveYoutubeReferenceStatus(reference);
     return {
       hcvId,
       ...live,
       platform: 'youtube',
+      r2Live: false,
+      referenceLive: live.availability === 'REFERENCE_AVAILABLE',
       comparisonMode: 'YOUTUBE_LIVE_ATTESTED_SIGNED_V3',
       referenceVisualFingerprint:
         live.availability === 'REFERENCE_AVAILABLE'
@@ -1326,6 +1693,156 @@ function createVerifiedOriginalsProduction({
           : null,
       totalMs: Date.now() - startedAt,
     };
+  }
+
+  async function createR2ReadAuthorization(req, hcvId) {
+    if (primaryReferenceProviderName !== 'r2') {
+      fail('REFERENCE_READ_AUTH_NOT_SUPPORTED', 404);
+    }
+    const session = await authenticate(req);
+    const account = await accountEnvelope(
+      session.account_id,
+      session.device_key_fingerprint,
+    );
+    if (account.subscriptionStatus !== 'active') {
+      fail('SUBSCRIPTION_REQUIRED', 402);
+    }
+
+    const reference = await activeR2Reference(hcvId);
+    if (!reference) fail('REFERENCE_NOT_AVAILABLE', 404);
+    const ttlSeconds = Math.max(
+      15,
+      Math.min(
+        300,
+        Number(process.env.R2_REFERENCE_READ_TTL_SECONDS || 60),
+      ),
+    );
+    const authorization = await issueReadAuthorization(pool, {
+      jobId: reference.lifecycleJobId,
+      hcvId,
+      accountId: session.account_id,
+      ttlSeconds,
+    });
+    return {
+      hcvId,
+      platform: 'r2',
+      access: 'ENTITLED',
+      referenceAccess: 'SHORT_LIVED_AUTHORIZATION',
+      readPath:
+        '/api/verified-originals/reference-read/' +
+        encodeURIComponent(authorization.token),
+      expiresAt: authorization.expiresAt,
+      expiresInSeconds: authorization.expiresInSeconds,
+    };
+  }
+
+  async function streamAuthorizedR2Reference(req, res, token) {
+    if (primaryReferenceProviderName !== 'r2') {
+      fail('REFERENCE_READ_AUTH_NOT_SUPPORTED', 404);
+    }
+    const session = await authenticate(req);
+    const account = await accountEnvelope(
+      session.account_id,
+      session.device_key_fingerprint,
+    );
+    if (account.subscriptionStatus !== 'active') {
+      fail('SUBSCRIPTION_REQUIRED', 402);
+    }
+
+    const authorization = await consumeReadAuthorization(pool, {
+      token,
+      accountId: session.account_id,
+    });
+    const reference = await activeR2Reference(authorization.hcvId);
+    if (!reference ||
+        reference.lifecycleJobId !== authorization.jobId ||
+        !reference.providerReceipt) {
+      fail('REFERENCE_NOT_AVAILABLE', 404);
+    }
+
+    const receipt = reference.providerReceipt;
+    const tempRoot = String(
+      process.env.SIGILLUM_VERIFIED_ORIGINALS_TMP ||
+        path.join(os.tmpdir(), 'sigillum-verified-originals'),
+    );
+    await fs.promises.mkdir(tempRoot, { recursive: true, mode: 0o700 });
+    const tempDir = await fs.promises.mkdtemp(
+      path.join(tempRoot, 'r2-read-'),
+    );
+    const mediaType = String(receipt.mediaType || '');
+    const destinationPath = path.join(tempDir, 'reference.bin');
+
+    try {
+      await requireR2ReferenceProvider().materializeReference({
+        receipt,
+        destinationPath,
+        binding: {
+          hcvId: authorization.hcvId,
+          referenceRole: receipt.referenceRole,
+          referenceSha256: receipt.referenceSha256,
+          originalContentSha256: receipt.originalContentSha256,
+          hcvpackSha256: receipt.hcvpackSha256,
+          derivationManifestSha256: receipt.derivationManifestSha256,
+          objectId: receipt.objectId,
+          mediaType: receipt.mediaType,
+        },
+      });
+      const stat = await fs.promises.stat(destinationPath);
+      const prefixHandle = await fs.promises.open(destinationPath, 'r');
+      let prefix;
+      try {
+        prefix = Buffer.alloc(Math.min(16, stat.size));
+        await prefixHandle.read(prefix, 0, prefix.length, 0);
+      } finally {
+        await prefixHandle.close();
+      }
+
+      let contentType = '';
+      let extension = '';
+      if (mediaType === 'video') {
+        const ftyp =
+          prefix.length >= 8 &&
+          prefix.subarray(4, 8).toString('ascii') === 'ftyp';
+        if (!ftyp) fail('REFERENCE_MEDIA_BYTES_INVALID', 422);
+        contentType = 'video/mp4';
+        extension = '.mp4';
+      } else if (mediaType === 'photo') {
+        const jpeg =
+          prefix.length >= 3 &&
+          prefix[0] === 0xff &&
+          prefix[1] === 0xd8 &&
+          prefix[2] === 0xff;
+        const png =
+          prefix.length >= 8 &&
+          prefix.subarray(0, 8).equals(
+            Buffer.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a]),
+          );
+        if (jpeg) {
+          contentType = 'image/jpeg';
+          extension = '.jpg';
+        } else if (png) {
+          contentType = 'image/png';
+          extension = '.png';
+        } else {
+          fail('REFERENCE_MEDIA_BYTES_INVALID', 422);
+        }
+      } else {
+        fail('REFERENCE_MEDIA_TYPE_UNSUPPORTED', 415);
+      }
+
+      res.writeHead(200, {
+        'content-type': contentType,
+        'content-length': String(stat.size),
+        'cache-control': 'private, no-store, max-age=0',
+        pragma: 'no-cache',
+        'x-content-type-options': 'nosniff',
+        'content-disposition': 'inline; filename="sigillum-reference' +
+          extension + '"',
+      });
+      await pipeline(fs.createReadStream(destinationPath), res);
+    } finally {
+      await fs.promises.rm(tempDir, { recursive: true, force: true });
+    }
   }
 
   async function publicHistory(hcvId) {
@@ -1887,6 +2404,129 @@ function createVerifiedOriginalsProduction({
     return { size: received, sha256: digest.digest('hex') };
   }
 
+  async function createExactPrimaryReferenceManifest({
+    hcvId,
+    original,
+    originalPath,
+  }) {
+    const contentType =
+      original.contentType || original.certificate?.content?.type;
+    if (contentType !== 'video' && contentType !== 'photo') {
+      fail('PRIMARY_REFERENCE_MEDIA_TYPE_UNSUPPORTED', 415);
+    }
+    const referenceVisualFingerprint = await buildReferenceVisualFingerprintV3({
+      ffmpegPath,
+      filePath: originalPath,
+      mediaType: contentType,
+      workDir: path.dirname(originalPath),
+    });
+    if (!validReferenceVisualFingerprintV3(referenceVisualFingerprint)) {
+      fail('REFERENCE_VISUAL_FINGERPRINT_INVALID', 500);
+    }
+
+    const trustedKeys = parsePinnedDerivationKeys();
+    const keyId = String(process.env.SIGILLUM_DERIVATION_KEY_ID || '');
+    if (!trustedKeys?.[keyId]) {
+      fail('DERIVATION_SERVICE_NOT_CONFIGURED', 503);
+    }
+
+    const existing = (await pool.query(
+      'SELECT hcv_id,manifest_raw FROM trusted_derivations WHERE output_sha256=$1',
+      [original.contentHash],
+    )).rows[0];
+    if (existing) {
+      let manifest;
+      try {
+        manifest = JSON.parse(existing.manifest_raw);
+      } catch (_) {
+        fail('PRIMARY_REFERENCE_IMMUTABLE_RECORD_CONFLICT', 409);
+      }
+      const valid =
+        existing.hcv_id === hcvId &&
+        verifyPrimaryReferenceManifest({
+          manifest,
+          certificateRaw: original.row.certificate_raw,
+          trustedKeys,
+        }) &&
+        manifest.schema === PRIMARY_REFERENCE_SCHEMA &&
+        manifest.output?.sha256 === original.contentHash &&
+        manifest.output?.byteLength === original.contentSize &&
+        manifest.output?.mediaType === contentType &&
+        JSON.stringify(manifest.output?.referenceVisualFingerprint) ===
+          JSON.stringify(referenceVisualFingerprint);
+      if (!valid) {
+        fail('PRIMARY_REFERENCE_IMMUTABLE_RECORD_CONFLICT', 409);
+      }
+      return {
+        manifest,
+        outputHash: original.contentHash,
+        outputSize: original.contentSize,
+        manifestSha256: hashString(existing.manifest_raw),
+      };
+    }
+
+    const privatePem = String(
+      process.env.SIGILLUM_DERIVATION_PRIVATE_KEY_PEM || '',
+    ).replace(/\\n/g, '\n');
+    if (!/^[A-Za-z0-9._-]{3,80}$/.test(keyId) || !privatePem) {
+      fail('DERIVATION_SERVICE_NOT_CONFIGURED', 503);
+    }
+    const privateKey = crypto.createPrivateKey(privatePem);
+    if (privateKey.asymmetricKeyType !== 'rsa' ||
+        privateKey.asymmetricKeyDetails?.modulusLength < 2048) {
+      fail('DERIVATION_SIGNING_KEY_INVALID', 503);
+    }
+    const publicFromPrivate = crypto.createPublicKey(privateKey)
+      .export({ format: 'pem', type: 'spki' })
+      .toString();
+    const pinned = crypto.createPublicKey(trustedKeys[keyId])
+      .export({ format: 'pem', type: 'spki' })
+      .toString();
+    if (publicFromPrivate !== pinned) {
+      fail('DERIVATION_KEY_PIN_MISMATCH', 503);
+    }
+
+    const created = createPrimaryReferenceManifest({
+      hcvId,
+      originalContentSha256: original.contentHash,
+      byteLength: original.contentSize,
+      mediaType: contentType,
+      referenceVisualFingerprint,
+      certificateRaw: original.row.certificate_raw,
+      keyId,
+      privateKeyPem: privatePem,
+    });
+    if (!verifyPrimaryReferenceManifest({
+      manifest: created.manifest,
+      certificateRaw: original.row.certificate_raw,
+      trustedKeys,
+    })) {
+      fail('PRIMARY_REFERENCE_ATTESTATION_INVALID', 500);
+    }
+
+    await pool.query(`
+      INSERT INTO trusted_derivations(output_sha256,hcv_id,manifest_raw)
+      VALUES($1,$2,$3)
+      ON CONFLICT(output_sha256) DO NOTHING
+    `, [original.contentHash, hcvId, created.raw]);
+
+    const stored = (await pool.query(
+      'SELECT hcv_id,manifest_raw FROM trusted_derivations WHERE output_sha256=$1',
+      [original.contentHash],
+    )).rows[0];
+    if (!stored ||
+        stored.hcv_id !== hcvId ||
+        stored.manifest_raw !== created.raw) {
+      fail('PRIMARY_REFERENCE_IMMUTABLE_RECORD_CONFLICT', 409);
+    }
+    return {
+      manifest: created.manifest,
+      outputHash: original.contentHash,
+      outputSize: original.contentSize,
+      manifestSha256: created.sha256,
+    };
+  }
+
   async function createTrustedDerivative({ hcvId, original, originalPath, outputPath }) {
     const keyId = String(process.env.SIGILLUM_DERIVATION_KEY_ID || '');
     const privatePem = String(process.env.SIGILLUM_DERIVATION_PRIVATE_KEY_PEM || '').replace(/\\n/g, '\n');
@@ -2201,6 +2841,200 @@ function createVerifiedOriginalsProduction({
     };
   }
 
+  async function registerR2Publication({
+    hcvId,
+    consentRecordId,
+    original,
+    manifest,
+    manifestSha256,
+    referenceSha256,
+    derivationType,
+    referenceCreatedAt,
+    receipt,
+    lifecycleJobId,
+    monetizationEnabled,
+    hcvpackSha256,
+    referenceRole = ORIGINAL_REFERENCE_ROLE,
+    sourceDerivationSha256 = '',
+    subtitleSha256 = '',
+  }) {
+    if (!receipt ||
+        receipt.provider !== 'r2' ||
+        !receipt.objectId ||
+        !receipt.objectKey ||
+        !SHA256.test(receipt.ciphertextSha256 || '') ||
+        !SHA256.test(receipt.referenceSha256 || '') ||
+        !manifest ||
+        !SHA256.test(manifestSha256 || '') ||
+        !SHA256.test(referenceSha256 || '') ||
+        receipt.referenceSha256 !== referenceSha256 ||
+        typeof derivationType !== 'string' ||
+        !derivationType ||
+        !Number.isFinite(Date.parse(String(referenceCreatedAt || '')))) {
+      fail('PRIMARY_REFERENCE_RECEIPT_INVALID', 422);
+    }
+    if (referenceRole === DERIVED_REFERENCE_ROLE &&
+        (!SHA256.test(sourceDerivationSha256) ||
+         !SHA256.test(subtitleSha256))) {
+      fail('PRIMARY_REFERENCE_DERIVATION_BINDING_INVALID', 422);
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const consent = (await client.query(`
+        SELECT * FROM verified_originals_consents
+        WHERE record_id=$1 AND hcv_id=$2 AND state='ACTIVE'
+        FOR UPDATE
+      `, [consentRecordId, hcvId])).rows[0];
+      if (!consent ||
+          !consent.publication_consent ||
+          !consent.rights_confirmed) {
+        fail('ACTIVE_CREATOR_CONSENT_REQUIRED', 403);
+      }
+      if (monetizationEnabled && !consent.monetization_consent) {
+        fail('MONETIZATION_NOT_AUTHORIZED', 403);
+      }
+
+      const existingPublication = (await client.query(`
+        SELECT * FROM verified_originals_publications
+        WHERE platform='r2' AND platform_post_id=$1
+        LIMIT 1
+      `, [receipt.objectId])).rows[0];
+      if (existingPublication) {
+        const validExisting =
+          existingPublication.hcv_id === hcvId &&
+          existingPublication.reference_sha256 === referenceSha256 &&
+          existingPublication.original_content_sha256 ===
+            original.contentHash &&
+          existingPublication.hcvpack_sha256 === hcvpackSha256 &&
+          existingPublication.reference_role === referenceRole &&
+          existingPublication.derivation_type === derivationType &&
+          existingPublication.source_derivation_sha256 ===
+            sourceDerivationSha256 &&
+          existingPublication.subtitle_sha256 === subtitleSha256 &&
+          existingPublication.publication_status === 'PUBLISHED';
+        if (!validExisting) {
+          fail('PRIMARY_REFERENCE_PUBLICATION_CONFLICT', 409);
+        }
+        await client.query('COMMIT');
+        return existingPublication.publication_id;
+      }
+
+      const receiptId = crypto.randomUUID();
+      await client.query(`
+        INSERT INTO verified_originals_platform_receipts(
+          receipt_id,hcv_id,platform,platform_post_id,uploaded_sha256,
+          upload_session_hash,processing_status,visibility,
+          publisher_subject_hash,metadata_json
+        ) VALUES($1,$2,'r2',$3,$4,$5,'succeeded','private',$6,$7)
+        ON CONFLICT(platform,platform_post_id) DO NOTHING
+      `, [
+        receiptId,
+        hcvId,
+        receipt.objectId,
+        receipt.ciphertextSha256,
+        hashString(receipt.objectKey),
+        hashString(
+          String(process.env.SIGILLUM_PUBLISHER_ID || 'SIGILLUM_SERVER_V1'),
+        ),
+        {
+          provider: 'cloudflare_r2',
+          lifecycleJobId,
+          objectKey: receipt.objectKey,
+          ciphertextSha256: receipt.ciphertextSha256,
+          ciphertextBytes: receipt.ciphertextBytes,
+          encryptionFormat: receipt.encryptionFormat,
+          encryptionKeyId: receipt.encryptionKeyId,
+        },
+      ]);
+
+      const storedReceipt = (await client.query(`
+        SELECT * FROM verified_originals_platform_receipts
+        WHERE platform='r2' AND platform_post_id=$1
+        LIMIT 1
+      `, [receipt.objectId])).rows[0];
+      if (!storedReceipt ||
+          storedReceipt.hcv_id !== hcvId ||
+          storedReceipt.uploaded_sha256 !== receipt.ciphertextSha256 ||
+          storedReceipt.processing_status !== 'succeeded' ||
+          storedReceipt.visibility !== 'private') {
+        fail('PLATFORM_UPLOAD_RECEIPT_REQUIRED', 422);
+      }
+
+      const publicationId = crypto.randomUUID();
+      await client.query(`
+        INSERT INTO verified_originals_publications(
+          publication_id,hcv_id,platform,platform_post_id,public_url,
+          reference_sha256,original_content_sha256,derived_from,
+          derivation_type,derivation_manifest_sha256,
+          platform_receipt_id,created_at,publication_status,
+          consent_record_id,consent_version,monetization_consent,
+          published_by,hcvpack_sha256,reference_role,
+          source_derivation_sha256,subtitle_sha256,audit_metadata_json
+        ) VALUES(
+          $1,$2,'r2',$3,'',$4,$5,$5,$6,$7,$8,$9,'PUBLISHED',
+          $10,$11,$12,$13,$14,$15,$16,$17,$18
+        )
+      `, [
+        publicationId,
+        hcvId,
+        receipt.objectId,
+        referenceSha256,
+        original.contentHash,
+        derivationType,
+        manifestSha256,
+        storedReceipt.receipt_id,
+        referenceCreatedAt,
+        consentRecordId,
+        consent.consent_version,
+        monetizationEnabled,
+        String(process.env.SIGILLUM_PUBLISHER_ID || 'SIGILLUM_SERVER_V1'),
+        hcvpackSha256,
+        referenceRole,
+        sourceDerivationSha256,
+        subtitleSha256,
+        {
+          provider: 'r2',
+          lifecycleJobId,
+          referenceAccess: 'SHORT_LIVED_AUTHORIZATION',
+          manifestSchema: manifest.schema || null,
+        },
+      ]);
+
+      await audit({
+        hcvId,
+        publicationId,
+        eventType: 'PRIMARY_REFERENCE_COMMITTED',
+        actorType: 'SIGILLUM_PUBLISHER',
+        actorSubjectHash: hashString(
+          String(process.env.SIGILLUM_PUBLISHER_ID || 'SIGILLUM_SERVER_V1'),
+        ),
+        metadata: {
+          provider: 'r2',
+          lifecycleJobId,
+          referenceRole,
+          derivationType,
+          sourceDerivationSha256: sourceDerivationSha256 || null,
+          subtitleSha256: subtitleSha256 || null,
+          hcvpackSha256,
+          ciphertextSha256: receipt.ciphertextSha256,
+          encryptionFormat: receipt.encryptionFormat,
+          encryptionKeyId: receipt.encryptionKeyId,
+        },
+        client,
+      });
+
+      await client.query('COMMIT');
+      return publicationId;
+    } catch (error) {
+      try { await client.query('ROLLBACK'); } catch (_) {}
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   async function registerPublication({
     hcvId,
     consentRecordId,
@@ -2284,7 +3118,7 @@ function createVerifiedOriginalsProduction({
     return publicationId;
   }
 
-  async function publishOriginal(req, hcvId, url) {
+  async function publishOriginalYoutube(req, hcvId, url) {
     const access = await creatorAccess(req);
     const original = await ownedOriginal(hcvId, access.session);
     const requestMediaType = String(req.headers['content-type'] || '').split(';')[0].toLowerCase();
@@ -2370,7 +3204,249 @@ function createVerifiedOriginalsProduction({
     }
   }
 
-  async function publishSubtitleDerivative(req, hcvId, url) {
+  async function publishOriginalR2(req, hcvId, url) {
+    const access = await creatorAccess(req);
+    const original = await ownedOriginal(hcvId, access.session);
+    const requestMediaType = String(req.headers['content-type'] || '')
+      .split(';')[0]
+      .toLowerCase();
+    const allowedMediaTypes = original.contentType === 'video'
+      ? new Set(['video/mp4'])
+      : new Set(['image/jpeg', 'image/png']);
+    if (!allowedMediaTypes.has(requestMediaType)) {
+      fail('ORIGINAL_MEDIA_TYPE_UNSUPPORTED', 415);
+    }
+
+    const contentLength = Number(req.headers['content-length']);
+    const maxBytes = Math.max(
+      1,
+      Number(
+        process.env.SIGILLUM_VERIFIED_ORIGINALS_MAX_BYTES || 536870912,
+      ),
+    );
+    if (!Number.isSafeInteger(contentLength) ||
+        contentLength <= 0 ||
+        contentLength > maxBytes) {
+      fail('ORIGINAL_CONTENT_LENGTH_INVALID', 411);
+    }
+    if (contentLength !== original.contentSize) {
+      fail('ORIGINAL_UPLOAD_SIZE_MISMATCH', 400);
+    }
+
+    const consentRecordId = String(
+      url.searchParams.get('consentRecordId') || '',
+    );
+    const monetizationEnabled = strictBoolean(
+      url.searchParams.get('monetizationEnabled'),
+    );
+    const hcvpackSha256 = String(
+      url.searchParams.get('hcvpackSha256') || '',
+    ).toLowerCase();
+    if (!consentRecordId ||
+        monetizationEnabled === null ||
+        !SHA256.test(hcvpackSha256)) {
+      fail('PUBLISH_REQUEST_INVALID', 400);
+    }
+    if (!verifyHcvpackBindingSignature(
+      req,
+      original,
+      hcvId,
+      hcvpackSha256,
+    )) {
+      fail('HCVPACK_BINDING_SIGNATURE_INVALID', 422);
+    }
+
+    const consent = (await pool.query(`
+      SELECT * FROM verified_originals_consents
+      WHERE record_id=$1
+        AND hcv_id=$2
+        AND account_id=$3
+        AND state='ACTIVE'
+    `, [
+      consentRecordId,
+      hcvId,
+      access.session.account_id,
+    ])).rows[0];
+    if (!consent ||
+        !consent.publication_consent ||
+        !consent.rights_confirmed) {
+      fail('ACTIVE_CREATOR_CONSENT_REQUIRED', 403);
+    }
+    if (monetizationEnabled && !consent.monetization_consent) {
+      fail('MONETIZATION_NOT_AUTHORIZED', 403);
+    }
+
+    const tmpRoot = String(
+      process.env.SIGILLUM_VERIFIED_ORIGINALS_TMP ||
+        path.join(os.tmpdir(), 'sigillum-verified-originals'),
+    );
+    await fs.promises.mkdir(tmpRoot, { recursive: true, mode: 0o700 });
+    const jobDir = await fs.promises.mkdtemp(
+      path.join(tmpRoot, 'r2-primary-job-'),
+    );
+    const originalExtension = original.contentType === 'video'
+      ? '.mp4'
+      : requestMediaType === 'image/png'
+        ? '.png'
+        : '.jpg';
+    const originalPath = path.join(jobDir, 'original' + originalExtension);
+
+    try {
+      const uploaded = await streamToFile(
+        req,
+        originalPath,
+        original.contentSize,
+      );
+      if (uploaded.sha256 !== original.contentHash) {
+        fail('PRIMARY_REFERENCE_ORIGINAL_SHA_MISMATCH', 422);
+      }
+
+      const primaryManifest = await createExactPrimaryReferenceManifest({
+        hcvId,
+        original,
+        originalPath,
+      });
+      const objectId = crypto.randomUUID();
+      const objectKey = opaqueObjectKey(objectId);
+      const binding = {
+        hcvId,
+        referenceRole: ORIGINAL_REFERENCE_ROLE,
+        referenceSha256: primaryManifest.outputHash,
+        originalContentSha256: original.contentHash,
+        hcvpackSha256,
+        derivationManifestSha256: primaryManifest.manifestSha256,
+        mediaType: original.contentType,
+      };
+
+      const lifecycle = await createOrGetReferenceJob(pool, {
+        binding,
+        provider: 'r2',
+        objectId,
+        objectKey,
+      });
+      let lifecycleJob = lifecycle.job;
+      let receipt = lifecycleJob.receipt;
+
+      if (lifecycleJob.state !== 'COMMITTED') {
+        try {
+          lifecycleJob = await claimUploadJob(pool, lifecycleJob.jobId);
+        } catch (error) {
+          if (String(error?.message || '') ===
+              'PRIMARY_REFERENCE_UPLOAD_STATE_CONFLICT') {
+            fail('PRIMARY_REFERENCE_UPLOAD_IN_PROGRESS', 409);
+          }
+          throw error;
+        }
+
+        if (lifecycleJob.state !== 'COMMITTED') {
+          const provider = requireR2ReferenceProvider();
+          try {
+            receipt = await provider.commitReference({
+              sourcePath: originalPath,
+              hcvId,
+              referenceRole: ORIGINAL_REFERENCE_ROLE,
+              referenceSha256: primaryManifest.outputHash,
+              originalContentSha256: original.contentHash,
+              hcvpackSha256,
+              derivationManifestSha256:
+                primaryManifest.manifestSha256,
+              mediaType: original.contentType,
+              objectId: lifecycleJob.objectId,
+              objectKey: lifecycleJob.objectKey,
+            });
+          } catch (error) {
+            try {
+              await markUploadRetry(
+                pool,
+                lifecycleJob.jobId,
+                'R2_PROVIDER_TEMPORARY_FAILURE',
+              );
+            } catch (_) {}
+            console.error(
+              '[verified-originals] R2 primary reference commit failed',
+              String(error?.message || error),
+            );
+            fail('PRIMARY_REFERENCE_PROVIDER_UNAVAILABLE', 503);
+          }
+          lifecycleJob = await markPrimaryReferenceCommitted(
+            pool,
+            lifecycleJob.jobId,
+            receipt,
+          );
+        } else {
+          receipt = lifecycleJob.receipt;
+        }
+      }
+
+      if (!receipt) {
+        receipt = lifecycleJob.receipt;
+      }
+      if (!receipt ||
+          receipt.derivationManifestSha256 !==
+            primaryManifest.manifestSha256 ||
+          receipt.referenceSha256 !== primaryManifest.outputHash ||
+          receipt.hcvpackSha256 !== hcvpackSha256) {
+        fail('PRIMARY_REFERENCE_RECEIPT_BINDING_MISMATCH', 422);
+      }
+
+      let publicationId;
+      try {
+        publicationId = await registerR2Publication({
+          hcvId,
+          consentRecordId,
+          original,
+          manifest: primaryManifest.manifest,
+          manifestSha256: primaryManifest.manifestSha256,
+          referenceSha256: primaryManifest.outputHash,
+          derivationType: PRIMARY_REFERENCE_OPERATION,
+          referenceCreatedAt: primaryManifest.manifest.createdAt,
+          receipt,
+          lifecycleJobId: lifecycleJob.jobId,
+          monetizationEnabled,
+          hcvpackSha256,
+        });
+      } catch (error) {
+        await cleanupUnregisteredR2Reference({
+          hcvId,
+          receipt,
+          lifecycleJobId: lifecycleJob.jobId,
+        });
+        throw error;
+      }
+
+      return {
+        ok: true,
+        alreadyAvailable: !lifecycle.created,
+        publicationId,
+        hcvId,
+        platform: 'r2',
+        publicationStatus: 'PUBLISHED',
+        referenceAccess: 'SHORT_LIVED_AUTHORIZATION',
+        originalContentSha256: original.contentHash,
+        referenceSha256: primaryManifest.outputHash,
+        derivedFrom: original.contentHash,
+        derivationType: PRIMARY_REFERENCE_OPERATION,
+        hcvpackSha256,
+        socialFileVerdict: 'NOT_VERIFIED',
+      };
+    } finally {
+      try {
+        await fs.promises.rm(originalPath, { force: true });
+      } catch (_) {}
+      try {
+        await fs.promises.rmdir(jobDir);
+      } catch (_) {}
+    }
+  }
+
+  async function publishOriginal(req, hcvId, url) {
+    if (primaryReferenceProviderName === 'r2') {
+      return publishOriginalR2(req, hcvId, url);
+    }
+    return publishOriginalYoutube(req, hcvId, url);
+  }
+
+  async function publishSubtitleDerivativeYoutube(req, hcvId, url) {
     const access = await creatorAccess(req);
     const original = await ownedOriginal(hcvId, access.session);
     if (original.contentType !== 'video') {
@@ -2576,39 +3652,528 @@ function createVerifiedOriginalsProduction({
     }
   }
 
-  async function attemptTakedowns(publications) {
-    if (!publications.length) return 'COMPLETED';
+  async function publishSubtitleDerivativeR2(req, hcvId, url) {
+    const access = await creatorAccess(req);
+    const original = await ownedOriginal(hcvId, access.session);
+    if (original.contentType !== 'video') {
+      fail('SUBTITLE_DERIVATION_REQUIRES_VIDEO', 415);
+    }
+
+    const originalReference = await activeReference(hcvId);
+    if (!originalReference || originalReference.platform !== 'r2') {
+      fail('ORIGINAL_REFERENCE_REQUIRED', 409);
+    }
+
+    const requestMediaType = String(req.headers['content-type'] || '')
+      .split(';')[0]
+      .toLowerCase();
+    if (requestMediaType !== 'video/mp4') {
+      fail('SUBTITLE_DERIVATION_MEDIA_TYPE_UNSUPPORTED', 415);
+    }
+
+    const contentLength = Number(req.headers['content-length']);
+    const maxBytes = Math.max(
+      1,
+      Number(
+        process.env.SIGILLUM_VERIFIED_ORIGINALS_MAX_BYTES || 536870912,
+      ),
+    );
+    if (!Number.isSafeInteger(contentLength) ||
+        contentLength <= 0 ||
+        contentLength > maxBytes) {
+      fail('SUBTITLE_DERIVATION_CONTENT_LENGTH_INVALID', 411);
+    }
+
+    const consentRecordId = String(
+      url.searchParams.get('consentRecordId') || '',
+    );
+    const monetizationEnabled = strictBoolean(
+      url.searchParams.get('monetizationEnabled'),
+    );
+    const hcvpackSha256 = String(
+      url.searchParams.get('hcvpackSha256') || '',
+    ).toLowerCase();
+    const subtitleSha256 = String(
+      url.searchParams.get('subtitleSha256') || '',
+    ).toLowerCase();
+    const captionedSha256 = String(
+      req.headers['x-sigillum-captioned-sha256'] || '',
+    ).toLowerCase();
+
+    if (!consentRecordId ||
+        monetizationEnabled === null ||
+        !SHA256.test(hcvpackSha256) ||
+        !SHA256.test(subtitleSha256) ||
+        !SHA256.test(captionedSha256)) {
+      fail('SUBTITLE_DERIVATION_REQUEST_INVALID', 400);
+    }
+
+    const existing = await activeSubtitleReference(
+      hcvId,
+      captionedSha256,
+      subtitleSha256,
+    );
+    if (existing) {
+      return {
+        ok: true,
+        alreadyAvailable: true,
+        publicationId: existing.publicationId,
+        hcvId,
+        platform: 'r2',
+        publicationStatus: existing.publicationStatus,
+        referenceAccess: 'SHORT_LIVED_AUTHORIZATION',
+        referenceRole: existing.referenceRole,
+        originalContentSha256: existing.originalContentSha256,
+        sourceDerivationSha256: existing.sourceDerivationSha256,
+        subtitleSha256: existing.subtitleSha256,
+        referenceSha256: existing.referenceSha256,
+        derivedFrom: original.contentHash,
+        derivationType: existing.derivationType,
+        hcvpackSha256,
+        socialFileVerdict: 'NOT_VERIFIED',
+      };
+    }
+
+    if (!verifySubtitleDerivationBindingSignature(
+      req,
+      original,
+      hcvId,
+      captionedSha256,
+      subtitleSha256,
+      hcvpackSha256,
+    )) {
+      fail('SUBTITLE_DERIVATION_BINDING_SIGNATURE_INVALID', 422);
+    }
+
+    const consent = (await pool.query(`
+      SELECT * FROM verified_originals_consents
+      WHERE record_id=$1
+        AND hcv_id=$2
+        AND account_id=$3
+        AND state='ACTIVE'
+    `, [
+      consentRecordId,
+      hcvId,
+      access.session.account_id,
+    ])).rows[0];
+    if (!consent ||
+        !consent.publication_consent ||
+        !consent.rights_confirmed) {
+      fail('ACTIVE_CREATOR_CONSENT_REQUIRED', 403);
+    }
+    if (monetizationEnabled && !consent.monetization_consent) {
+      fail('MONETIZATION_NOT_AUTHORIZED', 403);
+    }
+
+    const tmpRoot = String(
+      process.env.SIGILLUM_VERIFIED_ORIGINALS_TMP ||
+        path.join(os.tmpdir(), 'sigillum-verified-originals'),
+    );
+    await fs.promises.mkdir(tmpRoot, { recursive: true, mode: 0o700 });
+    const jobDir = await fs.promises.mkdtemp(
+      path.join(tmpRoot, 'r2-subtitle-job-'),
+    );
+    const captionedPath = path.join(jobDir, 'captioned-source.mp4');
+    const outputPath = path.join(jobDir, 'reference-subtitled.mp4');
+
     try {
-      const config = youtubeConfig();
-      const accessToken = await oauthAccessToken(config);
-      await verifyYoutubeChannel(accessToken, config.channelId);
-      let allDeleted = true;
-      for (const publication of publications) {
-        if (publication.processing_status === 'withdrawn') continue;
-        const deleted = await deleteYoutubeVideo(
-          accessToken,
-          publication.platform_post_id,
-        );
-        allDeleted = allDeleted && deleted;
-        if (deleted) {
-          await pool.query(`
-            UPDATE verified_originals_platform_receipts
-            SET processing_status='withdrawn',visibility='unavailable',verified_at=NOW()
-            WHERE receipt_id=$1
-          `, [publication.platform_receipt_id]);
+      const uploaded = await streamToFile(
+        req,
+        captionedPath,
+        contentLength,
+      );
+      if (uploaded.sha256 !== captionedSha256) {
+        fail('SUBTITLE_DERIVATION_SHA_MISMATCH', 422);
+      }
+
+      const derivation = await createTrustedSubtitleDerivative({
+        hcvId,
+        original,
+        captionedPath,
+        outputPath,
+        captionedSha256,
+        subtitleSha256,
+      });
+      const manifestRaw = JSON.stringify(derivation.manifest);
+      const manifestSha256 = hashString(manifestRaw);
+      const objectId = crypto.randomUUID();
+      const objectKey = opaqueObjectKey(objectId);
+      const binding = {
+        hcvId,
+        referenceRole: DERIVED_REFERENCE_ROLE,
+        referenceSha256: derivation.outputHash,
+        originalContentSha256: original.contentHash,
+        hcvpackSha256,
+        derivationManifestSha256: manifestSha256,
+        mediaType: 'video',
+      };
+
+      const lifecycle = await createOrGetReferenceJob(pool, {
+        binding,
+        provider: 'r2',
+        objectId,
+        objectKey,
+      });
+      let lifecycleJob = lifecycle.job;
+      let receipt = lifecycleJob.receipt;
+
+      if (lifecycleJob.state !== 'COMMITTED') {
+        try {
+          lifecycleJob = await claimUploadJob(pool, lifecycleJob.jobId);
+        } catch (error) {
+          if (String(error?.message || '') ===
+              'PRIMARY_REFERENCE_UPLOAD_STATE_CONFLICT') {
+            fail('PRIMARY_REFERENCE_UPLOAD_IN_PROGRESS', 409);
+          }
+          throw error;
+        }
+
+        if (lifecycleJob.state !== 'COMMITTED') {
+          try {
+            receipt = await requireR2ReferenceProvider().commitReference({
+              sourcePath: outputPath,
+              hcvId,
+              referenceRole: DERIVED_REFERENCE_ROLE,
+              referenceSha256: derivation.outputHash,
+              originalContentSha256: original.contentHash,
+              hcvpackSha256,
+              derivationManifestSha256: manifestSha256,
+              mediaType: 'video',
+              objectId: lifecycleJob.objectId,
+              objectKey: lifecycleJob.objectKey,
+            });
+          } catch (error) {
+            try {
+              await markUploadRetry(
+                pool,
+                lifecycleJob.jobId,
+                'R2_PROVIDER_TEMPORARY_FAILURE',
+              );
+            } catch (_) {}
+            console.error(
+              '[verified-originals] R2 subtitle reference commit failed',
+              String(error?.message || error),
+            );
+            fail('PRIMARY_REFERENCE_PROVIDER_UNAVAILABLE', 503);
+          }
+          lifecycleJob = await markPrimaryReferenceCommitted(
+            pool,
+            lifecycleJob.jobId,
+            receipt,
+          );
+        } else {
+          receipt = lifecycleJob.receipt;
         }
       }
-      return allDeleted ? 'COMPLETED' : 'PARTIAL';
+
+      if (!receipt) receipt = lifecycleJob.receipt;
+      if (!receipt ||
+          receipt.derivationManifestSha256 !== manifestSha256 ||
+          receipt.referenceSha256 !== derivation.outputHash ||
+          receipt.hcvpackSha256 !== hcvpackSha256) {
+        fail('PRIMARY_REFERENCE_RECEIPT_BINDING_MISMATCH', 422);
+      }
+
+      let publicationId;
+      try {
+        publicationId = await registerR2Publication({
+          hcvId,
+          consentRecordId,
+          original,
+          manifest: derivation.manifest,
+          manifestSha256,
+          referenceSha256: derivation.outputHash,
+          derivationType: SUBTITLE_DERIVATION_OPERATION,
+          referenceCreatedAt: derivation.manifest.createdAt,
+          receipt,
+          lifecycleJobId: lifecycleJob.jobId,
+          monetizationEnabled,
+          hcvpackSha256,
+          referenceRole: DERIVED_REFERENCE_ROLE,
+          sourceDerivationSha256: captionedSha256,
+          subtitleSha256,
+        });
+      } catch (error) {
+        await cleanupUnregisteredR2Reference({
+          hcvId,
+          receipt,
+          lifecycleJobId: lifecycleJob.jobId,
+        });
+        throw error;
+      }
+
+      return {
+        ok: true,
+        alreadyAvailable: !lifecycle.created,
+        publicationId,
+        hcvId,
+        platform: 'r2',
+        publicationStatus: 'PUBLISHED',
+        referenceAccess: 'SHORT_LIVED_AUTHORIZATION',
+        referenceRole: DERIVED_REFERENCE_ROLE,
+        originalContentSha256: original.contentHash,
+        sourceDerivationSha256: captionedSha256,
+        subtitleSha256,
+        referenceSha256: derivation.outputHash,
+        derivedFrom: original.contentHash,
+        derivationType: SUBTITLE_DERIVATION_OPERATION,
+        hcvpackSha256,
+        socialFileVerdict: 'NOT_VERIFIED',
+      };
+    } finally {
+      for (const item of [
+        outputPath + '.hcvderivation.json',
+        outputPath,
+        captionedPath,
+      ]) {
+        try {
+          await fs.promises.rm(item, { force: true });
+        } catch (_) {}
+      }
+      try {
+        await fs.promises.rmdir(jobDir);
+      } catch (_) {}
+    }
+  }
+
+  async function publishSubtitleDerivative(req, hcvId, url) {
+    if (primaryReferenceProviderName === 'r2') {
+      return publishSubtitleDerivativeR2(req, hcvId, url);
+    }
+    return publishSubtitleDerivativeYoutube(req, hcvId, url);
+  }
+
+  async function cleanupUnregisteredR2Reference({
+    hcvId,
+    receipt,
+    lifecycleJobId,
+  }) {
+    if (!receipt?.objectId || !lifecycleJobId) return 'PENDING';
+    let job;
+    try {
+      job = await requestDeleteByProviderObject(pool, {
+        provider: 'r2',
+        objectId: receipt.objectId,
+        hcvId,
+      });
     } catch (_) {
+      job = await referenceJobByProviderObject(pool, {
+        provider: 'r2',
+        objectId: receipt.objectId,
+        hcvId,
+      });
+    }
+    if (!job) return 'PENDING';
+    if (job.state === 'DELETED') return 'COMPLETED';
+    if (job.state !== 'DELETE_PENDING') return 'PENDING';
+
+    try {
+      job = await claimDeleteJob(pool, lifecycleJobId);
+    } catch (_) {
+      return 'PENDING';
+    }
+    if (job.state === 'DELETED') return 'COMPLETED';
+
+    try {
+      const result = await requireR2ReferenceProvider()
+        .deleteReference(job.receipt);
+      if (!result?.deleted) {
+        await markDeleteRetry(
+          pool,
+          job.jobId,
+          'R2_DELETE_NOT_CONFIRMED',
+        );
+        return 'PENDING';
+      }
+      await markPrimaryReferenceDeleted(pool, job.jobId);
+      return 'COMPLETED';
+    } catch (_) {
+      try {
+        await markDeleteRetry(
+          pool,
+          job.jobId,
+          'R2_DELETE_PROVIDER_UNAVAILABLE',
+        );
+      } catch (_) {}
       return 'PENDING';
     }
   }
 
+  async function markPlatformReceiptWithdrawn(receiptId) {
+    await pool.query(`
+      UPDATE verified_originals_platform_receipts
+      SET processing_status='withdrawn',
+          visibility='unavailable',
+          verified_at=NOW()
+      WHERE receipt_id=$1
+    `, [receiptId]);
+  }
+
+  async function attemptR2Takedown(publication) {
+    let job = await referenceJobByProviderObject(pool, {
+      provider: 'r2',
+      objectId: publication.platform_post_id,
+      hcvId: publication.hcv_id,
+    });
+    if (!job) return false;
+
+    if (job.state === 'COMMITTED') {
+      job = await requestDeleteByProviderObject(pool, {
+        provider: 'r2',
+        objectId: publication.platform_post_id,
+        hcvId: publication.hcv_id,
+      });
+    }
+    if (job.state === 'DELETED') {
+      await markPlatformReceiptWithdrawn(publication.platform_receipt_id);
+      return true;
+    }
+    if (job.state !== 'DELETE_PENDING') return false;
+
+    try {
+      job = await claimDeleteJob(pool, job.jobId);
+    } catch (error) {
+      if (String(error?.message || '') ===
+          'PRIMARY_REFERENCE_DELETE_STATE_CONFLICT') {
+        return false;
+      }
+      throw error;
+    }
+    if (job.state === 'DELETED') {
+      await markPlatformReceiptWithdrawn(publication.platform_receipt_id);
+      return true;
+    }
+
+    try {
+      const deleted = await requireR2ReferenceProvider()
+        .deleteReference(job.receipt);
+      if (!deleted?.deleted) {
+        await markDeleteRetry(
+          pool,
+          job.jobId,
+          'R2_DELETE_NOT_CONFIRMED',
+        );
+        return false;
+      }
+      await markPrimaryReferenceDeleted(pool, job.jobId);
+      await markPlatformReceiptWithdrawn(publication.platform_receipt_id);
+      return true;
+    } catch (error) {
+      try {
+        await markDeleteRetry(
+          pool,
+          job.jobId,
+          'R2_DELETE_PROVIDER_UNAVAILABLE',
+        );
+      } catch (_) {}
+      console.error(
+        '[verified-originals] R2 primary reference delete deferred',
+        String(error?.message || error),
+      );
+      return false;
+    }
+  }
+
+  async function attemptYoutubeTakedown(publication, youtubeState) {
+    if (!youtubeServiceConfigured()) return false;
+    if (!youtubeState.accessToken) {
+      const config = youtubeConfig();
+      youtubeState.accessToken = await oauthAccessToken(config);
+      await verifyYoutubeChannel(youtubeState.accessToken, config.channelId);
+    }
+    const deleted = await deleteYoutubeVideo(
+      youtubeState.accessToken,
+      publication.platform_post_id,
+    );
+    if (deleted) {
+      await markPlatformReceiptWithdrawn(publication.platform_receipt_id);
+    }
+    return deleted;
+  }
+
+  async function attemptTakedowns(publications) {
+    if (!publications.length) return 'COMPLETED';
+    let completed = 0;
+    let failed = 0;
+    const youtubeState = { accessToken: '' };
+
+    for (const publication of publications) {
+      if (publication.processing_status === 'withdrawn') {
+        completed += 1;
+        continue;
+      }
+
+      try {
+        let deleted = false;
+        if (publication.platform === 'r2') {
+          deleted = await attemptR2Takedown(publication);
+        } else if (publication.platform === 'youtube') {
+          deleted = await attemptYoutubeTakedown(
+            publication,
+            youtubeState,
+          );
+        }
+        if (deleted) completed += 1;
+        else failed += 1;
+      } catch (_) {
+        failed += 1;
+      }
+    }
+
+    if (failed === 0) return 'COMPLETED';
+    if (completed > 0) return 'PARTIAL';
+    return 'PENDING';
+  }
+
+  async function retryPendingPrimaryReferenceDeletes() {
+    if (primaryReferenceProviderName !== 'r2') {
+      return { attempted: 0, completed: 0 };
+    }
+    const jobs = await claimDeleteJobs(pool, {
+      provider: 'r2',
+      limit: 50,
+    });
+    let completed = 0;
+    for (const job of jobs) {
+      try {
+        const result = await requireR2ReferenceProvider()
+          .deleteReference(job.receipt);
+        if (!result?.deleted) {
+          await markDeleteRetry(
+            pool,
+            job.jobId,
+            'R2_DELETE_NOT_CONFIRMED',
+          );
+          continue;
+        }
+        await markPrimaryReferenceDeleted(pool, job.jobId);
+        await pool.query(`
+          UPDATE verified_originals_platform_receipts
+          SET processing_status='withdrawn',
+              visibility='unavailable',
+              verified_at=NOW()
+          WHERE platform='r2'
+            AND platform_post_id=$1
+            AND processing_status<>'withdrawn'
+        `, [job.objectId]);
+        completed += 1;
+      } catch (_) {
+        try {
+          await markDeleteRetry(
+            pool,
+            job.jobId,
+            'R2_DELETE_PROVIDER_UNAVAILABLE',
+          );
+        } catch (_) {}
+      }
+    }
+    return { attempted: jobs.length, completed };
+  }
+
   async function retryPendingTakedowns() {
-    if (!youtubeServiceConfigured()) return { attempted: 0, completed: 0 };
     const rows = (await pool.query(`
-      SELECT p.hcv_id,p.publication_id,p.platform_post_id,p.platform_receipt_id,
-             r.processing_status
+      SELECT p.hcv_id,p.publication_id,p.platform,p.platform_post_id,
+             p.platform_receipt_id,p.reference_role,r.processing_status
       FROM verified_originals_publications p
       JOIN verified_originals_platform_receipts r
         ON r.receipt_id=p.platform_receipt_id
@@ -2631,7 +4196,10 @@ function createVerifiedOriginalsProduction({
             actorSubjectHash: hashString(
               String(process.env.SIGILLUM_PUBLISHER_ID || 'SIGILLUM_SERVER_V1'),
             ),
-            metadata: { retryWorker: true },
+            metadata: {
+              retryWorker: true,
+              platform: row.platform,
+            },
           });
         } catch (_) {}
       }
@@ -2640,14 +4208,24 @@ function createVerifiedOriginalsProduction({
   }
 
   function startTakedownWorker() {
-    if (takedownTimer || !youtubeServiceConfigured()) return;
+    if (takedownTimer) return;
+    if (!youtubeServiceConfigured() &&
+        primaryReferenceProviderName !== 'r2') {
+      return;
+    }
     const intervalMs = Math.max(
       60_000,
       Number(process.env.SIGILLUM_TAKEDOWN_RETRY_MS || 300_000),
     );
     takedownTimer = setInterval(() => {
-      retryPendingTakedowns().catch(error => {
-        console.error('SIGILLUM_TAKEDOWN_RETRY_FAILED', error?.message || error);
+      Promise.all([
+        retryPendingTakedowns(),
+        retryPendingPrimaryReferenceDeletes(),
+      ]).catch(error => {
+        console.error(
+          'SIGILLUM_TAKEDOWN_RETRY_FAILED',
+          error?.message || error,
+        );
       });
     }, intervalMs);
     if (typeof takedownTimer.unref === 'function') takedownTimer.unref();
@@ -2671,7 +4249,8 @@ function createVerifiedOriginalsProduction({
       if (consent) {
         newlyWithdrawn = true;
         publications = (await client.query(`
-          SELECT p.publication_id,p.platform_post_id,p.platform_receipt_id,
+          SELECT p.hcv_id,p.publication_id,p.platform,p.platform_post_id,
+                 p.platform_receipt_id,p.reference_role,
                  r.processing_status
           FROM verified_originals_publications p
           JOIN verified_originals_platform_receipts r
@@ -2688,6 +4267,13 @@ function createVerifiedOriginalsProduction({
           [hcvId, consent.record_id],
         );
         for (const publication of publications) {
+          if (publication.platform === 'r2') {
+            await requestDeleteByProviderObject(client, {
+              provider: 'r2',
+              objectId: publication.platform_post_id,
+              hcvId,
+            });
+          }
           await client.query(`
             UPDATE verified_originals_platform_receipts
             SET processing_status='takedown_pending',verified_at=NOW()
@@ -2700,7 +4286,10 @@ function createVerifiedOriginalsProduction({
           eventType: 'CREATOR_CONSENT_WITHDRAWN',
           actorType: 'CREATOR',
           actorSubjectHash: hashString(session.account_id),
-          metadata: { platformStatus: 'TAKEDOWN_REQUESTED' },
+          metadata: {
+            platformStatus: 'TAKEDOWN_REQUESTED',
+            providers: [...new Set(publications.map(item => item.platform))],
+          },
           client,
         });
       } else {
@@ -2712,7 +4301,8 @@ function createVerifiedOriginalsProduction({
         `, [hcvId, session.account_id])).rows[0];
         if (!consent) fail('WITHDRAWN_CONSENT_NOT_FOUND', 404);
         publications = (await client.query(`
-          SELECT p.publication_id,p.platform_post_id,p.platform_receipt_id,
+          SELECT p.hcv_id,p.publication_id,p.platform,p.platform_post_id,
+                 p.platform_receipt_id,p.reference_role,
                  r.processing_status
           FROM verified_originals_publications p
           JOIN verified_originals_platform_receipts r
@@ -2754,11 +4344,47 @@ function createVerifiedOriginalsProduction({
     };
   }
 
+  async function withdrawAllForAccount(req, accountId) {
+    const session = await authenticate(req);
+    if (!session?.account_id || session.account_id !== accountId) {
+      fail('CREATOR_OWNERSHIP_NOT_VERIFIED', 403);
+    }
+
+    const rows = (await pool.query(`
+      SELECT DISTINCT hcv_id
+      FROM verified_originals_consents
+      WHERE account_id=$1
+      ORDER BY hcv_id
+    `, [accountId])).rows;
+
+    const results = [];
+    for (const row of rows) {
+      const hcvId = String(row.hcv_id || '');
+      if (!HCV_ID.test(hcvId)) continue;
+      const result = await withdrawConsent(req, hcvId);
+      results.push(result);
+      if (result.platformTakedown !== 'COMPLETED') {
+        fail(
+          'ACCOUNT_DELETE_REFERENCE_CLEANUP_PENDING',
+          503,
+          'La cancellazione account è sospesa finché la rimozione delle reference tecniche non è completata.',
+        );
+      }
+    }
+    return {
+      ok: true,
+      referenceCount: results.length,
+      allReferencesDeleted: true,
+    };
+  }
+
   async function handle(req, res, url) {
     const publicLookup = /^\/api\/verified-originals\/(HCV-[A-F0-9]{16})$/.exec(url.pathname);
     const view = /^\/api\/verified-originals\/(HCV-[A-F0-9]{16})\/view$/.exec(url.pathname);
     const list = /^\/api\/verified-originals\/(HCV-[A-F0-9]{16})\/publications$/.exec(url.pathname);
     const verifyReference = /^\/api\/verified-originals\/(HCV-[A-F0-9]{16})\/verification-reference$/.exec(url.pathname);
+    const readAuthorization = /^\/api\/verified-originals\/(HCV-[A-F0-9]{16})\/read-authorization$/.exec(url.pathname);
+    const readReference = /^\/api\/verified-originals\/reference-read\/([A-Za-z0-9_-]{40,256})$/.exec(url.pathname);
     const consentStatusMatch = /^\/api\/verified-originals\/consents\/(HCV-[A-F0-9]{16})$/.exec(url.pathname);
     const withdraw = /^\/api\/verified-originals\/consents\/(HCV-[A-F0-9]{16})\/withdraw$/.exec(url.pathname);
     const publish = /^\/api\/verified-originals\/publish\/(HCV-[A-F0-9]{16})$/.exec(url.pathname);
@@ -2773,13 +4399,32 @@ function createVerifiedOriginalsProduction({
       sendJson(res, 200, await verificationReference(verifyReference[1]));
       return true;
     }
+    if (req.method === 'POST' && readAuthorization) {
+      sendJson(
+        res,
+        201,
+        await createR2ReadAuthorization(req, readAuthorization[1]),
+      );
+      return true;
+    }
+    if (req.method === 'GET' && readReference) {
+      await streamAuthorizedR2Reference(req, res, readReference[1]);
+      return true;
+    }
     if (req.method === 'GET' && view) {
       const session = await authenticate(req);
       const account = await accountEnvelope(session.account_id, session.device_key_fingerprint);
       if (account.subscriptionStatus !== 'active') fail('SUBSCRIPTION_REQUIRED', 402);
       const reference = await activeReference(view[1]);
       if (!reference) fail('REFERENCE_NOT_AVAILABLE', 404);
-      sendJson(res, 200, { hcvId: view[1], availability: 'REFERENCE_AVAILABLE', access: 'ENTITLED', ...reference });
+      const safeReference = referenceViewEnvelope(reference);
+      if (!safeReference) fail('REFERENCE_NOT_AVAILABLE', 404);
+      sendJson(res, 200, {
+        hcvId: view[1],
+        availability: 'REFERENCE_AVAILABLE',
+        access: 'ENTITLED',
+        ...safeReference,
+      });
       return true;
     }
     if (req.method === 'GET' && list) {
@@ -2821,7 +4466,7 @@ function createVerifiedOriginalsProduction({
           title: 'SIGILLUM Originali certificati',
           available: 'ORIGINALE CERTIFICATO DISPONIBILE',
           missing: 'RIFERIMENTO NON DISPONIBILE',
-          access: 'La verifica è gratuita. L’accesso al riferimento tramite SIGILLUM richiede un abbonamento attivo. Un link YouTube non in elenco già ottenuto può essere condiviso fuori dall’app.',
+          access: 'La verifica è gratuita. L’accesso al riferimento tecnico tramite SIGILLUM richiede un abbonamento attivo. Eventuali copie social sono distribuzioni opzionali e non costituiscono il riferimento tecnico.',
           absent: 'Nessun originale certificato attivo è disponibile.',
           warning: 'La presenza di un HCV-ID non prova che un file social esterno sia identico all’originale.',
         },
@@ -2829,7 +4474,7 @@ function createVerifiedOriginalsProduction({
           title: 'SIGILLUM Certified Originals',
           available: 'CERTIFIED ORIGINAL AVAILABLE',
           missing: 'REFERENCE NOT AVAILABLE',
-          access: 'Verification is free. Accessing the reference through SIGILLUM requires an active subscription. An unlisted YouTube link already obtained can be shared outside the app.',
+          access: 'Verification is free. Accessing the technical reference through SIGILLUM requires an active subscription. Any social copies are optional distributions and are not the technical reference.',
           absent: 'No active certified original is available.',
           warning: 'The presence of an HCV-ID does not prove that an external social file is identical to the original.',
         },
@@ -2837,7 +4482,7 @@ function createVerifiedOriginalsProduction({
           title: 'Originales certificados SIGILLUM',
           available: 'ORIGINAL CERTIFICADO DISPONIBLE',
           missing: 'REFERENCIA NO DISPONIBLE',
-          access: 'La verificación es gratuita. El acceso a la referencia mediante SIGILLUM requiere una suscripción activa. Un enlace de YouTube no listado ya obtenido puede compartirse fuera de la app.',
+          access: 'La verificación es gratuita. El acceso a la referencia técnica mediante SIGILLUM requiere una suscripción activa. Las copias sociales son distribuciones opcionales y no constituyen la referencia técnica.',
           absent: 'No hay ningún original certificado activo disponible.',
           warning: 'La presencia de un HCV-ID no demuestra que un archivo externo de una red social sea idéntico al original.',
         },
@@ -2845,7 +4490,7 @@ function createVerifiedOriginalsProduction({
           title: 'Сертифицированные оригиналы SIGILLUM',
           available: 'СЕРТИФИЦИРОВАННЫЙ ОРИГИНАЛ ДОСТУПЕН',
           missing: 'ЭТАЛОН НЕДОСТУПЕН',
-          access: 'Проверка бесплатна. Для доступа к эталону через SIGILLUM требуется активная подписка. Уже полученной ссылкой YouTube в режиме unlisted можно поделиться вне приложения.',
+          access: 'Проверка бесплатна. Для доступа к техническому эталону через SIGILLUM требуется активная подписка. Копии в социальных сетях являются необязательными и не заменяют технический эталон.',
           absent: 'Активный сертифицированный оригинал отсутствует.',
           warning: 'Наличие HCV-ID не доказывает, что внешний файл из социальной сети идентичен оригиналу.',
         },
@@ -2872,6 +4517,7 @@ function createVerifiedOriginalsProduction({
     verificationReference,
     activeReference,
     activeSubtitleReference,
+    withdrawAllForAccount,
     verifyDerivationManifest: args =>
       verifyDerivationManifest({ ...args, verifyCertificateRaw }),
     verifySubtitleDerivationManifest: args =>

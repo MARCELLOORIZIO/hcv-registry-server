@@ -618,6 +618,7 @@ async function handle(req, res) {
     const session = await authenticate(req); const body = await readJson(req);
     const account = (await pool.query('SELECT * FROM accounts WHERE id=$1', [session.account_id])).rows[0];
     if (!account || !(await passwordMatches(String(body.password || ''), account)) || body.confirmation !== 'DELETE') throw publicError('CREDENZIALI_NON_VALIDE', 401);
+    await verifiedOriginals.withdrawAllForAccount(req, account.id);
     await pool.query('BEGIN');
     try {
       await pool.query(`UPDATE certificates SET account_id=NULL, certificate_raw=certificate_raw WHERE account_id=$1`, [account.id]);

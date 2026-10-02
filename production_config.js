@@ -84,6 +84,58 @@ function validateDerivationKeys(env, invalid) {
   }
 }
 
+function validateR2ReferenceConfig(env, invalid) {
+  const endpoint = String(env.R2_ENDPOINT || '').trim();
+  const bucket = String(env.R2_BUCKET || '').trim();
+  const keyId = String(env.R2_REFERENCE_ACTIVE_KEY_ID || '').trim();
+  const keyRingRaw = String(env.R2_REFERENCE_MASTER_KEYS_JSON || '').trim();
+
+  try {
+    const url = new URL(endpoint);
+    if (url.protocol !== 'https:' ||
+        !url.hostname.endsWith('.eu.r2.cloudflarestorage.com') ||
+        url.pathname !== '/' ||
+        url.search ||
+        url.hash) {
+      throw new Error('R2_ENDPOINT_EU_INVALID');
+    }
+  } catch (_) {
+    invalid.push('R2_ENDPOINT=eu-jurisdiction-https');
+  }
+
+  if (bucket !== 'sigillum-hcv-references-eu') {
+    invalid.push('R2_BUCKET=sigillum-hcv-references-eu');
+  }
+  if (String(env.R2_REQUIRE_EU || 'true').toLowerCase() === 'false') {
+    invalid.push('R2_REQUIRE_EU=true');
+  }
+  if (!/^[A-Za-z0-9._-]{3,80}$/.test(keyId)) {
+    invalid.push('R2_REFERENCE_ACTIVE_KEY_ID=format');
+    return;
+  }
+
+  try {
+    const parsed = JSON.parse(keyRingRaw);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error('R2_REFERENCE_MASTER_KEYS_JSON_INVALID');
+    }
+    const raw = parsed[keyId];
+    if (typeof raw !== 'string' ||
+        Buffer.from(raw, 'base64').length !== 32) {
+      throw new Error('R2_REFERENCE_ACTIVE_KEY_INVALID');
+    }
+    for (const [candidateId, candidateRaw] of Object.entries(parsed)) {
+      if (!/^[A-Za-z0-9._-]{3,80}$/.test(candidateId) ||
+          typeof candidateRaw !== 'string' ||
+          Buffer.from(candidateRaw, 'base64').length !== 32) {
+        throw new Error('R2_REFERENCE_KEY_RING_INVALID');
+      }
+    }
+  } catch (_) {
+    invalid.push('R2_REFERENCE_MASTER_KEYS_JSON=32-byte-base64-key-ring');
+  }
+}
+
 function validateProductionConfig(env = process.env) {
   const live = isTrue(env.PRODUCTION_LIVE);
   if (!live) return { live: false, ready: false, missing: [], invalid: [] };
@@ -104,10 +156,7 @@ function validateProductionConfig(env = process.env) {
     'APPLE_IAP_KEY_ID',
     'TERMS_VERSION',
     'PRIVACY_VERSION',
-    'YOUTUBE_CLIENT_ID',
-    'YOUTUBE_CLIENT_SECRET',
-    'YOUTUBE_REFRESH_TOKEN',
-    'YOUTUBE_CHANNEL_ID',
+    'SIGILLUM_PRIMARY_REFERENCE_PROVIDER',
     'SIGILLUM_DERIVATION_KEY_ID',
     'SIGILLUM_DERIVATION_PRIVATE_KEY_PEM',
     'SIGILLUM_DERIVATION_PUBLIC_KEYS_JSON',
@@ -115,6 +164,46 @@ function validateProductionConfig(env = process.env) {
 
   for (const key of required) {
     if (!present(env[key])) missing.push(key);
+  }
+
+  const primaryReferenceProvider = String(
+    env.SIGILLUM_PRIMARY_REFERENCE_PROVIDER || '',
+  ).trim().toLowerCase();
+  if (primaryReferenceProvider !== 'r2' &&
+      primaryReferenceProvider !== 'youtube') {
+    invalid.push('SIGILLUM_PRIMARY_REFERENCE_PROVIDER=r2|youtube');
+  }
+
+  if (primaryReferenceProvider === 'r2') {
+    for (const key of [
+      'R2_ENDPOINT',
+      'R2_BUCKET',
+      'R2_ACCESS_KEY_ID',
+      'R2_SECRET_ACCESS_KEY',
+      'R2_REFERENCE_ACTIVE_KEY_ID',
+      'R2_REFERENCE_MASTER_KEYS_JSON',
+    ]) {
+      if (!present(env[key])) missing.push(key);
+    }
+    if ([
+      'R2_ENDPOINT',
+      'R2_BUCKET',
+      'R2_REFERENCE_ACTIVE_KEY_ID',
+      'R2_REFERENCE_MASTER_KEYS_JSON',
+    ].every(key => present(env[key]))) {
+      validateR2ReferenceConfig(env, invalid);
+    }
+  }
+
+  if (primaryReferenceProvider === 'youtube') {
+    for (const key of [
+      'YOUTUBE_CLIENT_ID',
+      'YOUTUBE_CLIENT_SECRET',
+      'YOUTUBE_REFRESH_TOKEN',
+      'YOUTUBE_CHANNEL_ID',
+    ]) {
+      if (!present(env[key])) missing.push(key);
+    }
   }
 
   if (!present(env.APPLE_IAP_PRIVATE_KEY_BASE64) && !present(env.APPLE_IAP_PRIVATE_KEY)) {
@@ -157,15 +246,17 @@ function validateProductionConfig(env = process.env) {
   if (present(env.PRIVACY_EMAIL) && !validEmail(env.PRIVACY_EMAIL)) {
     invalid.push('PRIVACY_EMAIL=email');
   }
-  if (present(env.YOUTUBE_CHANNEL_ID) &&
-      !/^UC[A-Za-z0-9_-]{22}$/.test(String(env.YOUTUBE_CHANNEL_ID))) {
-    invalid.push('YOUTUBE_CHANNEL_ID=channel-id');
-  }
-  if (!isTrue(env.YOUTUBE_COMPLIANCE_APPROVED)) {
-    invalid.push('YOUTUBE_COMPLIANCE_APPROVED=true');
-  }
-  if (!isTrue(env.YOUTUBE_UNLISTED_UPLOAD_CONFIRMED)) {
-    invalid.push('YOUTUBE_UNLISTED_UPLOAD_CONFIRMED=true');
+  if (primaryReferenceProvider === 'youtube') {
+    if (present(env.YOUTUBE_CHANNEL_ID) &&
+        !/^UC[A-Za-z0-9_-]{22}$/.test(String(env.YOUTUBE_CHANNEL_ID))) {
+      invalid.push('YOUTUBE_CHANNEL_ID=channel-id');
+    }
+    if (!isTrue(env.YOUTUBE_COMPLIANCE_APPROVED)) {
+      invalid.push('YOUTUBE_COMPLIANCE_APPROVED=true');
+    }
+    if (!isTrue(env.YOUTUBE_UNLISTED_UPLOAD_CONFIRMED)) {
+      invalid.push('YOUTUBE_UNLISTED_UPLOAD_CONFIRMED=true');
+    }
   }
   if (present(env.SIGILLUM_DERIVATION_KEY_ID) &&
       !/^[A-Za-z0-9._-]{3,80}$/.test(String(env.SIGILLUM_DERIVATION_KEY_ID))) {
