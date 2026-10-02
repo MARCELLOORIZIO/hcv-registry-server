@@ -2682,12 +2682,18 @@ function createVerifiedOriginalsProduction({
     hcvId,
     consentRecordId,
     original,
-    primaryManifest,
+    manifest,
+    manifestSha256,
+    referenceSha256,
+    derivationType,
+    referenceCreatedAt,
     receipt,
     lifecycleJobId,
     monetizationEnabled,
     hcvpackSha256,
     referenceRole = ORIGINAL_REFERENCE_ROLE,
+    sourceDerivationSha256 = '',
+    subtitleSha256 = '',
   }) {
     if (!receipt ||
         receipt.provider !== 'r2' ||
@@ -2695,8 +2701,19 @@ function createVerifiedOriginalsProduction({
         !receipt.objectKey ||
         !SHA256.test(receipt.ciphertextSha256 || '') ||
         !SHA256.test(receipt.referenceSha256 || '') ||
-        !SHA256.test(primaryManifest?.manifestSha256 || '')) {
+        !manifest ||
+        !SHA256.test(manifestSha256 || '') ||
+        !SHA256.test(referenceSha256 || '') ||
+        receipt.referenceSha256 !== referenceSha256 ||
+        typeof derivationType !== 'string' ||
+        !derivationType ||
+        !Number.isFinite(Date.parse(String(referenceCreatedAt || '')))) {
       fail('PRIMARY_REFERENCE_RECEIPT_INVALID', 422);
+    }
+    if (referenceRole === DERIVED_REFERENCE_ROLE &&
+        (!SHA256.test(sourceDerivationSha256) ||
+         !SHA256.test(subtitleSha256))) {
+      fail('PRIMARY_REFERENCE_DERIVATION_BINDING_INVALID', 422);
     }
 
     const client = await pool.connect();
@@ -2724,10 +2741,15 @@ function createVerifiedOriginalsProduction({
       if (existingPublication) {
         const validExisting =
           existingPublication.hcv_id === hcvId &&
-          existingPublication.reference_sha256 === receipt.referenceSha256 &&
-          existingPublication.original_content_sha256 === original.contentHash &&
+          existingPublication.reference_sha256 === referenceSha256 &&
+          existingPublication.original_content_sha256 ===
+            original.contentHash &&
           existingPublication.hcvpack_sha256 === hcvpackSha256 &&
           existingPublication.reference_role === referenceRole &&
+          existingPublication.derivation_type === derivationType &&
+          existingPublication.source_derivation_sha256 ===
+            sourceDerivationSha256 &&
+          existingPublication.subtitle_sha256 === subtitleSha256 &&
           existingPublication.publication_status === 'PUBLISHED';
         if (!validExisting) {
           fail('PRIMARY_REFERENCE_PUBLICATION_CONFLICT', 409);
@@ -2781,36 +2803,39 @@ function createVerifiedOriginalsProduction({
       await client.query(`
         INSERT INTO verified_originals_publications(
           publication_id,hcv_id,platform,platform_post_id,public_url,
-          reference_sha256,original_content_sha256,derived_from,derivation_type,
-          derivation_manifest_sha256,platform_receipt_id,created_at,
-          publication_status,consent_record_id,consent_version,
-          monetization_consent,published_by,hcvpack_sha256,
-          reference_role,source_derivation_sha256,subtitle_sha256,
-          audit_metadata_json
+          reference_sha256,original_content_sha256,derived_from,
+          derivation_type,derivation_manifest_sha256,
+          platform_receipt_id,created_at,publication_status,
+          consent_record_id,consent_version,monetization_consent,
+          published_by,hcvpack_sha256,reference_role,
+          source_derivation_sha256,subtitle_sha256,audit_metadata_json
         ) VALUES(
-          $1,$2,'r2',$3,'',$4,$5,$5,$6,$7,$8,$9,
-          'PUBLISHED',$10,$11,$12,$13,$14,$15,'','',$16
+          $1,$2,'r2',$3,'',$4,$5,$5,$6,$7,$8,$9,'PUBLISHED',
+          $10,$11,$12,$13,$14,$15,$16,$17,$18
         )
       `, [
         publicationId,
         hcvId,
         receipt.objectId,
-        receipt.referenceSha256,
+        referenceSha256,
         original.contentHash,
-        PRIMARY_REFERENCE_OPERATION,
-        primaryManifest.manifestSha256,
+        derivationType,
+        manifestSha256,
         storedReceipt.receipt_id,
-        primaryManifest.manifest.createdAt,
+        referenceCreatedAt,
         consentRecordId,
         consent.consent_version,
         monetizationEnabled,
         String(process.env.SIGILLUM_PUBLISHER_ID || 'SIGILLUM_SERVER_V1'),
         hcvpackSha256,
         referenceRole,
+        sourceDerivationSha256,
+        subtitleSha256,
         {
           provider: 'r2',
           lifecycleJobId,
           referenceAccess: 'SHORT_LIVED_AUTHORIZATION',
+          manifestSchema: manifest.schema || null,
         },
       ]);
 
@@ -2826,6 +2851,9 @@ function createVerifiedOriginalsProduction({
           provider: 'r2',
           lifecycleJobId,
           referenceRole,
+          derivationType,
+          sourceDerivationSha256: sourceDerivationSha256 || null,
+          subtitleSha256: subtitleSha256 || null,
           hcvpackSha256,
           ciphertextSha256: receipt.ciphertextSha256,
           encryptionFormat: receipt.encryptionFormat,
@@ -3202,7 +3230,11 @@ function createVerifiedOriginalsProduction({
         hcvId,
         consentRecordId,
         original,
-        primaryManifest,
+        manifest: primaryManifest.manifest,
+        manifestSha256: primaryManifest.manifestSha256,
+        referenceSha256: primaryManifest.outputHash,
+        derivationType: PRIMARY_REFERENCE_OPERATION,
+        referenceCreatedAt: primaryManifest.manifest.createdAt,
         receipt,
         lifecycleJobId: lifecycleJob.jobId,
         monetizationEnabled,
