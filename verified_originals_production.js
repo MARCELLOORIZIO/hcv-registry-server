@@ -822,10 +822,12 @@ function createVerifiedOriginalsProduction({
   const primaryReferenceProviderName =
     primaryReferenceProviderOverride?.name ||
     selectPrimaryReferenceProvider(process.env);
-  let r2ReferenceProvider =
-    primaryReferenceProviderName === 'r2'
-      ? primaryReferenceProviderOverride
-      : null;
+  let r2ReferenceProvider = null;
+  if (primaryReferenceProviderName === 'r2') {
+    r2ReferenceProvider =
+      primaryReferenceProviderOverride ||
+      createR2ReferenceProvider({ env: process.env });
+  }
 
   function requireR2ReferenceProvider() {
     if (primaryReferenceProviderName !== 'r2') {

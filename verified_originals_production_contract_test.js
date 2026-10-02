@@ -17,6 +17,8 @@ for (const token of [
 }
 
 for (const token of [
+  "primaryReferenceProviderOverride ||",
+  "createR2ReferenceProvider({ env: process.env })",
   "privacyStatus: 'unlisted'",
   'YOUTUBE_CHANNEL_ID',
   'channels?part=id&mine=true',
