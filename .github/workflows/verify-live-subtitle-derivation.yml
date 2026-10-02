@@ -1,0 +1,33 @@
+name: Verify live authorized subtitle derivation
+
+on:
+  push:
+    branches:
+      - ops/verify-live-subtitle-derivation-20261002
+    paths:
+      - '.github/workflows/verify-live-subtitle-derivation.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Verify existing protected subtitle case
+        shell: bash
+        run: |
+          set -euo pipefail
+          body="$(curl --fail-with-body --silent --show-error --max-time 30             https://sigillum-hcv.com/api/verified-originals/HCV-6E28BB75A61B493B/verification-reference)"
+          echo "$body" | jq -e '.availability == "REFERENCE_AVAILABLE"' >/dev/null
+          echo "$body" | jq -e '.platform == "r2"' >/dev/null
+          echo "$body" | jq -e '.referenceLive == true' >/dev/null
+          echo "$body" | jq -e '.authorizedDerivations | length >= 1' >/dev/null
+          echo "$body" | jq -e '.authorizedDerivations[] |
+            select(.referenceRole == "DERIVED_REFERENCE" and
+                   .derivationType == "subtitle_burn_in_reference_v1" and
+                   .editorialImpact == "caption_overlay") |
+            .referenceVisualFingerprint.type == "SIGILLUM_REFERENCE_VISUAL_FINGERPRINT"' >/dev/null
+          echo "LIVE_AUTHORIZED_SUBTITLE_DERIVATION=PASS"
