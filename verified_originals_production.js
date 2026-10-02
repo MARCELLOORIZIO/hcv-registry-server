@@ -1376,7 +1376,7 @@ function createVerifiedOriginalsProduction({
     return common;
   }
 
-  async function activeSubtitleReference(
+  async function activeYoutubeSubtitleReference(
     hcvId,
     captionedSha256,
     subtitleSha256,
@@ -1474,6 +1474,136 @@ function createVerifiedOriginalsProduction({
       publicationStatus: row.publication_status,
       publishedAt: row.published_at,
     };
+  }
+
+  async function activeR2SubtitleReference(
+    hcvId,
+    captionedSha256,
+    subtitleSha256,
+  ) {
+    if (!SHA256.test(captionedSha256) ||
+        !SHA256.test(subtitleSha256)) {
+      return null;
+    }
+    const original = await verifiedOriginal(hcvId);
+    if (!original || original.contentType !== 'video') return null;
+
+    const job = await availablePrimaryReference(
+      pool,
+      hcvId,
+      DERIVED_REFERENCE_ROLE,
+    );
+    if (!job || job.provider !== 'r2' || !job.receipt) return null;
+
+    const row = (await pool.query(`
+      SELECT
+        p.*,
+        c.state AS consent_state,
+        r.hcv_id AS receipt_hcv_id,
+        r.platform AS receipt_platform,
+        r.platform_post_id AS receipt_platform_post_id,
+        r.uploaded_sha256 AS receipt_uploaded_sha256,
+        r.processing_status AS receipt_processing_status,
+        r.visibility AS receipt_visibility
+      FROM verified_originals_publications p
+      JOIN verified_originals_consents c ON c.record_id=p.consent_record_id
+      JOIN verified_originals_platform_receipts r
+        ON r.receipt_id=p.platform_receipt_id
+      WHERE p.hcv_id=$1
+        AND p.platform='r2'
+        AND p.platform_post_id=$2
+        AND p.publication_status='PUBLISHED'
+        AND p.reference_role=$3
+        AND p.source_derivation_sha256=$4
+        AND p.subtitle_sha256=$5
+      ORDER BY p.published_at DESC
+      LIMIT 1
+    `, [
+      hcvId,
+      job.objectId,
+      DERIVED_REFERENCE_ROLE,
+      captionedSha256,
+      subtitleSha256,
+    ])).rows[0];
+
+    if (!row ||
+        row.consent_state !== 'ACTIVE' ||
+        row.original_content_sha256 !== original.contentHash ||
+        row.derived_from !== original.contentHash ||
+        row.derivation_type !== SUBTITLE_DERIVATION_OPERATION ||
+        row.receipt_hcv_id !== hcvId ||
+        row.receipt_platform !== 'r2' ||
+        row.receipt_platform_post_id !== job.objectId ||
+        row.receipt_uploaded_sha256 !== job.receipt.ciphertextSha256 ||
+        row.receipt_processing_status !== 'succeeded' ||
+        row.receipt_visibility !== 'private' ||
+        row.reference_sha256 !== job.referenceSha256 ||
+        !SHA256.test(row.reference_sha256 || '')) {
+      return null;
+    }
+
+    const derivationRow = (await pool.query(
+      'SELECT manifest_raw FROM trusted_derivations WHERE output_sha256=$1 AND hcv_id=$2',
+      [row.reference_sha256, hcvId],
+    )).rows[0];
+    if (!derivationRow) return null;
+
+    let manifest;
+    try {
+      manifest = JSON.parse(derivationRow.manifest_raw);
+    } catch (_) {
+      return null;
+    }
+    const trustedKeys = parsePinnedDerivationKeys();
+    if (!verifySubtitleDerivationManifest({
+      manifest,
+      certificateRaw: original.row.certificate_raw,
+      trustedKeys,
+      verifyCertificateRaw,
+    })) {
+      return null;
+    }
+    if (manifest.source?.sha256 !== captionedSha256 ||
+        manifest.source?.subtitleSha256 !== subtitleSha256) {
+      return null;
+    }
+
+    return {
+      publicationId: row.publication_id,
+      hcvId,
+      platform: 'r2',
+      referenceSha256: row.reference_sha256,
+      originalContentSha256: row.original_content_sha256,
+      hcvpackSha256: row.hcvpack_sha256,
+      sourceDerivationSha256: row.source_derivation_sha256,
+      subtitleSha256: row.subtitle_sha256,
+      derivationType: row.derivation_type,
+      referenceRole: row.reference_role,
+      publicationStatus: row.publication_status,
+      referenceAccess: 'SHORT_LIVED_AUTHORIZATION',
+      publishedAt: row.published_at,
+      lifecycleJobId: job.jobId,
+      providerReceipt: job.receipt,
+    };
+  }
+
+  async function activeSubtitleReference(
+    hcvId,
+    captionedSha256,
+    subtitleSha256,
+  ) {
+    if (primaryReferenceProviderName === 'r2') {
+      return activeR2SubtitleReference(
+        hcvId,
+        captionedSha256,
+        subtitleSha256,
+      );
+    }
+    return activeYoutubeSubtitleReference(
+      hcvId,
+      captionedSha256,
+      subtitleSha256,
+    );
   }
 
   async function publicAvailability(hcvId) {
