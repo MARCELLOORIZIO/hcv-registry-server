@@ -1458,6 +1458,11 @@ function createVerifiedOriginalsProduction({
         manifest.source?.subtitleSha256 !== subtitleSha256) {
       return null;
     }
+    const referenceVisualFingerprint =
+      manifest.output?.referenceVisualFingerprint;
+    if (!validReferenceVisualFingerprintV3(referenceVisualFingerprint)) {
+      return null;
+    }
 
     const reference = canonicalYoutubeReference(row.platform_post_id);
     if (!reference || reference.publicUrl !== row.public_url) return null;
@@ -1475,6 +1480,7 @@ function createVerifiedOriginalsProduction({
       derivationType: row.derivation_type,
       referenceRole: row.reference_role,
       publicationStatus: row.publication_status,
+      referenceVisualFingerprint,
       publishedAt: row.published_at,
     };
   }
@@ -1570,6 +1576,11 @@ function createVerifiedOriginalsProduction({
         manifest.source?.subtitleSha256 !== subtitleSha256) {
       return null;
     }
+    const referenceVisualFingerprint =
+      manifest.output?.referenceVisualFingerprint;
+    if (!validReferenceVisualFingerprintV3(referenceVisualFingerprint)) {
+      return null;
+    }
 
     return {
       publicationId: row.publication_id,
@@ -1583,6 +1594,7 @@ function createVerifiedOriginalsProduction({
       derivationType: row.derivation_type,
       referenceRole: row.reference_role,
       publicationStatus: row.publication_status,
+      referenceVisualFingerprint,
       referenceAccess: 'SHORT_LIVED_AUTHORIZATION',
       publishedAt: row.published_at,
       lifecycleJobId: job.jobId,
@@ -1607,6 +1619,65 @@ function createVerifiedOriginalsProduction({
       captionedSha256,
       subtitleSha256,
     );
+  }
+
+  async function latestActiveSubtitleReference(hcvId) {
+    const row = (await pool.query(`
+      SELECT source_derivation_sha256,subtitle_sha256
+      FROM verified_originals_publications
+      WHERE hcv_id=$1
+        AND publication_status='PUBLISHED'
+        AND reference_role=$2
+        AND derivation_type=$3
+      ORDER BY published_at DESC
+      LIMIT 1
+    `, [
+      hcvId,
+      DERIVED_REFERENCE_ROLE,
+      SUBTITLE_DERIVATION_OPERATION,
+    ])).rows[0];
+    if (!row ||
+        !SHA256.test(row.source_derivation_sha256 || '') ||
+        !SHA256.test(row.subtitle_sha256 || '')) {
+      return null;
+    }
+    return activeSubtitleReference(
+      hcvId,
+      row.source_derivation_sha256,
+      row.subtitle_sha256,
+    );
+  }
+
+  async function authorizedVerificationDerivations(hcvId) {
+    const reference = await latestActiveSubtitleReference(hcvId);
+    if (!reference ||
+        !validReferenceVisualFingerprintV3(
+          reference.referenceVisualFingerprint,
+        )) {
+      return [];
+    }
+
+    if (reference.platform === 'r2') {
+      try {
+        const exists = await requireR2ReferenceProvider()
+          .referenceExists(reference.providerReceipt);
+        if (!exists) return [];
+      } catch (_) {
+        return [];
+      }
+    } else if (reference.platform === 'youtube') {
+      const live = await liveYoutubeReferenceStatus(reference);
+      if (live.availability !== 'REFERENCE_AVAILABLE') return [];
+    } else {
+      return [];
+    }
+
+    return [{
+      referenceRole: reference.referenceRole,
+      derivationType: reference.derivationType,
+      editorialImpact: 'caption_overlay',
+      referenceVisualFingerprint: reference.referenceVisualFingerprint,
+    }];
   }
 
   async function publicAvailability(hcvId) {
@@ -1641,6 +1712,7 @@ function createVerifiedOriginalsProduction({
           primaryReferenceProviderName === 'r2'
             ? 'R2_PRIVATE_EXACT_REFERENCE_SIGNED_V1'
             : 'YOUTUBE_LIVE_ATTESTED_SIGNED_V3',
+        authorizedDerivations: [],
         totalMs: Date.now() - startedAt,
       };
     }
@@ -1662,6 +1734,8 @@ function createVerifiedOriginalsProduction({
           comparisonMode: 'R2_PRIVATE_EXACT_REFERENCE_SIGNED_V1',
           referenceVisualFingerprint:
             exists ? reference.referenceVisualFingerprint : null,
+          authorizedDerivations:
+            exists ? await authorizedVerificationDerivations(hcvId) : [],
           providerCheckMs: Date.now() - providerStartedAt,
           totalMs: Date.now() - startedAt,
         };
@@ -1675,6 +1749,7 @@ function createVerifiedOriginalsProduction({
           referenceLive: false,
           comparisonMode: 'R2_PRIVATE_EXACT_REFERENCE_SIGNED_V1',
           referenceVisualFingerprint: null,
+          authorizedDerivations: [],
           providerCheckMs: Date.now() - providerStartedAt,
           totalMs: Date.now() - startedAt,
         };
@@ -1693,6 +1768,10 @@ function createVerifiedOriginalsProduction({
         live.availability === 'REFERENCE_AVAILABLE'
           ? reference.referenceVisualFingerprint
           : null,
+      authorizedDerivations:
+        live.availability === 'REFERENCE_AVAILABLE'
+          ? await authorizedVerificationDerivations(hcvId)
+          : [],
       totalMs: Date.now() - startedAt,
     };
   }
