@@ -209,6 +209,33 @@ async function createOrGetReferenceJob(pool, {
   }
 }
 
+async function claimUploadJob(pool, jobId) {
+  const row = (await pool.query(`
+    UPDATE verified_originals_reference_jobs
+    SET state='UPLOADING',
+        attempt_count=attempt_count+1,
+        next_attempt_at=NULL,
+        updated_at=NOW()
+    WHERE job_id=$1
+      AND (
+        state='PENDING'
+        OR (
+          state='RETRY_WAIT'
+          AND (next_attempt_at IS NULL OR next_attempt_at<=NOW())
+        )
+      )
+    RETURNING *
+  `, [jobId])).rows[0];
+  if (row) return rowEnvelope(row);
+
+  const existing = (await pool.query(`
+    SELECT * FROM verified_originals_reference_jobs WHERE job_id=$1
+  `, [jobId])).rows[0];
+  if (!existing) throw lifecycleError('PRIMARY_REFERENCE_JOB_NOT_FOUND', 404);
+  if (existing.state === STATES.COMMITTED) return rowEnvelope(existing);
+  throw lifecycleError('PRIMARY_REFERENCE_UPLOAD_STATE_CONFLICT', 409);
+}
+
 async function claimUploadJobs(pool, {
   limit = 25,
   provider = 'r2',
@@ -482,6 +509,7 @@ module.exports = {
   STATES,
   availableReference,
   claimDeleteJobs,
+  claimUploadJob,
   claimUploadJobs,
   createOrGetReferenceJob,
   deleteOrphanedNonCommittedJobs,
