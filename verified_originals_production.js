@@ -1438,7 +1438,7 @@ function createVerifiedOriginalsProduction({
       hcvId,
       availability: 'REFERENCE_AVAILABLE',
       publicationStatus: 'PUBLISHED',
-      platform: 'youtube',
+      platform: reference.platform,
       hcvpackSha256: reference.hcvpackSha256,
       certificateVerdict: 'CERTIFICATE_RECORD_VERIFIED',
       socialFileVerdict: 'NOT_VERIFIED',
@@ -1455,15 +1455,59 @@ function createVerifiedOriginalsProduction({
         hcvId,
         availability: 'REFERENCE_NOT_AVAILABLE',
         youtubeLive: false,
-        comparisonMode: 'YOUTUBE_LIVE_ATTESTED_SIGNED_V3',
+        r2Live: false,
+        referenceLive: false,
+        comparisonMode:
+          primaryReferenceProviderName === 'r2'
+            ? 'R2_PRIVATE_EXACT_REFERENCE_SIGNED_V1'
+            : 'YOUTUBE_LIVE_ATTESTED_SIGNED_V3',
         totalMs: Date.now() - startedAt,
       };
     }
+
+    if (reference.platform === 'r2') {
+      const providerStartedAt = Date.now();
+      try {
+        const exists = await requireR2ReferenceProvider()
+          .referenceExists(reference.providerReceipt);
+        return {
+          hcvId,
+          availability: exists
+            ? 'REFERENCE_AVAILABLE'
+            : 'REFERENCE_NOT_AVAILABLE',
+          platform: 'r2',
+          youtubeLive: false,
+          r2Live: exists,
+          referenceLive: exists,
+          comparisonMode: 'R2_PRIVATE_EXACT_REFERENCE_SIGNED_V1',
+          referenceVisualFingerprint:
+            exists ? reference.referenceVisualFingerprint : null,
+          providerCheckMs: Date.now() - providerStartedAt,
+          totalMs: Date.now() - startedAt,
+        };
+      } catch (_) {
+        return {
+          hcvId,
+          availability: 'REFERENCE_TEMPORARILY_UNAVAILABLE',
+          platform: 'r2',
+          youtubeLive: false,
+          r2Live: false,
+          referenceLive: false,
+          comparisonMode: 'R2_PRIVATE_EXACT_REFERENCE_SIGNED_V1',
+          referenceVisualFingerprint: null,
+          providerCheckMs: Date.now() - providerStartedAt,
+          totalMs: Date.now() - startedAt,
+        };
+      }
+    }
+
     const live = await liveYoutubeReferenceStatus(reference);
     return {
       hcvId,
       ...live,
       platform: 'youtube',
+      r2Live: false,
+      referenceLive: live.availability === 'REFERENCE_AVAILABLE',
       comparisonMode: 'YOUTUBE_LIVE_ATTESTED_SIGNED_V3',
       referenceVisualFingerprint:
         live.availability === 'REFERENCE_AVAILABLE'
