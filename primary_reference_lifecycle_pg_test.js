@@ -6,6 +6,7 @@ const { Pool } = require('pg');
 const {
   STATES,
   availableReference,
+  claimDeleteJob,
   claimDeleteJobs,
   claimUploadJob,
   claimUploadJobs,
@@ -15,7 +16,9 @@ const {
   markDeleteRetry,
   markDeleted,
   markUploadRetry,
+  referenceJobByProviderObject,
   requestDelete,
+  requestDeleteByProviderObject,
 } = require('./primary_reference_lifecycle');
 
 function sha(value) {
@@ -165,10 +168,18 @@ async function main() {
     assert.equal(available.jobId, created.job.jobId);
     assert.equal(available.state, STATES.COMMITTED);
 
-    const deletePending = await requestDelete(
-      scopedPool,
-      created.job.jobId,
-    );
+    const lookedUp = await referenceJobByProviderObject(scopedPool, {
+      provider: 'r2',
+      objectId,
+      hcvId,
+    });
+    assert.equal(lookedUp.jobId, created.job.jobId);
+
+    const deletePending = await requestDeleteByProviderObject(scopedPool, {
+      provider: 'r2',
+      objectId,
+      hcvId,
+    });
     assert.equal(deletePending.state, STATES.DELETE_PENDING);
 
     const unavailable = await availableReference(
@@ -178,12 +189,11 @@ async function main() {
     );
     assert.equal(unavailable, null);
 
-    let deleteClaims = await claimDeleteJobs(scopedPool, {
-      provider: 'r2',
-      limit: 10,
-    });
-    assert.equal(deleteClaims.length, 1);
-    assert.equal(deleteClaims[0].deleteAttemptCount, 1);
+    let deleteClaim = await claimDeleteJob(
+      scopedPool,
+      created.job.jobId,
+    );
+    assert.equal(deleteClaim.deleteAttemptCount, 1);
 
     const deleteRetry = await markDeleteRetry(
       scopedPool,
@@ -194,12 +204,11 @@ async function main() {
     assert.equal(deleteRetry.state, STATES.DELETE_PENDING);
     assert.equal(deleteRetry.lastErrorCode, 'R2_DELETE_OUTAGE');
 
-    deleteClaims = await claimDeleteJobs(scopedPool, {
-      provider: 'r2',
-      limit: 10,
-    });
-    assert.equal(deleteClaims.length, 1);
-    assert.equal(deleteClaims[0].deleteAttemptCount, 2);
+    deleteClaim = await claimDeleteJob(
+      scopedPool,
+      created.job.jobId,
+    );
+    assert.equal(deleteClaim.deleteAttemptCount, 2);
 
     const deleted = await markDeleted(scopedPool, created.job.jobId);
     assert.equal(deleted.state, STATES.DELETED);
@@ -207,17 +216,17 @@ async function main() {
 
     const newObjectId = crypto.randomUUID();
     const second = await createOrGetReferenceJob(scopedPool, {
-      binding: {
-        ...binding,
-        referenceSha256: sha('reference-v2'),
-        derivationManifestSha256: sha('manifest-v2'),
-      },
+      binding,
       provider: 'r2',
       objectId: newObjectId,
       objectKey: 'references/v1/face/' + newObjectId + '.sgref',
     });
     assert.equal(second.created, true);
+    assert.equal(second.rearmed, true);
+    assert.equal(second.job.jobId, created.job.jobId);
+    assert.equal(second.job.objectId, newObjectId);
     assert.equal(second.job.state, STATES.PENDING);
+    assert.equal(second.job.receipt, null);
 
     console.log(
       'primary_reference_lifecycle_pg_test: PASS — durable idempotency, authority conflict, upload retry, commit visibility, fail-closed withdrawal, delete retry and terminal deletion',
