@@ -655,11 +655,20 @@ async function run() {
     assert.equal(replay.status, 403);
     assert.equal(replay.json.error, 'REFERENCE_READ_AUTH_INVALID');
 
-    const captionedBytes = Buffer.from(originalBytes);
+    const captionedPath = path.join(tmp, 'captioned.mp4');
+    execFileSync(ffmpegPath, [
+      '-hide_banner', '-loglevel', 'error', '-nostdin', '-y',
+      '-i', originalPath,
+      '-vf', 'drawbox=x=20:y=180:w=280:h=40:color=black@0.8:t=fill',
+      '-c:v', 'mpeg4', '-q:v', '5', '-pix_fmt', 'yuv420p', '-an',
+      '-movflags', '+faststart', captionedPath,
+    ], { stdio: 'pipe' });
+    const captionedBytes = fs.readFileSync(captionedPath);
     const captionedSha256 = crypto
       .createHash('sha256')
       .update(captionedBytes)
       .digest('hex');
+    assert.notEqual(captionedSha256, originalHash);
     const subtitleSha256 = sha('r2-subtitle-file');
     const subtitlePublication = await request(
       base,
@@ -699,9 +708,43 @@ async function run() {
       subtitlePublication.json.subtitleSha256,
       subtitleSha256,
     );
+    assert.equal(
+      subtitlePublication.json.referenceSha256,
+      captionedSha256,
+      'R2 keeps the already-protected captioned bytes as the exact derived reference',
+    );
     assert.equal(subtitlePublication.json.publicUrl, undefined);
     assert.equal(providerCommitCount, 2);
     assert.equal(providerObjects.size, 2);
+
+    const derivedVerification = await request(
+      base,
+      'GET',
+      '/api/verified-originals/' + HCV_ID + '/verification-reference',
+    );
+    assert.equal(derivedVerification.status, 200, derivedVerification.text);
+    assert.equal(derivedVerification.json.availability, 'REFERENCE_AVAILABLE');
+    assert.equal(
+      derivedVerification.json.authorizedDerivations.length,
+      1,
+      derivedVerification.text,
+    );
+    assert.equal(
+      derivedVerification.json.authorizedDerivations[0].referenceRole,
+      'DERIVED_REFERENCE',
+    );
+    assert.equal(
+      derivedVerification.json.authorizedDerivations[0].derivationType,
+      'subtitle_burn_in_reference_v1',
+    );
+    assert.equal(
+      derivedVerification.json.authorizedDerivations[0].editorialImpact,
+      'caption_overlay',
+    );
+    assert.ok(
+      derivedVerification.json.authorizedDerivations[0]
+        .referenceVisualFingerprint,
+    );
 
     const wrongBytes = Buffer.from(originalBytes);
     wrongBytes[wrongBytes.length - 1] ^= 0xff;
@@ -794,10 +837,10 @@ async function run() {
     assert.ok(originalStored);
     assert.ok(subtitleStored);
     assert.equal(originalStored.reference_sha256, originalHash);
-    assert.notEqual(subtitleStored.reference_sha256, originalHash);
+    assert.equal(subtitleStored.reference_sha256, captionedSha256);
 
     console.log(
-      'verified_originals_r2_production_test: PASS — exact private R2 original, encrypted trusted subtitle derivative, provider-neutral discovery, safe view, live HEAD attestation, subscription gate, one-use authenticated read, fail-closed withdrawal and delete retry',
+      'verified_originals_r2_production_test: PASS — exact private R2 original, exact protected subtitle derivative, authorized-derivation verification, provider-neutral discovery, safe view, live HEAD attestation, subscription gate, one-use authenticated read, fail-closed withdrawal and delete retry',
     );
   } finally {
     server.closeAllConnections?.();
