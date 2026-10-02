@@ -150,8 +150,30 @@ async function createOrGetReferenceJob(pool, {
       FOR UPDATE
     `, [idempotencyKey])).rows[0];
     if (same) {
+      if (same.state === STATES.DELETED) {
+        const rearmed = (await client.query(`
+          UPDATE verified_originals_reference_jobs
+          SET object_id=$2,
+              object_key=$3,
+              state='PENDING',
+              attempt_count=0,
+              delete_attempt_count=0,
+              next_attempt_at=NULL,
+              delete_next_attempt_at=NULL,
+              last_error_code='',
+              receipt_json=NULL,
+              updated_at=NOW(),
+              committed_at=NULL,
+              delete_requested_at=NULL,
+              deleted_at=NULL
+          WHERE job_id=$1 AND state='DELETED'
+          RETURNING *
+        `, [same.job_id, objectId, objectKey])).rows[0];
+        await client.query('COMMIT');
+        return { created: true, rearmed: true, job: rowEnvelope(rearmed) };
+      }
       await client.query('COMMIT');
-      return { created: false, job: rowEnvelope(same) };
+      return { created: false, rearmed: false, job: rowEnvelope(same) };
     }
 
     const authority = (await client.query(`
@@ -367,6 +389,87 @@ async function availableReference(pool, hcvId, referenceRole) {
   return rowEnvelope(row);
 }
 
+async function referenceJobByProviderObject(
+  pool,
+  { provider, objectId, hcvId = null },
+) {
+  if (!validProvider(provider) || !objectId) {
+    throw lifecycleError('PRIMARY_REFERENCE_PROVIDER_OBJECT_INVALID', 400);
+  }
+  const row = (await pool.query(`
+    SELECT * FROM verified_originals_reference_jobs
+    WHERE provider=$1
+      AND object_id=$2
+      AND ($3::text IS NULL OR hcv_id=$3)
+    ORDER BY created_at DESC
+    LIMIT 1
+  `, [provider, objectId, hcvId])).rows[0];
+  return rowEnvelope(row);
+}
+
+async function requestDeleteByProviderObject(
+  queryable,
+  { provider, objectId, hcvId },
+) {
+  if (!validProvider(provider) || !objectId || !hcvId) {
+    throw lifecycleError('PRIMARY_REFERENCE_PROVIDER_OBJECT_INVALID', 400);
+  }
+  const existing = (await queryable.query(`
+    SELECT * FROM verified_originals_reference_jobs
+    WHERE provider=$1 AND object_id=$2 AND hcv_id=$3
+    ORDER BY created_at DESC
+    LIMIT 1
+    FOR UPDATE
+  `, [provider, objectId, hcvId])).rows[0];
+  if (!existing) {
+    throw lifecycleError('PRIMARY_REFERENCE_JOB_NOT_FOUND', 404);
+  }
+  if (existing.state === STATES.DELETED ||
+      existing.state === STATES.DELETE_PENDING) {
+    return rowEnvelope(existing);
+  }
+  if (existing.state !== STATES.COMMITTED) {
+    throw lifecycleError('PRIMARY_REFERENCE_DELETE_STATE_CONFLICT', 409);
+  }
+  const row = (await queryable.query(`
+    UPDATE verified_originals_reference_jobs
+    SET state='DELETE_PENDING',
+        delete_requested_at=COALESCE(delete_requested_at,NOW()),
+        delete_next_attempt_at=NOW(),
+        updated_at=NOW()
+    WHERE job_id=$1 AND state='COMMITTED'
+    RETURNING *
+  `, [existing.job_id])).rows[0];
+  if (!row) {
+    throw lifecycleError('PRIMARY_REFERENCE_DELETE_STATE_CONFLICT', 409);
+  }
+  return rowEnvelope(row);
+}
+
+async function claimDeleteJob(pool, jobId) {
+  const row = (await pool.query(`
+    UPDATE verified_originals_reference_jobs
+    SET delete_attempt_count=delete_attempt_count+1,
+        delete_next_attempt_at=NULL,
+        updated_at=NOW()
+    WHERE job_id=$1
+      AND state='DELETE_PENDING'
+      AND (
+        delete_next_attempt_at IS NULL
+        OR delete_next_attempt_at<=NOW()
+      )
+    RETURNING *
+  `, [jobId])).rows[0];
+  if (row) return rowEnvelope(row);
+
+  const existing = (await pool.query(`
+    SELECT * FROM verified_originals_reference_jobs WHERE job_id=$1
+  `, [jobId])).rows[0];
+  if (!existing) throw lifecycleError('PRIMARY_REFERENCE_JOB_NOT_FOUND', 404);
+  if (existing.state === STATES.DELETED) return rowEnvelope(existing);
+  throw lifecycleError('PRIMARY_REFERENCE_DELETE_STATE_CONFLICT', 409);
+}
+
 async function requestDelete(pool, jobId) {
   const client = await pool.connect();
   try {
@@ -508,6 +611,7 @@ module.exports = {
   RETRYABLE_UPLOAD_STATES,
   STATES,
   availableReference,
+  claimDeleteJob,
   claimDeleteJobs,
   claimUploadJob,
   claimUploadJobs,
@@ -520,7 +624,9 @@ module.exports = {
   markDeleted,
   markUploadPermanentFailure,
   markUploadRetry,
+  referenceJobByProviderObject,
   requestDelete,
+  requestDeleteByProviderObject,
   retryDelayMs,
   rowEnvelope,
 };
