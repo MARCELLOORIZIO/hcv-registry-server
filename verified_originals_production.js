@@ -4186,7 +4186,10 @@ function createVerifiedOriginalsProduction({
       Number(process.env.SIGILLUM_TAKEDOWN_RETRY_MS || 300_000),
     );
     takedownTimer = setInterval(() => {
-      retryPendingTakedowns().catch(error => {
+      Promise.all([
+        retryPendingTakedowns(),
+        retryPendingPrimaryReferenceDeletes(),
+      ]).catch(error => {
         console.error(
           'SIGILLUM_TAKEDOWN_RETRY_FAILED',
           error?.message || error,
