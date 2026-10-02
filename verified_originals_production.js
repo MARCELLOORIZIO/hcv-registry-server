@@ -2513,6 +2513,172 @@ function createVerifiedOriginalsProduction({
     };
   }
 
+  async function registerR2Publication({
+    hcvId,
+    consentRecordId,
+    original,
+    primaryManifest,
+    receipt,
+    lifecycleJobId,
+    monetizationEnabled,
+    hcvpackSha256,
+    referenceRole = ORIGINAL_REFERENCE_ROLE,
+  }) {
+    if (!receipt ||
+        receipt.provider !== 'r2' ||
+        !receipt.objectId ||
+        !receipt.objectKey ||
+        !SHA256.test(receipt.ciphertextSha256 || '') ||
+        !SHA256.test(receipt.referenceSha256 || '') ||
+        !SHA256.test(primaryManifest?.manifestSha256 || '')) {
+      fail('PRIMARY_REFERENCE_RECEIPT_INVALID', 422);
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const consent = (await client.query(`
+        SELECT * FROM verified_originals_consents
+        WHERE record_id=$1 AND hcv_id=$2 AND state='ACTIVE'
+        FOR UPDATE
+      `, [consentRecordId, hcvId])).rows[0];
+      if (!consent ||
+          !consent.publication_consent ||
+          !consent.rights_confirmed) {
+        fail('ACTIVE_CREATOR_CONSENT_REQUIRED', 403);
+      }
+      if (monetizationEnabled && !consent.monetization_consent) {
+        fail('MONETIZATION_NOT_AUTHORIZED', 403);
+      }
+
+      const existingPublication = (await client.query(`
+        SELECT * FROM verified_originals_publications
+        WHERE platform='r2' AND platform_post_id=$1
+        LIMIT 1
+      `, [receipt.objectId])).rows[0];
+      if (existingPublication) {
+        const validExisting =
+          existingPublication.hcv_id === hcvId &&
+          existingPublication.reference_sha256 === receipt.referenceSha256 &&
+          existingPublication.original_content_sha256 === original.contentHash &&
+          existingPublication.hcvpack_sha256 === hcvpackSha256 &&
+          existingPublication.reference_role === referenceRole &&
+          existingPublication.publication_status === 'PUBLISHED';
+        if (!validExisting) {
+          fail('PRIMARY_REFERENCE_PUBLICATION_CONFLICT', 409);
+        }
+        await client.query('COMMIT');
+        return existingPublication.publication_id;
+      }
+
+      const receiptId = crypto.randomUUID();
+      await client.query(`
+        INSERT INTO verified_originals_platform_receipts(
+          receipt_id,hcv_id,platform,platform_post_id,uploaded_sha256,
+          upload_session_hash,processing_status,visibility,
+          publisher_subject_hash,metadata_json
+        ) VALUES($1,$2,'r2',$3,$4,$5,'succeeded','private',$6,$7)
+        ON CONFLICT(platform,platform_post_id) DO NOTHING
+      `, [
+        receiptId,
+        hcvId,
+        receipt.objectId,
+        receipt.ciphertextSha256,
+        hashString(receipt.objectKey),
+        hashString(
+          String(process.env.SIGILLUM_PUBLISHER_ID || 'SIGILLUM_SERVER_V1'),
+        ),
+        {
+          provider: 'cloudflare_r2',
+          lifecycleJobId,
+          objectKey: receipt.objectKey,
+          ciphertextSha256: receipt.ciphertextSha256,
+          ciphertextBytes: receipt.ciphertextBytes,
+          encryptionFormat: receipt.encryptionFormat,
+          encryptionKeyId: receipt.encryptionKeyId,
+        },
+      ]);
+
+      const storedReceipt = (await client.query(`
+        SELECT * FROM verified_originals_platform_receipts
+        WHERE platform='r2' AND platform_post_id=$1
+        LIMIT 1
+      `, [receipt.objectId])).rows[0];
+      if (!storedReceipt ||
+          storedReceipt.hcv_id !== hcvId ||
+          storedReceipt.uploaded_sha256 !== receipt.ciphertextSha256 ||
+          storedReceipt.processing_status !== 'succeeded' ||
+          storedReceipt.visibility !== 'private') {
+        fail('PLATFORM_UPLOAD_RECEIPT_REQUIRED', 422);
+      }
+
+      const publicationId = crypto.randomUUID();
+      await client.query(`
+        INSERT INTO verified_originals_publications(
+          publication_id,hcv_id,platform,platform_post_id,public_url,
+          reference_sha256,original_content_sha256,derived_from,derivation_type,
+          derivation_manifest_sha256,platform_receipt_id,created_at,
+          publication_status,consent_record_id,consent_version,
+          monetization_consent,published_by,hcvpack_sha256,
+          reference_role,source_derivation_sha256,subtitle_sha256,
+          audit_metadata_json
+        ) VALUES(
+          $1,$2,'r2',$3,'',$4,$5,$5,$6,$7,$8,$9,
+          'PUBLISHED',$10,$11,$12,$13,$14,$15,'','',$16
+        )
+      `, [
+        publicationId,
+        hcvId,
+        receipt.objectId,
+        receipt.referenceSha256,
+        original.contentHash,
+        PRIMARY_REFERENCE_OPERATION,
+        primaryManifest.manifestSha256,
+        storedReceipt.receipt_id,
+        primaryManifest.manifest.createdAt,
+        consentRecordId,
+        consent.consent_version,
+        monetizationEnabled,
+        String(process.env.SIGILLUM_PUBLISHER_ID || 'SIGILLUM_SERVER_V1'),
+        hcvpackSha256,
+        referenceRole,
+        {
+          provider: 'r2',
+          lifecycleJobId,
+          referenceAccess: 'SHORT_LIVED_AUTHORIZATION',
+        },
+      ]);
+
+      await audit({
+        hcvId,
+        publicationId,
+        eventType: 'PRIMARY_REFERENCE_COMMITTED',
+        actorType: 'SIGILLUM_PUBLISHER',
+        actorSubjectHash: hashString(
+          String(process.env.SIGILLUM_PUBLISHER_ID || 'SIGILLUM_SERVER_V1'),
+        ),
+        metadata: {
+          provider: 'r2',
+          lifecycleJobId,
+          referenceRole,
+          hcvpackSha256,
+          ciphertextSha256: receipt.ciphertextSha256,
+          encryptionFormat: receipt.encryptionFormat,
+          encryptionKeyId: receipt.encryptionKeyId,
+        },
+        client,
+      });
+
+      await client.query('COMMIT');
+      return publicationId;
+    } catch (error) {
+      try { await client.query('ROLLBACK'); } catch (_) {}
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   async function registerPublication({
     hcvId,
     consentRecordId,
