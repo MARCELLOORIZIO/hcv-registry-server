@@ -785,6 +785,7 @@ function createVerifiedOriginalsProduction({
   fetchImpl = global.fetch,
   sleep = sleepMs,
   ffmpegPath = configuredFfmpegPath(),
+  primaryReferenceProviderOverride = null,
 } = {}) {
   for (const [name, value] of Object.entries({
     pool,
@@ -807,6 +808,24 @@ function createVerifiedOriginalsProduction({
   const fail = (code, status = 400, message) => {
     throw publicError(code, status, message);
   };
+
+  const primaryReferenceProviderName =
+    primaryReferenceProviderOverride?.name ||
+    selectPrimaryReferenceProvider(process.env);
+  let r2ReferenceProvider =
+    primaryReferenceProviderName === 'r2'
+      ? primaryReferenceProviderOverride
+      : null;
+
+  function requireR2ReferenceProvider() {
+    if (primaryReferenceProviderName !== 'r2') {
+      fail('PRIMARY_REFERENCE_PROVIDER_NOT_R2', 500);
+    }
+    if (!r2ReferenceProvider) {
+      r2ReferenceProvider = createR2ReferenceProvider({ env: process.env });
+    }
+    return r2ReferenceProvider;
+  }
 
   let takedownTimer = null;
   let youtubeAccessTokenCache = '';
@@ -983,6 +1002,7 @@ function createVerifiedOriginalsProduction({
       CREATE INDEX IF NOT EXISTS verified_originals_audit_hcv_idx
         ON verified_originals_audit(hcv_id, id DESC);
     `);
+    await initPrimaryReferenceLifecycleSchema(pool);
     startTakedownWorker();
   }
 
