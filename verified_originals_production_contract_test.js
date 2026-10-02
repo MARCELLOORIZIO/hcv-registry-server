@@ -7,8 +7,6 @@ const server = fs.readFileSync('production_server.js','utf8');
 const feature = fs.readFileSync('verified_originals_production.js','utf8');
 
 for (const token of [
-  "primaryReferenceProviderOverride ||",
-  "createR2ReferenceProvider({ env: process.env })",
   "require('./verified_originals_production')",
   'const verifiedOriginals = createVerifiedOriginalsProduction({',
   'verifiedOriginals.handle(req, res, url)',
@@ -19,6 +17,8 @@ for (const token of [
 }
 
 for (const token of [
+  "primaryReferenceProviderOverride ||",
+  "createR2ReferenceProvider({ env: process.env })",
   "privacyStatus: 'unlisted'",
   'YOUTUBE_CHANNEL_ID',
   'channels?part=id&mine=true',
