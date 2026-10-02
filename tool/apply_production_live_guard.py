@@ -40,6 +40,7 @@ elif new_contact not in source:
         raise RuntimeError('privacy contact anchor missing')
 
 health_old = "return sendJson(res, 200, { ok: true, service: 'sigillum-production-postgres', database: true, dbTime: db.rows[0].now, subscriptionsEnforced: SUBSCRIPTIONS_ENFORCED, termsVersion: TERMS_VERSION, privacyVersion: PRIVACY_VERSION });"
+health_old_provider = "return sendJson(res, 200, { ok: true, service: 'sigillum-production-postgres', database: true, dbTime: db.rows[0].now, subscriptionsEnforced: SUBSCRIPTIONS_ENFORCED, termsVersion: TERMS_VERSION, privacyVersion: PRIVACY_VERSION, primaryReferenceProvider: PRIMARY_REFERENCE_PROVIDER });"
 health_new = """const readiness = validateProductionConfig(process.env);
     return sendJson(res, 200, {
       ok: true,
@@ -52,8 +53,11 @@ health_new = """const readiness = validateProductionConfig(process.env);
       readyForLive: readiness.live && readiness.ready,
       termsVersion: TERMS_VERSION,
       privacyVersion: PRIVACY_VERSION,
+      primaryReferenceProvider: PRIMARY_REFERENCE_PROVIDER,
     });"""
-if health_old in source:
+if health_old_provider in source:
+    source = source.replace(health_old_provider, health_new, 1)
+elif health_old in source:
     source = source.replace(health_old, health_new, 1)
 elif 'readyForLive:' not in source:
     raise RuntimeError('health readiness anchor missing')
@@ -99,6 +103,7 @@ required = [
     'readyForLive:',
     'productionLive:',
     'certificateWritesEnabled:',
+    'primaryReferenceProvider:',
     'CERTIFICATE_WRITES_DISABLED',
     'SUPPORT_EMAIL',
     'PRIVACY_EMAIL',

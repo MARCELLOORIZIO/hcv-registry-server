@@ -12,6 +12,9 @@ const NODE_ENV = process.env.NODE_ENV || 'development';
 const SUBSCRIPTIONS_ENFORCED = process.env.SUBSCRIPTIONS_ENFORCED === 'true';
 const TERMS_VERSION = process.env.TERMS_VERSION || '2026-08-11';
 const PRIVACY_VERSION = process.env.PRIVACY_VERSION || '2026-08-11';
+const PRIMARY_REFERENCE_PROVIDER = String(
+  process.env.SIGILLUM_PRIMARY_REFERENCE_PROVIDER || 'youtube',
+).trim().toLowerCase();
 const SESSION_DAYS = 30;
 const CODE_TTL_MINUTES = 15;
 
@@ -499,7 +502,7 @@ async function handle(req, res) {
 
   if (req.method === 'GET' && url.pathname === '/health') {
     const db = await pool.query('SELECT NOW() AS now');
-    return sendJson(res, 200, { ok: true, service: 'sigillum-production-postgres', database: true, dbTime: db.rows[0].now, subscriptionsEnforced: SUBSCRIPTIONS_ENFORCED, termsVersion: TERMS_VERSION, privacyVersion: PRIVACY_VERSION });
+    return sendJson(res, 200, { ok: true, service: 'sigillum-production-postgres', database: true, dbTime: db.rows[0].now, subscriptionsEnforced: SUBSCRIPTIONS_ENFORCED, termsVersion: TERMS_VERSION, privacyVersion: PRIVACY_VERSION, primaryReferenceProvider: PRIMARY_REFERENCE_PROVIDER });
   }
 
   if (req.method === 'POST' && url.pathname === '/api/auth/register') {
