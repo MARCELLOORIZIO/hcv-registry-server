@@ -15,6 +15,7 @@ const {
 const {
   availableReference: availablePrimaryReference,
   claimDeleteJob,
+  claimDeleteJobs,
   claimUploadJob,
   createOrGetReferenceJob,
   initPrimaryReferenceLifecycleSchema,
@@ -3403,7 +3404,7 @@ function createVerifiedOriginalsProduction({
     return publishOriginalYoutube(req, hcvId, url);
   }
 
-  async function publishSubtitleDerivative(req, hcvId, url) {
+  async function publishSubtitleDerivativeYoutube(req, hcvId, url) {
     const access = await creatorAccess(req);
     const original = await ownedOriginal(hcvId, access.session);
     if (original.contentType !== 'video') {
@@ -3607,6 +3608,287 @@ function createVerifiedOriginalsProduction({
         await fs.promises.rmdir(jobDir);
       } catch (_) {}
     }
+  }
+
+  async function publishSubtitleDerivativeR2(req, hcvId, url) {
+    const access = await creatorAccess(req);
+    const original = await ownedOriginal(hcvId, access.session);
+    if (original.contentType !== 'video') {
+      fail('SUBTITLE_DERIVATION_REQUIRES_VIDEO', 415);
+    }
+
+    const originalReference = await activeReference(hcvId);
+    if (!originalReference || originalReference.platform !== 'r2') {
+      fail('ORIGINAL_REFERENCE_REQUIRED', 409);
+    }
+
+    const requestMediaType = String(req.headers['content-type'] || '')
+      .split(';')[0]
+      .toLowerCase();
+    if (requestMediaType !== 'video/mp4') {
+      fail('SUBTITLE_DERIVATION_MEDIA_TYPE_UNSUPPORTED', 415);
+    }
+
+    const contentLength = Number(req.headers['content-length']);
+    const maxBytes = Math.max(
+      1,
+      Number(
+        process.env.SIGILLUM_VERIFIED_ORIGINALS_MAX_BYTES || 536870912,
+      ),
+    );
+    if (!Number.isSafeInteger(contentLength) ||
+        contentLength <= 0 ||
+        contentLength > maxBytes) {
+      fail('SUBTITLE_DERIVATION_CONTENT_LENGTH_INVALID', 411);
+    }
+
+    const consentRecordId = String(
+      url.searchParams.get('consentRecordId') || '',
+    );
+    const monetizationEnabled = strictBoolean(
+      url.searchParams.get('monetizationEnabled'),
+    );
+    const hcvpackSha256 = String(
+      url.searchParams.get('hcvpackSha256') || '',
+    ).toLowerCase();
+    const subtitleSha256 = String(
+      url.searchParams.get('subtitleSha256') || '',
+    ).toLowerCase();
+    const captionedSha256 = String(
+      req.headers['x-sigillum-captioned-sha256'] || '',
+    ).toLowerCase();
+
+    if (!consentRecordId ||
+        monetizationEnabled === null ||
+        !SHA256.test(hcvpackSha256) ||
+        !SHA256.test(subtitleSha256) ||
+        !SHA256.test(captionedSha256)) {
+      fail('SUBTITLE_DERIVATION_REQUEST_INVALID', 400);
+    }
+
+    const existing = await activeSubtitleReference(
+      hcvId,
+      captionedSha256,
+      subtitleSha256,
+    );
+    if (existing) {
+      return {
+        ok: true,
+        alreadyAvailable: true,
+        publicationId: existing.publicationId,
+        hcvId,
+        platform: 'r2',
+        publicationStatus: existing.publicationStatus,
+        referenceAccess: 'SHORT_LIVED_AUTHORIZATION',
+        referenceRole: existing.referenceRole,
+        originalContentSha256: existing.originalContentSha256,
+        sourceDerivationSha256: existing.sourceDerivationSha256,
+        subtitleSha256: existing.subtitleSha256,
+        referenceSha256: existing.referenceSha256,
+        derivedFrom: original.contentHash,
+        derivationType: existing.derivationType,
+        hcvpackSha256,
+        socialFileVerdict: 'NOT_VERIFIED',
+      };
+    }
+
+    if (!verifySubtitleDerivationBindingSignature(
+      req,
+      original,
+      hcvId,
+      captionedSha256,
+      subtitleSha256,
+      hcvpackSha256,
+    )) {
+      fail('SUBTITLE_DERIVATION_BINDING_SIGNATURE_INVALID', 422);
+    }
+
+    const consent = (await pool.query(`
+      SELECT * FROM verified_originals_consents
+      WHERE record_id=$1
+        AND hcv_id=$2
+        AND account_id=$3
+        AND state='ACTIVE'
+    `, [
+      consentRecordId,
+      hcvId,
+      access.session.account_id,
+    ])).rows[0];
+    if (!consent ||
+        !consent.publication_consent ||
+        !consent.rights_confirmed) {
+      fail('ACTIVE_CREATOR_CONSENT_REQUIRED', 403);
+    }
+    if (monetizationEnabled && !consent.monetization_consent) {
+      fail('MONETIZATION_NOT_AUTHORIZED', 403);
+    }
+
+    const tmpRoot = String(
+      process.env.SIGILLUM_VERIFIED_ORIGINALS_TMP ||
+        path.join(os.tmpdir(), 'sigillum-verified-originals'),
+    );
+    await fs.promises.mkdir(tmpRoot, { recursive: true, mode: 0o700 });
+    const jobDir = await fs.promises.mkdtemp(
+      path.join(tmpRoot, 'r2-subtitle-job-'),
+    );
+    const captionedPath = path.join(jobDir, 'captioned-source.mp4');
+    const outputPath = path.join(jobDir, 'reference-subtitled.mp4');
+
+    try {
+      const uploaded = await streamToFile(
+        req,
+        captionedPath,
+        contentLength,
+      );
+      if (uploaded.sha256 !== captionedSha256) {
+        fail('SUBTITLE_DERIVATION_SHA_MISMATCH', 422);
+      }
+
+      const derivation = await createTrustedSubtitleDerivative({
+        hcvId,
+        original,
+        captionedPath,
+        outputPath,
+        captionedSha256,
+        subtitleSha256,
+      });
+      const manifestRaw = JSON.stringify(derivation.manifest);
+      const manifestSha256 = hashString(manifestRaw);
+      const objectId = crypto.randomUUID();
+      const objectKey = opaqueObjectKey(objectId);
+      const binding = {
+        hcvId,
+        referenceRole: DERIVED_REFERENCE_ROLE,
+        referenceSha256: derivation.outputHash,
+        originalContentSha256: original.contentHash,
+        hcvpackSha256,
+        derivationManifestSha256: manifestSha256,
+        mediaType: 'video',
+      };
+
+      const lifecycle = await createOrGetReferenceJob(pool, {
+        binding,
+        provider: 'r2',
+        objectId,
+        objectKey,
+      });
+      let lifecycleJob = lifecycle.job;
+      let receipt = lifecycleJob.receipt;
+
+      if (lifecycleJob.state !== 'COMMITTED') {
+        try {
+          lifecycleJob = await claimUploadJob(pool, lifecycleJob.jobId);
+        } catch (error) {
+          if (String(error?.message || '') ===
+              'PRIMARY_REFERENCE_UPLOAD_STATE_CONFLICT') {
+            fail('PRIMARY_REFERENCE_UPLOAD_IN_PROGRESS', 409);
+          }
+          throw error;
+        }
+
+        if (lifecycleJob.state !== 'COMMITTED') {
+          try {
+            receipt = await requireR2ReferenceProvider().commitReference({
+              sourcePath: outputPath,
+              hcvId,
+              referenceRole: DERIVED_REFERENCE_ROLE,
+              referenceSha256: derivation.outputHash,
+              originalContentSha256: original.contentHash,
+              hcvpackSha256,
+              derivationManifestSha256: manifestSha256,
+              mediaType: 'video',
+              objectId: lifecycleJob.objectId,
+              objectKey: lifecycleJob.objectKey,
+            });
+          } catch (error) {
+            try {
+              await markUploadRetry(
+                pool,
+                lifecycleJob.jobId,
+                'R2_PROVIDER_TEMPORARY_FAILURE',
+              );
+            } catch (_) {}
+            console.error(
+              '[verified-originals] R2 subtitle reference commit failed',
+              String(error?.message || error),
+            );
+            fail('PRIMARY_REFERENCE_PROVIDER_UNAVAILABLE', 503);
+          }
+          lifecycleJob = await markPrimaryReferenceCommitted(
+            pool,
+            lifecycleJob.jobId,
+            receipt,
+          );
+        } else {
+          receipt = lifecycleJob.receipt;
+        }
+      }
+
+      if (!receipt) receipt = lifecycleJob.receipt;
+      if (!receipt ||
+          receipt.derivationManifestSha256 !== manifestSha256 ||
+          receipt.referenceSha256 !== derivation.outputHash ||
+          receipt.hcvpackSha256 !== hcvpackSha256) {
+        fail('PRIMARY_REFERENCE_RECEIPT_BINDING_MISMATCH', 422);
+      }
+
+      const publicationId = await registerR2Publication({
+        hcvId,
+        consentRecordId,
+        original,
+        manifest: derivation.manifest,
+        manifestSha256,
+        referenceSha256: derivation.outputHash,
+        derivationType: SUBTITLE_DERIVATION_OPERATION,
+        referenceCreatedAt: derivation.manifest.createdAt,
+        receipt,
+        lifecycleJobId: lifecycleJob.jobId,
+        monetizationEnabled,
+        hcvpackSha256,
+        referenceRole: DERIVED_REFERENCE_ROLE,
+        sourceDerivationSha256: captionedSha256,
+        subtitleSha256,
+      });
+
+      return {
+        ok: true,
+        alreadyAvailable: !lifecycle.created,
+        publicationId,
+        hcvId,
+        platform: 'r2',
+        publicationStatus: 'PUBLISHED',
+        referenceAccess: 'SHORT_LIVED_AUTHORIZATION',
+        referenceRole: DERIVED_REFERENCE_ROLE,
+        originalContentSha256: original.contentHash,
+        sourceDerivationSha256: captionedSha256,
+        subtitleSha256,
+        referenceSha256: derivation.outputHash,
+        derivedFrom: original.contentHash,
+        derivationType: SUBTITLE_DERIVATION_OPERATION,
+        hcvpackSha256,
+        socialFileVerdict: 'NOT_VERIFIED',
+      };
+    } finally {
+      for (const item of [
+        outputPath + '.hcvderivation.json',
+        outputPath,
+        captionedPath,
+      ]) {
+        try {
+          await fs.promises.rm(item, { force: true });
+        } catch (_) {}
+      }
+      try {
+        await fs.promises.rmdir(jobDir);
+      } catch (_) {}
+    }
+  }
+
+  async function publishSubtitleDerivative(req, hcvId, url) {
+    if (primaryReferenceProviderName === 'r2') {
+      return publishSubtitleDerivativeR2(req, hcvId, url);
+    }
+    return publishSubtitleDerivativeYoutube(req, hcvId, url);
   }
 
   async function markPlatformReceiptWithdrawn(receiptId) {
