@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - feature/r2-primary-reference-lifecycle-20261002
+      - release/reconciled-prelaunch-backend-clean-20260824
     paths:
       - tool/r2_primary_provider_acceptance.js
       - .github/workflows/r2-primary-provider-acceptance.yml
