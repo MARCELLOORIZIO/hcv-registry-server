@@ -7,6 +7,7 @@ const {
   STATES,
   availableReference,
   claimDeleteJobs,
+  claimUploadJob,
   claimUploadJobs,
   createOrGetReferenceJob,
   initPrimaryReferenceLifecycleSchema,
@@ -123,12 +124,12 @@ async function main() {
     assert.equal(retry.state, STATES.RETRY_WAIT);
     assert.equal(retry.lastErrorCode, 'R2_TEMPORARY_OUTAGE');
 
-    claimed = await claimUploadJobs(scopedPool, {
-      provider: 'r2',
-      limit: 10,
-    });
-    assert.equal(claimed.length, 1);
-    assert.equal(claimed[0].attemptCount, 2);
+    const claimedSingle = await claimUploadJob(
+      scopedPool,
+      created.job.jobId,
+    );
+    assert.equal(claimedSingle.state, STATES.UPLOADING);
+    assert.equal(claimedSingle.attemptCount, 2);
 
     const receipt = {
       provider: 'r2',
