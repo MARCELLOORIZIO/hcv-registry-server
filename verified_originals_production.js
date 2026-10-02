@@ -6,6 +6,27 @@ const os = require('os');
 const path = require('path');
 const { promisify } = require('util');
 const { execFile } = require('child_process');
+const {
+  createR2ReferenceProvider,
+  opaqueObjectKey,
+  selectPrimaryReferenceProvider,
+} = require('./primary_reference_provider');
+const {
+  availableReference: availablePrimaryReference,
+  claimUploadJob,
+  createOrGetReferenceJob,
+  initPrimaryReferenceLifecycleSchema,
+  markCommitted: markPrimaryReferenceCommitted,
+  markDeleted: markPrimaryReferenceDeleted,
+  markUploadRetry,
+  requestDelete: requestPrimaryReferenceDelete,
+} = require('./primary_reference_lifecycle');
+const {
+  OPERATION: PRIMARY_REFERENCE_OPERATION,
+  SCHEMA: PRIMARY_REFERENCE_SCHEMA,
+  createPrimaryReferenceManifest,
+  verifyPrimaryReferenceManifest,
+} = require('./primary_reference_manifest');
 
 const execFileAsync = promisify(execFile);
 
