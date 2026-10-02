@@ -368,6 +368,20 @@ async function resetDb() {
   ]);
 }
 
+async function cleanupDb() {
+  await pool.query(`
+    DROP TABLE IF EXISTS verified_originals_reference_read_tokens CASCADE;
+    DROP TABLE IF EXISTS verified_originals_reference_jobs CASCADE;
+    DROP TABLE IF EXISTS verified_originals_audit CASCADE;
+    DROP TABLE IF EXISTS verified_originals_publications CASCADE;
+    DROP TABLE IF EXISTS verified_originals_platform_receipts CASCADE;
+    DROP TABLE IF EXISTS trusted_derivations CASCADE;
+    DROP TABLE IF EXISTS verified_originals_consents CASCADE;
+    DROP TABLE IF EXISTS certificates CASCADE;
+    DROP TABLE IF EXISTS accounts CASCADE;
+  `);
+}
+
 async function request(
   base,
   method,
@@ -709,8 +723,12 @@ async function run() {
 
 run()
   .finally(async () => {
-    await pool.end();
-    fs.rmSync(tmp, { recursive: true, force: true });
+    try {
+      await cleanupDb();
+    } finally {
+      await pool.end();
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   })
   .catch(error => {
     console.error(error);
