@@ -97,6 +97,10 @@ for (const token of [
   "reference_role=$2",
   "referenceRole: DERIVED_REFERENCE_ROLE",
   "ORIGINAL_REFERENCE_REQUIRED",
+  "authorizedDerivations",
+  "editorialImpact: 'caption_overlay'",
+  "exactReference: true",
+  "sourcePath: derivation.referencePath",
 ]) {
   assert(
     feature.includes(token),
