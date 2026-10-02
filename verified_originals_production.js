@@ -1770,12 +1770,7 @@ function createVerifiedOriginalsProduction({
       path.join(tempRoot, 'r2-read-'),
     );
     const mediaType = String(receipt.mediaType || '');
-    const extension = mediaType === 'video'
-      ? '.mp4'
-      : mediaType === 'photo'
-        ? '.jpg'
-        : '.bin';
-    const destinationPath = path.join(tempDir, 'reference' + extension);
+    const destinationPath = path.join(tempDir, 'reference.bin');
 
     try {
       await requireR2ReferenceProvider().materializeReference({
@@ -1793,13 +1788,50 @@ function createVerifiedOriginalsProduction({
         },
       });
       const stat = await fs.promises.stat(destinationPath);
+      const prefixHandle = await fs.promises.open(destinationPath, 'r');
+      let prefix;
+      try {
+        prefix = Buffer.alloc(Math.min(16, stat.size));
+        await prefixHandle.read(prefix, 0, prefix.length, 0);
+      } finally {
+        await prefixHandle.close();
+      }
+
+      let contentType = '';
+      let extension = '';
+      if (mediaType === 'video') {
+        const ftyp =
+          prefix.length >= 8 &&
+          prefix.subarray(4, 8).toString('ascii') === 'ftyp';
+        if (!ftyp) fail('REFERENCE_MEDIA_BYTES_INVALID', 422);
+        contentType = 'video/mp4';
+        extension = '.mp4';
+      } else if (mediaType === 'photo') {
+        const jpeg =
+          prefix.length >= 3 &&
+          prefix[0] === 0xff &&
+          prefix[1] === 0xd8 &&
+          prefix[2] === 0xff;
+        const png =
+          prefix.length >= 8 &&
+          prefix.subarray(0, 8).equals(
+            Buffer.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a]),
+          );
+        if (jpeg) {
+          contentType = 'image/jpeg';
+          extension = '.jpg';
+        } else if (png) {
+          contentType = 'image/png';
+          extension = '.png';
+        } else {
+          fail('REFERENCE_MEDIA_BYTES_INVALID', 422);
+        }
+      } else {
+        fail('REFERENCE_MEDIA_TYPE_UNSUPPORTED', 415);
+      }
+
       res.writeHead(200, {
-        'content-type':
-          mediaType === 'video'
-            ? 'video/mp4'
-            : mediaType === 'photo'
-              ? 'image/jpeg'
-              : 'application/octet-stream',
+        'content-type': contentType,
         'content-length': String(stat.size),
         'cache-control': 'private, no-store, max-age=0',
         pragma: 'no-cache',
