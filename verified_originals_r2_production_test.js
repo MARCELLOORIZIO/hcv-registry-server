@@ -653,6 +653,14 @@ async function run() {
     );
     assert.equal(providerObjects.size, 1);
 
+    // Production deletion retries use bounded backoff. Make the durable retry
+    // due now so this test can exercise recovery without sleeping.
+    await pool.query(`
+      UPDATE verified_originals_reference_jobs
+      SET delete_next_attempt_at=NOW()
+      WHERE hcv_id=$1 AND state='DELETE_PENDING'
+    `, [HCV_ID]);
+
     const withdrawalRetry = await request(
       base,
       'POST',
