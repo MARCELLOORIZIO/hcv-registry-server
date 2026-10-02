@@ -2762,7 +2762,7 @@ function createVerifiedOriginalsProduction({
     return publicationId;
   }
 
-  async function publishOriginal(req, hcvId, url) {
+  async function publishOriginalYoutube(req, hcvId, url) {
     const access = await creatorAccess(req);
     const original = await ownedOriginal(hcvId, access.session);
     const requestMediaType = String(req.headers['content-type'] || '').split(';')[0].toLowerCase();
@@ -2846,6 +2846,234 @@ function createVerifiedOriginalsProduction({
       }
       try { await fs.promises.rmdir(jobDir); } catch (_) {}
     }
+  }
+
+  async function publishOriginalR2(req, hcvId, url) {
+    const access = await creatorAccess(req);
+    const original = await ownedOriginal(hcvId, access.session);
+    const requestMediaType = String(req.headers['content-type'] || '')
+      .split(';')[0]
+      .toLowerCase();
+    const allowedMediaTypes = original.contentType === 'video'
+      ? new Set(['video/mp4'])
+      : new Set(['image/jpeg', 'image/png']);
+    if (!allowedMediaTypes.has(requestMediaType)) {
+      fail('ORIGINAL_MEDIA_TYPE_UNSUPPORTED', 415);
+    }
+
+    const contentLength = Number(req.headers['content-length']);
+    const maxBytes = Math.max(
+      1,
+      Number(
+        process.env.SIGILLUM_VERIFIED_ORIGINALS_MAX_BYTES || 536870912,
+      ),
+    );
+    if (!Number.isSafeInteger(contentLength) ||
+        contentLength <= 0 ||
+        contentLength > maxBytes) {
+      fail('ORIGINAL_CONTENT_LENGTH_INVALID', 411);
+    }
+    if (contentLength !== original.contentSize) {
+      fail('ORIGINAL_UPLOAD_SIZE_MISMATCH', 400);
+    }
+
+    const consentRecordId = String(
+      url.searchParams.get('consentRecordId') || '',
+    );
+    const monetizationEnabled = strictBoolean(
+      url.searchParams.get('monetizationEnabled'),
+    );
+    const hcvpackSha256 = String(
+      url.searchParams.get('hcvpackSha256') || '',
+    ).toLowerCase();
+    if (!consentRecordId ||
+        monetizationEnabled === null ||
+        !SHA256.test(hcvpackSha256)) {
+      fail('PUBLISH_REQUEST_INVALID', 400);
+    }
+    if (!verifyHcvpackBindingSignature(
+      req,
+      original,
+      hcvId,
+      hcvpackSha256,
+    )) {
+      fail('HCVPACK_BINDING_SIGNATURE_INVALID', 422);
+    }
+
+    const consent = (await pool.query(`
+      SELECT * FROM verified_originals_consents
+      WHERE record_id=$1
+        AND hcv_id=$2
+        AND account_id=$3
+        AND state='ACTIVE'
+    `, [
+      consentRecordId,
+      hcvId,
+      access.session.account_id,
+    ])).rows[0];
+    if (!consent ||
+        !consent.publication_consent ||
+        !consent.rights_confirmed) {
+      fail('ACTIVE_CREATOR_CONSENT_REQUIRED', 403);
+    }
+    if (monetizationEnabled && !consent.monetization_consent) {
+      fail('MONETIZATION_NOT_AUTHORIZED', 403);
+    }
+
+    const tmpRoot = String(
+      process.env.SIGILLUM_VERIFIED_ORIGINALS_TMP ||
+        path.join(os.tmpdir(), 'sigillum-verified-originals'),
+    );
+    await fs.promises.mkdir(tmpRoot, { recursive: true, mode: 0o700 });
+    const jobDir = await fs.promises.mkdtemp(
+      path.join(tmpRoot, 'r2-primary-job-'),
+    );
+    const originalExtension = original.contentType === 'video'
+      ? '.mp4'
+      : requestMediaType === 'image/png'
+        ? '.png'
+        : '.jpg';
+    const originalPath = path.join(jobDir, 'original' + originalExtension);
+
+    try {
+      const uploaded = await streamToFile(
+        req,
+        originalPath,
+        original.contentSize,
+      );
+      if (uploaded.sha256 !== original.contentHash) {
+        fail('PRIMARY_REFERENCE_ORIGINAL_SHA_MISMATCH', 422);
+      }
+
+      const primaryManifest = await createExactPrimaryReferenceManifest({
+        hcvId,
+        original,
+        originalPath,
+      });
+      const objectId = crypto.randomUUID();
+      const objectKey = opaqueObjectKey(objectId);
+      const binding = {
+        hcvId,
+        referenceRole: ORIGINAL_REFERENCE_ROLE,
+        referenceSha256: primaryManifest.outputHash,
+        originalContentSha256: original.contentHash,
+        hcvpackSha256,
+        derivationManifestSha256: primaryManifest.manifestSha256,
+        mediaType: original.contentType,
+      };
+
+      const lifecycle = await createOrGetReferenceJob(pool, {
+        binding,
+        provider: 'r2',
+        objectId,
+        objectKey,
+      });
+      let lifecycleJob = lifecycle.job;
+      let receipt = lifecycleJob.receipt;
+
+      if (lifecycleJob.state !== 'COMMITTED') {
+        try {
+          lifecycleJob = await claimUploadJob(pool, lifecycleJob.jobId);
+        } catch (error) {
+          if (String(error?.message || '') ===
+              'PRIMARY_REFERENCE_UPLOAD_STATE_CONFLICT') {
+            fail('PRIMARY_REFERENCE_UPLOAD_IN_PROGRESS', 409);
+          }
+          throw error;
+        }
+
+        if (lifecycleJob.state !== 'COMMITTED') {
+          const provider = requireR2ReferenceProvider();
+          try {
+            receipt = await provider.commitReference({
+              sourcePath: originalPath,
+              hcvId,
+              referenceRole: ORIGINAL_REFERENCE_ROLE,
+              referenceSha256: primaryManifest.outputHash,
+              originalContentSha256: original.contentHash,
+              hcvpackSha256,
+              derivationManifestSha256:
+                primaryManifest.manifestSha256,
+              mediaType: original.contentType,
+              objectId: lifecycleJob.objectId,
+              objectKey: lifecycleJob.objectKey,
+            });
+          } catch (error) {
+            try {
+              await markUploadRetry(
+                pool,
+                lifecycleJob.jobId,
+                'R2_PROVIDER_TEMPORARY_FAILURE',
+              );
+            } catch (_) {}
+            console.error(
+              '[verified-originals] R2 primary reference commit failed',
+              String(error?.message || error),
+            );
+            fail('PRIMARY_REFERENCE_PROVIDER_UNAVAILABLE', 503);
+          }
+          lifecycleJob = await markPrimaryReferenceCommitted(
+            pool,
+            lifecycleJob.jobId,
+            receipt,
+          );
+        } else {
+          receipt = lifecycleJob.receipt;
+        }
+      }
+
+      if (!receipt) {
+        receipt = lifecycleJob.receipt;
+      }
+      if (!receipt ||
+          receipt.derivationManifestSha256 !==
+            primaryManifest.manifestSha256 ||
+          receipt.referenceSha256 !== primaryManifest.outputHash ||
+          receipt.hcvpackSha256 !== hcvpackSha256) {
+        fail('PRIMARY_REFERENCE_RECEIPT_BINDING_MISMATCH', 422);
+      }
+
+      const publicationId = await registerR2Publication({
+        hcvId,
+        consentRecordId,
+        original,
+        primaryManifest,
+        receipt,
+        lifecycleJobId: lifecycleJob.jobId,
+        monetizationEnabled,
+        hcvpackSha256,
+      });
+
+      return {
+        ok: true,
+        alreadyAvailable: !lifecycle.created,
+        publicationId,
+        hcvId,
+        platform: 'r2',
+        publicationStatus: 'PUBLISHED',
+        referenceAccess: 'SHORT_LIVED_AUTHORIZATION',
+        originalContentSha256: original.contentHash,
+        referenceSha256: primaryManifest.outputHash,
+        derivedFrom: original.contentHash,
+        derivationType: PRIMARY_REFERENCE_OPERATION,
+        hcvpackSha256,
+        socialFileVerdict: 'NOT_VERIFIED',
+      };
+    } finally {
+      try {
+        await fs.promises.rm(originalPath, { force: true });
+      } catch (_) {}
+      try {
+        await fs.promises.rmdir(jobDir);
+      } catch (_) {}
+    }
+  }
+
+  async function publishOriginal(req, hcvId, url) {
+    if (primaryReferenceProviderName === 'r2') {
+      return publishOriginalR2(req, hcvId, url);
+    }
+    return publishOriginalYoutube(req, hcvId, url);
   }
 
   async function publishSubtitleDerivative(req, hcvId, url) {
