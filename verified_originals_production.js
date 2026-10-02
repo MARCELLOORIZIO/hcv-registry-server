@@ -3891,6 +3891,62 @@ function createVerifiedOriginalsProduction({
     return publishSubtitleDerivativeYoutube(req, hcvId, url);
   }
 
+  async function cleanupUnregisteredR2Reference({
+    hcvId,
+    receipt,
+    lifecycleJobId,
+  }) {
+    if (!receipt?.objectId || !lifecycleJobId) return 'PENDING';
+    let job;
+    try {
+      job = await requestDeleteByProviderObject(pool, {
+        provider: 'r2',
+        objectId: receipt.objectId,
+        hcvId,
+      });
+    } catch (_) {
+      job = await referenceJobByProviderObject(pool, {
+        provider: 'r2',
+        objectId: receipt.objectId,
+        hcvId,
+      });
+    }
+    if (!job) return 'PENDING';
+    if (job.state === 'DELETED') return 'COMPLETED';
+    if (job.state !== 'DELETE_PENDING') return 'PENDING';
+
+    try {
+      job = await claimDeleteJob(pool, lifecycleJobId);
+    } catch (_) {
+      return 'PENDING';
+    }
+    if (job.state === 'DELETED') return 'COMPLETED';
+
+    try {
+      const result = await requireR2ReferenceProvider()
+        .deleteReference(job.receipt);
+      if (!result?.deleted) {
+        await markDeleteRetry(
+          pool,
+          job.jobId,
+          'R2_DELETE_NOT_CONFIRMED',
+        );
+        return 'PENDING';
+      }
+      await markPrimaryReferenceDeleted(pool, job.jobId);
+      return 'COMPLETED';
+    } catch (_) {
+      try {
+        await markDeleteRetry(
+          pool,
+          job.jobId,
+          'R2_DELETE_PROVIDER_UNAVAILABLE',
+        );
+      } catch (_) {}
+      return 'PENDING';
+    }
+  }
+
   async function markPlatformReceiptWithdrawn(receiptId) {
     await pool.query(`
       UPDATE verified_originals_platform_receipts
