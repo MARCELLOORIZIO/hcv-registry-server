@@ -31,9 +31,12 @@ jobs:
         with:
           node-version: "20"
 
-      - name: Run R2 acceptance gate
+      - name: Install acceptance-only AWS SDK
+        run: npm install --no-save @aws-sdk/client-s3@3 @aws-sdk/s3-request-presigner@3
+
+      - name: Run R2 acceptance gate with AWS SDK signer
         run: |
-          node tool/r2_reference_acceptance.js \
+          node tool/r2_reference_acceptance_sdk.js \
             --mb "${{ inputs.payload_mb }}" \
             --json r2-acceptance-report.json
 
