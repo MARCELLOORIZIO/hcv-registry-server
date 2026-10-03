@@ -477,8 +477,11 @@ async function request(base,method,pathname,{bearer,body,bytes,contentType='vide
   });
 }
 
+const previousPrimaryProvider = process.env.SIGILLUM_PRIMARY_REFERENCE_PROVIDER;
+
 async function run() {
   await resetDb();
+  process.env.SIGILLUM_PRIMARY_REFERENCE_PROVIDER = 'youtube';
   const feature=createVerifiedOriginalsProduction({
     pool,
     authenticate,
@@ -752,6 +755,11 @@ async function run() {
 run().finally(async()=>{
   await pool.end();
   fs.rmSync(tmp,{recursive:true,force:true});
+  if (previousPrimaryProvider == null) {
+    delete process.env.SIGILLUM_PRIMARY_REFERENCE_PROVIDER;
+  } else {
+    process.env.SIGILLUM_PRIMARY_REFERENCE_PROVIDER = previousPrimaryProvider;
+  }
 }).catch(error=>{
   console.error(error);
   process.exitCode=1;

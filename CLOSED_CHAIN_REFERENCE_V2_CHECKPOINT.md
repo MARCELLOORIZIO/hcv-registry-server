@@ -1,5 +1,7 @@
 # Verified Originals closed-chain backend checkpoint
 
+> **Historical checkpoint — superseded.** This file records the YouTube-era closed-chain design work from September 2026. The authoritative primary-reference architecture is now the R2 lifecycle described in `PRIMARY_REFERENCE_LIFECYCLE_20261002.md`. YouTube is not a permitted LIVE primary-reference provider.
+
 Date: 2026-09-25
 Status: IN PROGRESS
 Base branch: release/reconciled-prelaunch-backend-clean-20260824

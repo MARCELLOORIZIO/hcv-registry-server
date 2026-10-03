@@ -169,9 +169,8 @@ function validateProductionConfig(env = process.env) {
   const primaryReferenceProvider = String(
     env.SIGILLUM_PRIMARY_REFERENCE_PROVIDER || '',
   ).trim().toLowerCase();
-  if (primaryReferenceProvider !== 'r2' &&
-      primaryReferenceProvider !== 'youtube') {
-    invalid.push('SIGILLUM_PRIMARY_REFERENCE_PROVIDER=r2|youtube');
+  if (primaryReferenceProvider !== 'r2') {
+    invalid.push('SIGILLUM_PRIMARY_REFERENCE_PROVIDER=r2');
   }
 
   if (primaryReferenceProvider === 'r2') {
@@ -192,17 +191,6 @@ function validateProductionConfig(env = process.env) {
       'R2_REFERENCE_MASTER_KEYS_JSON',
     ].every(key => present(env[key]))) {
       validateR2ReferenceConfig(env, invalid);
-    }
-  }
-
-  if (primaryReferenceProvider === 'youtube') {
-    for (const key of [
-      'YOUTUBE_CLIENT_ID',
-      'YOUTUBE_CLIENT_SECRET',
-      'YOUTUBE_REFRESH_TOKEN',
-      'YOUTUBE_CHANNEL_ID',
-    ]) {
-      if (!present(env[key])) missing.push(key);
     }
   }
 
@@ -245,18 +233,6 @@ function validateProductionConfig(env = process.env) {
   }
   if (present(env.PRIVACY_EMAIL) && !validEmail(env.PRIVACY_EMAIL)) {
     invalid.push('PRIVACY_EMAIL=email');
-  }
-  if (primaryReferenceProvider === 'youtube') {
-    if (present(env.YOUTUBE_CHANNEL_ID) &&
-        !/^UC[A-Za-z0-9_-]{22}$/.test(String(env.YOUTUBE_CHANNEL_ID))) {
-      invalid.push('YOUTUBE_CHANNEL_ID=channel-id');
-    }
-    if (!isTrue(env.YOUTUBE_COMPLIANCE_APPROVED)) {
-      invalid.push('YOUTUBE_COMPLIANCE_APPROVED=true');
-    }
-    if (!isTrue(env.YOUTUBE_UNLISTED_UPLOAD_CONFIRMED)) {
-      invalid.push('YOUTUBE_UNLISTED_UPLOAD_CONFIRMED=true');
-    }
   }
   if (present(env.SIGILLUM_DERIVATION_KEY_ID) &&
       !/^[A-Za-z0-9._-]{3,80}$/.test(String(env.SIGILLUM_DERIVATION_KEY_ID))) {

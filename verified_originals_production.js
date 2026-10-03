@@ -822,12 +822,10 @@ function createVerifiedOriginalsProduction({
   const primaryReferenceProviderName =
     primaryReferenceProviderOverride?.name ||
     selectPrimaryReferenceProvider(process.env);
-  let r2ReferenceProvider = null;
-  if (primaryReferenceProviderName === 'r2') {
-    r2ReferenceProvider =
-      primaryReferenceProviderOverride ||
-      createR2ReferenceProvider({ env: process.env });
-  }
+  // Keep R2 provider initialization lazy in PRELAUNCH. LIVE readiness
+  // validates the complete R2 configuration before startup, while PRELAUNCH
+  // can still expose health/legal/verification routes without cloud secrets.
+  let r2ReferenceProvider = primaryReferenceProviderOverride || null;
 
   function requireR2ReferenceProvider() {
     if (primaryReferenceProviderName !== 'r2') {
@@ -1965,6 +1963,9 @@ function createVerifiedOriginalsProduction({
     }
     if (payload.rightsConfirmed !== true) fail('RIGHTS_NOT_CONFIRMED', 400);
     if (typeof payload.monetizationConsent !== 'boolean') fail('MONETIZATION_CONSENT_REQUIRED', 400);
+    if (payload.monetizationConsent === true) {
+      fail('MONETIZATION_DISABLED', 400);
+    }
     if (await activeConsent(hcvId)) fail('ACTIVE_CONSENT_ALREADY_EXISTS', 409);
 
     const recordId = crypto.randomUUID();
@@ -2992,8 +2993,8 @@ function createVerifiedOriginalsProduction({
           !consent.rights_confirmed) {
         fail('ACTIVE_CREATOR_CONSENT_REQUIRED', 403);
       }
-      if (monetizationEnabled && !consent.monetization_consent) {
-        fail('MONETIZATION_NOT_AUTHORIZED', 403);
+      if (monetizationEnabled) {
+        fail('MONETIZATION_DISABLED', 400);
       }
 
       const existingPublication = (await client.query(`
@@ -3157,7 +3158,7 @@ function createVerifiedOriginalsProduction({
         FOR UPDATE
       `, [consentRecordId, hcvId])).rows[0];
       if (!consent || !consent.publication_consent || !consent.rights_confirmed) fail('ACTIVE_CREATOR_CONSENT_REQUIRED', 403);
-      if (monetizationEnabled && !consent.monetization_consent) fail('MONETIZATION_NOT_AUTHORIZED', 403);
+      if (monetizationEnabled) fail('MONETIZATION_DISABLED', 400);
       const receipt = (await client.query('SELECT * FROM verified_originals_platform_receipts WHERE receipt_id=$1', [youtube.receiptId])).rows[0];
       if (!receipt || receipt.hcv_id !== hcvId || receipt.platform !== 'youtube' || receipt.platform_post_id !== youtube.videoId || receipt.uploaded_sha256 !== derivation.outputHash || receipt.processing_status !== 'succeeded' || receipt.visibility !== 'unlisted') {
         fail('PLATFORM_UPLOAD_RECEIPT_REQUIRED', 422);
@@ -3243,7 +3244,7 @@ function createVerifiedOriginalsProduction({
       WHERE record_id=$1 AND hcv_id=$2 AND account_id=$3 AND state='ACTIVE'
     `, [consentRecordId, hcvId, access.session.account_id])).rows[0];
     if (!consent || !consent.publication_consent || !consent.rights_confirmed) fail('ACTIVE_CREATOR_CONSENT_REQUIRED', 403);
-    if (monetizationEnabled && !consent.monetization_consent) fail('MONETIZATION_NOT_AUTHORIZED', 403);
+    if (monetizationEnabled) fail('MONETIZATION_DISABLED', 400);
 
     const tmpRoot = String(process.env.SIGILLUM_VERIFIED_ORIGINALS_TMP || path.join(os.tmpdir(), 'sigillum-verified-originals'));
     await fs.promises.mkdir(tmpRoot, { recursive: true, mode: 0o700 });
@@ -3372,8 +3373,8 @@ function createVerifiedOriginalsProduction({
         !consent.rights_confirmed) {
       fail('ACTIVE_CREATOR_CONSENT_REQUIRED', 403);
     }
-    if (monetizationEnabled && !consent.monetization_consent) {
-      fail('MONETIZATION_NOT_AUTHORIZED', 403);
+    if (monetizationEnabled) {
+      fail('MONETIZATION_DISABLED', 400);
     }
 
     const tmpRoot = String(
@@ -3643,8 +3644,8 @@ function createVerifiedOriginalsProduction({
         !consent.rights_confirmed) {
       fail('ACTIVE_CREATOR_CONSENT_REQUIRED', 403);
     }
-    if (monetizationEnabled && !consent.monetization_consent) {
-      fail('MONETIZATION_NOT_AUTHORIZED', 403);
+    if (monetizationEnabled) {
+      fail('MONETIZATION_DISABLED', 400);
     }
 
     const tmpRoot = String(
@@ -3861,8 +3862,8 @@ function createVerifiedOriginalsProduction({
         !consent.rights_confirmed) {
       fail('ACTIVE_CREATOR_CONSENT_REQUIRED', 403);
     }
-    if (monetizationEnabled && !consent.monetization_consent) {
-      fail('MONETIZATION_NOT_AUTHORIZED', 403);
+    if (monetizationEnabled) {
+      fail('MONETIZATION_DISABLED', 400);
     }
 
     const tmpRoot = String(

@@ -67,10 +67,11 @@ function strictPositiveInt(value, fallback, minimum = 1, maximum = Number.MAX_SA
 }
 
 function selectPrimaryReferenceProvider(env = process.env) {
-  const raw = String(env.SIGILLUM_PRIMARY_REFERENCE_PROVIDER || 'youtube')
+  const raw = String(env.SIGILLUM_PRIMARY_REFERENCE_PROVIDER || 'r2')
     .trim()
     .toLowerCase();
-  if (raw === 'youtube' || raw === 'r2') return raw;
+  if (raw === 'r2') return raw;
+  if (raw === 'youtube') return raw; // legacy read/migration paths only; LIVE readiness rejects it.
   throw new Error('SIGILLUM_PRIMARY_REFERENCE_PROVIDER_INVALID');
 }
 

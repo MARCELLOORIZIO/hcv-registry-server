@@ -90,6 +90,8 @@ CERTIFICATE_WRITES_ENABLED=false
 SUBSCRIPTIONS_ENFORCED=false
 KYC_REQUIRES_SUBSCRIPTION=true
 APPLE_IAP_ENVIRONMENT=AUTO
+SIGILLUM_PRIMARY_REFERENCE_PROVIDER=r2
+R2_REQUIRE_EU=true
 ```
 
 The service can then be tested without accepting new production certificate writes.
@@ -106,7 +108,25 @@ Expected health state:
 
 Run the load probe against the real Render URL after deployment. Compare p95, p99, error rate and sustained throughput with the local CI baseline; do not assume the local figure transfers to Render Starter.
 
-## Phase 4 — Stripe Identity
+## Phase 4 — R2 closed-chain reference
+
+Before any commercial activation, configure and verify the canonical private reference provider:
+
+- `SIGILLUM_PRIMARY_REFERENCE_PROVIDER=r2`
+- `R2_ENDPOINT` using the Cloudflare R2 EU-jurisdiction endpoint
+- `R2_BUCKET=sigillum-hcv-references-eu`
+- `R2_ACCESS_KEY_ID`
+- `R2_SECRET_ACCESS_KEY`
+- `R2_REQUIRE_EU=true`
+- `R2_REFERENCE_ACTIVE_KEY_ID`
+- `R2_REFERENCE_MASTER_KEYS_JSON`
+- `R2_REFERENCE_READ_TTL_SECONDS=60`
+
+LIVE readiness MUST reject `youtube` or any missing/invalid R2 configuration as the primary reference provider. YouTube may only remain as a historical/optional distribution compatibility path and must never become the official primary reference provider.
+
+Run the R2 acceptance workflow and verify encrypted upload, HEAD attestation, authenticated one-use read, withdrawal, physical deletion and retry before proceeding.
+
+## Phase 5 — Stripe Identity
 
 Configure the production Stripe secret key on Render:
 
@@ -116,7 +136,7 @@ Configure the production Stripe secret key on Render:
 
 `KYC_REQUIRES_SUBSCRIPTION=true` must remain enabled. The server must not create a paid Stripe Identity verification before an App Store subscription has been server-verified.
 
-## Phase 5 — App Store Connect
+## Phase 6 — App Store Connect
 
 Create or confirm the app record for bundle ID:
 
@@ -153,9 +173,9 @@ Configure App Store Server Notifications V2 to the production endpoint:
 https://<production-api-host>/api/billing/apple/notifications/v2
 ```
 
-## Phase 6 — Sandbox acceptance tests
+## Phase 7 — TestFlight / Sandbox acceptance tests
 
-Before enabling production enforcement, test on a physical iPhone with an App Store sandbox account:
+Before enabling production enforcement, test on a physical iPhone using the TestFlight build. Apple runs TestFlight In-App Purchases in the Sandbox environment, so this is the supported pre-release end-to-end transaction test:
 
 1. new account registration;
 2. email verification;
@@ -173,18 +193,22 @@ Before enabling production enforcement, test on a physical iPhone with an App St
 
 Repeat at least the essential purchase/restore path for the annual product.
 
-## Phase 7 — Final LIVE switch
+A real `Production` App Store transaction cannot be generated from TestFlight. Before release, validate that the production App Store Server API credentials and notification URLs are configured and that the server passes LIVE readiness with `APPLE_IAP_ENVIRONMENT=PRODUCTION`. After the app becomes publicly available, monitor the first real Production purchase, reconcile result and server notification as a post-release launch check.
+
+## Phase 8 — Final LIVE switch
 
 Only after the preceding phases pass, set:
 
 ```text
 APPLE_IAP_ENVIRONMENT=PRODUCTION
+SIGILLUM_PRIMARY_REFERENCE_PROVIDER=r2
+R2_REQUIRE_EU=true
 SUBSCRIPTIONS_ENFORCED=true
 CERTIFICATE_WRITES_ENABLED=true
 PRODUCTION_LIVE=true
 ```
 
-`PRODUCTION_LIVE=true` is guarded. The server refuses to start if the mandatory Apple, Stripe, email, legal-contact, HTTPS or subscription settings are missing/unsafe.
+`PRODUCTION_LIVE=true` is guarded. The server refuses to start if the mandatory Apple, Stripe, email, legal-contact, HTTPS, subscription or R2 closed-chain settings are missing/unsafe. LIVE readiness must reject YouTube as the primary reference provider.
 
 Expected health state after successful activation:
 

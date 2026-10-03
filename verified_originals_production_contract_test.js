@@ -101,6 +101,7 @@ for (const token of [
   "editorialImpact: 'caption_overlay'",
   "exactReference: true",
   "sourcePath: derivation.referencePath",
+  "MONETIZATION_DISABLED",
 ]) {
   assert(
     feature.includes(token),

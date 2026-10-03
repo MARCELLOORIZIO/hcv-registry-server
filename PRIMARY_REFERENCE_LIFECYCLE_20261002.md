@@ -1,7 +1,7 @@
 # SIGILLUM — Primary Reference lifecycle v1 (R2)
 
 Date: 2026-10-02  
-Status: **implementation contract on feature branch; not deployed**
+Status: **implemented and deployed in PRELAUNCH on the canonical production backend**
 
 ## Scope
 
@@ -11,9 +11,9 @@ SIGILLUM verification. YouTube and other social platforms remain optional
 mirrors and must never block certification, primary-reference commit, export or
 verification.
 
-The current production code is intentionally left on the existing YouTube path
-until the R2 provider, lifecycle persistence and app compatibility gates are
-green.
+The canonical production backend now uses R2 for new authoritative references.
+Historical YouTube records remain readable for compatibility, but YouTube is no
+longer permitted as the LIVE primary-reference provider.
 
 ## Primary-reference invariants
 
@@ -155,9 +155,10 @@ The R2 provider may create a short-lived presigned URL for **encrypted** bytes
 for internal/backend use. The public/app verification API must not expose
 long-lived object URLs or encryption master keys.
 
-The app-facing read path will be wired only after an authenticated short-lived
-authorization design is implemented. The provider already supports controlled
-server-side materialization for verification tests and future streaming.
+The app-facing read path is implemented with authenticated short-lived
+authorization and one-use application tokens. The provider may issue only
+short-lived authorization for encrypted bytes; server-side materialization
+verifies ciphertext and plaintext hashes before the app receives the reference.
 
 ## Withdrawal and deletion
 
@@ -204,23 +205,25 @@ PRIMARY COMMITTED
 Mirror status is informational. It is not part of primary-reference
 availability.
 
-## Release gates
+## Current release state
 
-R2 cannot replace the current provider in production until all of these are
-green:
+The R2 migration gates are complete for the PRELAUNCH backend:
 
-- 8 MB encrypted acceptance round trip — PASSED;
-- 100 MB encrypted acceptance round trip — PASSED;
-- 500 MB encrypted acceptance round trip — PASSED;
-- provider abstraction unit tests;
-- multipart/provider commit unit tests;
-- durable PostgreSQL idempotency + retry tests;
-- forced R2 outage/recovery test;
-- withdrawal/delete retry test;
-- authenticated short-lived read path;
-- app compatibility tests;
-- full backend validation;
-- privacy/DPA review;
-- explicit manual Render deployment.
+- encrypted R2 acceptance tests — PASSED;
+- EU-jurisdiction configuration validation — PASSED;
+- provider abstraction and commit tests — PASSED;
+- durable PostgreSQL lifecycle/idempotency tests — PASSED;
+- withdrawal/delete retry tests — PASSED;
+- authenticated short-lived one-use read path — PASSED;
+- BUILD143 original + authorized subtitle-derivation tests — PASSED;
+- production database shows new references on R2 and historical YouTube records only as legacy compatibility data.
 
-No production flag or Render credential is changed by this document.
+Before commercial LIVE activation:
+
+- LIVE readiness must require `SIGILLUM_PRIMARY_REFERENCE_PROVIDER=r2`;
+- the Render production blueprint and environment must contain the complete R2 configuration;
+- TestFlight/Sandbox purchase, restore, renewal/expiry and server-notification acceptance must pass;
+- legal documents/version `2026-10-04` and four-language USER copy must be deployed;
+- a final manual Render deployment and health/readiness check must pass;
+- `PRODUCTION_LIVE`, certificate writes and subscription enforcement remain off until the final activation step.
+

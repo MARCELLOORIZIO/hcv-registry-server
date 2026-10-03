@@ -8,7 +8,7 @@ const {
   emailCopy,
 } = require('./legal_documents');
 
-const versions = { termsVersion: '2026-10-02', privacyVersion: '2026-10-02' };
+const versions = { termsVersion: '2026-10-04', privacyVersion: '2026-10-04' };
 
 assert.deepStrictEqual(SUPPORTED_LANGUAGES, ['it', 'en', 'es', 'ru']);
 assert.strictEqual(normalizeLanguage('es-ES'), 'es');
@@ -22,13 +22,24 @@ for (const lang of SUPPORTED_LANGUAGES) {
   const deletion = legalDocument('delete-data', lang, versions);
 
   assert.ok(terms.title.length > 5);
-  assert.ok(terms.body.includes('2026-10-02'));
+  assert.ok(terms.body.includes('2026-10-04'));
   assert.ok(terms.body.toLowerCase().includes('hcvpack'));
   assert.ok(!terms.body.includes('YouTube'));
   assert.ok(privacy.title.length > 5);
-  assert.ok(privacy.body.includes('2026-10-02'));
+  assert.ok(privacy.body.includes('2026-10-04'));
   assert.ok(privacy.body.includes('Cloudflare R2'));
+  assert.ok(privacy.body.includes('Stripe'));
+  assert.ok(
+    privacy.body.includes('processor') ||
+    privacy.body.includes('responsabile del trattamento') ||
+    privacy.body.includes('encargado del tratamiento') ||
+    privacy.body.includes('обработчик данных'),
+  );
   assert.ok(privacy.body.includes('YouTube'));
+  assert.ok(
+    terms.body.includes('14-bis') ||
+    terms.body.includes('14-бис'),
+  );
   assert.ok(support.body.includes('marcelloorizio@legalmail.it'));
   assert.ok(deletion.body.length > 200);
 
@@ -37,6 +48,16 @@ for (const lang of SUPPORTED_LANGUAGES) {
     .update(`${terms.title}\n${terms.body}`, 'utf8')
     .digest('hex');
   assert.match(termsHash, /^[a-f0-9]{64}$/);
+
+  const home = legalPage('/', lang, versions);
+  assert.ok(home.includes(`<html lang="${lang}">`));
+  const translatedLabels = {
+    it: ['Privacy', 'Termini', 'Supporto'],
+    en: ['Privacy', 'Terms', 'Support'],
+    es: ['Privacidad', 'Términos', 'Soporte'],
+    ru: ['Конфиденциальность', 'Условия', 'Поддержка'],
+  }[lang];
+  for (const label of translatedLabels) assert.ok(home.includes(label));
 
   for (const path of ['/terms', '/privacy', '/support', '/delete-data']) {
     const html = legalPage(path, lang, versions);

@@ -13,7 +13,7 @@ const SUBSCRIPTIONS_ENFORCED = process.env.SUBSCRIPTIONS_ENFORCED === 'true';
 const TERMS_VERSION = process.env.TERMS_VERSION || '2026-08-11';
 const PRIVACY_VERSION = process.env.PRIVACY_VERSION || '2026-08-11';
 const PRIMARY_REFERENCE_PROVIDER = String(
-  process.env.SIGILLUM_PRIMARY_REFERENCE_PROVIDER || 'youtube',
+  process.env.SIGILLUM_PRIMARY_REFERENCE_PROVIDER || 'r2',
 ).trim().toLowerCase();
 const SESSION_DAYS = 30;
 const CODE_TTL_MINUTES = 15;

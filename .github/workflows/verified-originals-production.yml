@@ -49,6 +49,15 @@ jobs:
       APPLE_BUNDLE_ID: com.sigillum.hcv
       APPLE_MONTHLY_PRODUCT_ID: com.sigillum.hcv.creator.monthly
       APPLE_ANNUAL_PRODUCT_ID: com.sigillum.hcv.creator.annual
+      SIGILLUM_PRIMARY_REFERENCE_PROVIDER: r2
+      R2_ENDPOINT: https://ci-account.eu.r2.cloudflarestorage.com
+      R2_BUCKET: sigillum-hcv-references-eu
+      R2_ACCESS_KEY_ID: ci-r2-access
+      R2_SECRET_ACCESS_KEY: ci-r2-secret
+      R2_REQUIRE_EU: "true"
+      R2_REFERENCE_ACTIVE_KEY_ID: ci-r2-key
+      R2_REFERENCE_MASTER_KEYS_JSON: '{"ci-r2-key":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}'
+      R2_REFERENCE_READ_TTL_SECONDS: "60"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
