@@ -1,0 +1,28 @@
+name: Verified Originals v0.1
+
+on:
+  push:
+    branches: [feature/verified-originals-v01-20260924]
+  pull_request:
+    paths:
+      - 'verified_originals_*.js'
+      - 'package.json'
+      - '.github/workflows/verified-originals-v01.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  policy-and-route:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm install
+      - run: npm run check
+      - run: npm run test:verified-originals
+      - run: npm run test:registry-security

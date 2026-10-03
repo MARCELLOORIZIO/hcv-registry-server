@@ -1,0 +1,17 @@
+'use strict';
+const assert=require('node:assert/strict');
+const {youtubeUrl,parseConsent,assertSha,accountSubjectHash,activeProvenance,assertHcvId}=require('./verified_originals_policy');
+assert.equal(youtubeUrl('AaBbCcDd123'),'https://www.youtube.com/watch?v=AaBbCcDd123');
+for (const id of ['a','https://evil.test/a','AaBbCcDd123?x=1'])assert.throws(()=>youtubeUrl(id));
+assert.deepEqual(parseConsent({allowPublication:true,allowMonetization:false,rightsConfirmed:true,publicVisibilityAcknowledged:true}),{allowMonetization:false});
+for (const consent of [{allowPublication:true,allowMonetization:true,rightsConfirmed:false,publicVisibilityAcknowledged:true},{allowPublication:true,rightsConfirmed:true,publicVisibilityAcknowledged:true},{}])assert.throws(()=>parseConsent(consent));
+assert.equal(assertSha('0'.repeat(64),'X'),'0'.repeat(64));
+assert.throws(()=>assertSha('g'.repeat(64),'X'));
+assert.equal(assertHcvId('HCV-0123456789ABCDEF'),'HCV-0123456789ABCDEF');
+assert.throws(()=>assertHcvId('HCV-12'));
+const p=JSON.stringify({type:'SIGILLUM_REGISTRY_PROVENANCE',version:2,status:'SIGILLUM_REGISTRY_VERIFIED',integrityValid:true,contentSha256:'a'.repeat(64)});
+assert.equal(activeProvenance(p,'ACTIVE').contentSha256,'a'.repeat(64));
+assert.equal(activeProvenance(p,'REVOKED'),null);
+assert.equal(activeProvenance('{}','ACTIVE'),null);
+assert.equal(accountSubjectHash('abc').length,64);
+console.log('PASS policy cases: URL, explicit consent, SHA, HCV-ID, provenance, revocation, subject hash');
