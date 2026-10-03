@@ -2,7 +2,7 @@
 
 ## Production decision
 
-The current Free Render + local SQLite setup is development-only. Production target is:
+The production architecture is:
 
 - Render paid web service running stateless Node.js;
 - Render managed PostgreSQL in the same EU region;
@@ -13,7 +13,10 @@ The current Free Render + local SQLite setup is development-only. Production tar
 - account identity is bound to account ID first, then authorized devices;
 - email verification, password reset, consent-version records and subscription entitlement are server-side;
 - KYC/Stripe sessions require an authenticated account and use an internal account reference rather than a legal name in metadata where unnecessary;
-- no original photo/video media is stored by the Registry unless a future feature explicitly requires it;
+- certified originals remain encrypted in the app vault; when sharing is requested, the backend commits an encrypted official technical reference to a private Cloudflare R2 bucket in EU jurisdiction before social export is released;
+- R2 is the only permitted LIVE primary-reference provider; social platforms are optional downstream distribution targets and never authoritative primary storage;
+- reference objects are encrypted before upload with AES-256-GCM, have opaque object keys, no permanent public URL, and are exposed only through authenticated short-lived one-use access;
+- withdrawal revokes API availability before physical R2 deletion and deletion retries fail closed until provider absence is confirmed;
 - health checks include database connectivity;
 - rate limiting and audit logging must remain correct if the service scales to multiple instances.
 
