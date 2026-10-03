@@ -64,20 +64,26 @@ services:
         sync: false
       - key: SIGILLUM_KYC_RETURN_URL
         sync: false
-      - key: YOUTUBE_CLIENT_ID
+      - key: SIGILLUM_PRIMARY_REFERENCE_PROVIDER
+        value: "r2"
+      - key: R2_ENDPOINT
         sync: false
-      - key: YOUTUBE_CLIENT_SECRET
+      - key: R2_BUCKET
+        value: "sigillum-hcv-references-eu"
+      - key: R2_ACCESS_KEY_ID
         sync: false
-      - key: YOUTUBE_REFRESH_TOKEN
+      - key: R2_SECRET_ACCESS_KEY
         sync: false
-      - key: YOUTUBE_CHANNEL_ID
+      - key: R2_REQUIRE_EU
+        value: "true"
+      - key: R2_REFERENCE_ACTIVE_KEY_ID
         sync: false
-      - key: YOUTUBE_COMPLIANCE_APPROVED
+      - key: R2_REFERENCE_MASTER_KEYS_JSON
         sync: false
-      - key: YOUTUBE_UNLISTED_UPLOAD_CONFIRMED
-        sync: false
+      - key: R2_REFERENCE_READ_TTL_SECONDS
+        value: "60"
       - key: SIGILLUM_PUBLISHER_ID
-        value: "SIGILLUM_YOUTUBE_V1"
+        value: "SIGILLUM_R2_PRIMARY_V2"
       - key: SIGILLUM_DERIVATION_KEY_ID
         value: "sigillum_derivation_prod_v1"
       - key: SIGILLUM_DERIVATION_PRIVATE_KEY_PEM
@@ -86,10 +92,6 @@ services:
         sync: false
       - key: SIGILLUM_VERIFIED_ORIGINALS_MAX_BYTES
         value: "536870912"
-      - key: YOUTUBE_PROCESSING_TIMEOUT_MS
-        value: "300000"
-      - key: YOUTUBE_PROCESSING_POLL_MS
-        value: "3000"
 
 databases:
   - name: sigillum-registry-db
