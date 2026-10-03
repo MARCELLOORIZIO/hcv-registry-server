@@ -44,29 +44,24 @@ function pageShell(title, body) {
 }
 
 function legalPage(pathname) {
-  if (pathname === '/' || pathname === '/index.html') {
-    return pageShell('SIGILLUM HCV', '<section class="hero"><h1>Technical proof for human-created content.</h1><p class="muted">SIGILLUM links photos, videos and text to an HCV-ID, technical creator identity, file fingerprint, signed certificate and online Registry record.</p></section><div class="card"><h2>Provenance</h2><p>Check whether content is linked to a SIGILLUM certificate and Registry record.</p></div><div class="card"><h2>Integrity</h2><p>Compare the verified file with the certified fingerprint and certificate data.</p></div><div class="card"><h2>Social verification</h2><p>Use the share menu from Photos, Messenger, Facebook or other apps to send a file to SIGILLUM for verification.</p></div><p class="muted">SIGILLUM provides technical evidence. It does not replace a legal, notarial or forensic expert report.</p>');
-  }
-  if (pathname === '/privacy') {
-    return pageShell('Privacy Policy', '<section class="hero"><h1>Privacy Policy</h1><p class="muted">SIGILLUM minimizes server-side storage of original media and focuses on certificates, identifiers and verification data.</p></section><h2>Data processed</h2><ul><li>Content created or selected by the user, such as photos, videos, text, documents or HCVPACK files.</li><li>HCV-ID, cryptographic file hash, technical fingerprint, certificate data and verification status.</li><li>Technical metadata required to create or verify a certificate.</li><li>Technical creator identity data, such as device key fingerprint and user-declared creator name.</li><li>Future identity verification status if KYC is enabled through an external provider.</li></ul><h2>Original media</h2><p>In the intended production model, original photos, videos and text are stored on the user device and may be saved in the Photos library. The online Registry stores certificate and verification data such as HCV-ID, hashes, fingerprints, metadata and identity status.</p><h2>KYC and identity</h2><p>If identity verification is introduced, SIGILLUM should use a specialized provider. Identity documents and selfies should be processed by that provider where possible. SIGILLUM should store only verification status, provider reference and minimum technical data.</p><h2>Italiano</h2><p>SIGILLUM tratta contenuti creati o selezionati dall utente, HCV-ID, hash, fingerprint, certificati, metadati e identita tecnica. Foto e video originali restano sul dispositivo o nella libreria Foto, salvo funzioni esplicitamente richieste dall utente.</p>');
-  }
-  if (pathname === '/terms') {
-    return pageShell('Terms of Service', '<section class="hero"><h1>Terms of Service</h1><p class="muted">SIGILLUM provides technical tools to create, sign and verify digital content.</p></section><h2>Scope</h2><p>SIGILLUM may help users create verifiable technical evidence for photos, videos, text and related packages.</p><h2>No absolute truth guarantee</h2><p>SIGILLUM does not prove the absolute truth of a scene and does not replace a legal, notarial or forensic expert report.</p><h2>User responsibility</h2><p>Users are responsible for the content they create, import, verify, publish or share. SIGILLUM must not be used for fraud, impersonation, unlawful content or misleading claims.</p><h2>Identity</h2><p>Until a formal KYC process is enabled, creator identity may include technical device identity and a user-declared name. A declared name is not the same as a legally verified identity.</p><h2>Italiano</h2><p>SIGILLUM fornisce strumenti tecnici di verifica, non una perizia legale. L utente resta responsabile dei contenuti creati, importati, verificati o condivisi.</p>');
-  }
-  if (pathname === '/support') {
-    return pageShell('Support', '<section class="hero"><h1>Support</h1><p class="muted">Help for certification, verification and social sharing.</p></section><h2>Verify content from social apps</h2><ol><li>Open the photo or video in Photos, Facebook, Messenger, WhatsApp or another app.</li><li>Tap Share.</li><li>Choose SIGILLUM from the app list.</li><li>Open SIGILLUM manually if iOS does not open it automatically.</li></ol><h2>Contact</h2><p>Temporary support contact: <a href="mailto:marcelloorizio@yahoo.it">marcelloorizio@yahoo.it</a></p><h2>Italiano</h2><p>Per verificare un contenuto da social: apri il contenuto, tocca Condividi, scegli SIGILLUM e poi apri SIGILLUM se iOS non lo apre automaticamente.</p>');
-  }
   if (pathname === '/kyc-return') {
     return pageShell(
       'KYC Return',
-      '<section class="hero"><h1>Identity verification complete</h1><p class="muted">Returning to SIGILLUM.</p><p><a href="sigillum://kyc-return">Open SIGILLUM</a></p></section><script>setTimeout(function(){ window.location.href = "sigillum://kyc-return"; }, 300);</script><h2>Italiano</h2><p>La verifica identita e terminata. Se SIGILLUM non si apre automaticamente, tocca il link qui sopra.</p>'
+      '<section class="hero"><h1>Identity verification complete</h1><p class="muted">Return to the current SIGILLUM app to continue.</p><p><a href="sigillum://kyc-return">Open SIGILLUM</a></p></section><script>setTimeout(function(){ window.location.href = "sigillum://kyc-return"; }, 300);</script>'
     );
   }
-  if (pathname === '/delete-data') {
-    return pageShell('Data Deletion', '<section class="hero"><h1>Data Deletion</h1><p class="muted">How to request deletion or correction of SIGILLUM data.</p></section><h2>How to request deletion</h2><p>Send a request to <a href="mailto:marcelloorizio@yahoo.it">marcelloorizio@yahoo.it</a> with your HCV-ID, contact email and a description of the data concerned.</p><h2>Registry integrity</h2><p>Some Registry records may need to remain available to preserve certificate integrity, anti-fraud evidence and auditability. SIGILLUM may remove or minimize personal data while retaining technical certificate records needed for verification.</p><h2>KYC provider data</h2><p>If KYC is enabled, identity documents and biometric checks should be handled by the selected KYC provider. Deletion requests may need to be processed by SIGILLUM and by that provider.</p><h2>Italiano</h2><p>Per chiedere cancellazione o correzione dati, invia una richiesta con HCV-ID, email di contatto e descrizione dei dati interessati.</p>');
+
+  if (['/', '/index.html', '/privacy', '/terms', '/support', '/delete-data'].includes(pathname)) {
+    const targetPath = pathname === '/index.html' ? '/' : pathname;
+    const target = 'https://sigillum-hcv.com' + targetPath;
+    return pageShell(
+      'SIGILLUM Legacy Registry',
+      '<section class="hero"><h1>Legacy Registry compatibility service</h1><p class="muted">This endpoint is retained only for compatibility with historical HCV Registry records. Current SIGILLUM public, legal, privacy and support information is maintained on the production service.</p><p><a href="' + target + '">Open the current SIGILLUM page</a></p></section><div class="card"><h2>Important</h2><p>A Registry record alone does not verify the integrity of a media file. Exact media integrity requires cryptographic comparison of the file with its HCV certificate in the SIGILLUM app.</p></div>'
+    );
   }
   return null;
 }
+
 function readBody(req) {
   return new Promise((resolve, reject) => {
     let data = '';
@@ -684,9 +679,9 @@ const server = http.createServer(async (req, res) => {
     <body>
       <main class="wrap">
         <section class="card">
-          <div class="badge">OK</div>
-          <h1>HUMAN VERIFIED</h1>
-          <div class="sub">This media has an HCV registry certificate.</div>
+          <div class="badge">HCV</div>
+          <h1>HCV REGISTRY RECORD</h1>
+          <div class="sub">A historical HCV certificate record was found. No media file was compared by this page.</div>
 
           <div class="grid">
             <div class="row">
@@ -721,7 +716,7 @@ const server = http.createServer(async (req, res) => {
           </div>
 
           <div class="footer">
-            SIGILLUM verifies provenance and integrity. Powered by HCV Protocol.
+            Registry presence is not a media-integrity verdict. Verify the actual file in the current SIGILLUM app for cryptographic integrity and provenance checks.
           </div>
         </section>
       </main>
