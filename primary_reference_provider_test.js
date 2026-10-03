@@ -30,7 +30,11 @@ async function streamToBuffer(stream) {
 }
 
 async function main() {
-  assert.equal(selectPrimaryReferenceProvider({}), 'youtube');
+  assert.equal(selectPrimaryReferenceProvider({}), 'r2');
+assert.equal(
+  selectPrimaryReferenceProvider({ SIGILLUM_PRIMARY_REFERENCE_PROVIDER: 'youtube' }),
+  'youtube',
+);
   assert.equal(
     selectPrimaryReferenceProvider({ SIGILLUM_PRIMARY_REFERENCE_PROVIDER: 'R2' }),
     'r2',
