@@ -508,6 +508,24 @@ async function run() {
     assert.equal(before.status, 200);
     assert.equal(before.json.availability, 'REFERENCE_NOT_AVAILABLE');
 
+    const monetizationRejected = await request(
+      base,
+      'POST',
+      '/api/verified-originals/consents',
+      {
+        bearer: 'owner-token',
+        body: {
+          hcvId: HCV_ID,
+          intent: 'PUBLISH_VERIFIED_ORIGINAL',
+          publishReference: true,
+          rightsConfirmed: true,
+          monetizationConsent: true,
+        },
+      },
+    );
+    assert.equal(monetizationRejected.status, 400, monetizationRejected.text);
+    assert.equal(monetizationRejected.json.error, 'MONETIZATION_DISABLED');
+
     const consent = await request(
       base,
       'POST',
