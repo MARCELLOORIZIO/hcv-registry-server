@@ -822,12 +822,10 @@ function createVerifiedOriginalsProduction({
   const primaryReferenceProviderName =
     primaryReferenceProviderOverride?.name ||
     selectPrimaryReferenceProvider(process.env);
-  let r2ReferenceProvider = null;
-  if (primaryReferenceProviderName === 'r2') {
-    r2ReferenceProvider =
-      primaryReferenceProviderOverride ||
-      createR2ReferenceProvider({ env: process.env });
-  }
+  // Keep R2 provider initialization lazy in PRELAUNCH. LIVE readiness
+  // validates the complete R2 configuration before startup, while PRELAUNCH
+  // can still expose health/legal/verification routes without cloud secrets.
+  let r2ReferenceProvider = primaryReferenceProviderOverride || null;
 
   function requireR2ReferenceProvider() {
     if (primaryReferenceProviderName !== 'r2') {
