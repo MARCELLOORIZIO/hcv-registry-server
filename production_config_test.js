@@ -26,6 +26,8 @@ const derivationPublicPem = derivationKeyPair.publicKey
   .export({ format: 'pem', type: 'spki' })
   .toString();
 
+const r2MasterKey = crypto.randomBytes(32).toString('base64');
+
 const readyEnv = {
   PRODUCTION_LIVE: 'true',
   NODE_ENV: 'production',
@@ -48,32 +50,7 @@ const readyEnv = {
   APPLE_IAP_PRIVATE_KEY_BASE64: 'dGVzdA==',
   TERMS_VERSION: '2026-09-25',
   PRIVACY_VERSION: '2026-09-25',
-  SIGILLUM_PRIMARY_REFERENCE_PROVIDER: 'youtube',
-  YOUTUBE_CLIENT_ID: 'youtube-client-id.apps.googleusercontent.com',
-  YOUTUBE_CLIENT_SECRET: 'youtube-client-secret',
-  YOUTUBE_REFRESH_TOKEN: 'youtube-refresh-token',
-  YOUTUBE_CHANNEL_ID: 'UC1234567890123456789012',
-  YOUTUBE_COMPLIANCE_APPROVED: 'true',
-  YOUTUBE_UNLISTED_UPLOAD_CONFIRMED: 'true',
-  SIGILLUM_DERIVATION_KEY_ID: 'sigillum_derivation_prod_v1',
-  SIGILLUM_DERIVATION_PRIVATE_KEY_PEM: derivationPrivatePem,
-  SIGILLUM_DERIVATION_PUBLIC_KEYS_JSON: JSON.stringify({
-    sigillum_derivation_prod_v1: derivationPublicPem,
-  }),
-};
-const ready = assertProductionConfig(readyEnv);
-expect(ready.live === true && ready.ready === true, 'complete LIVE configuration must be accepted');
-
-const r2MasterKey = crypto.randomBytes(32).toString('base64');
-const r2ReadyEnv = {
-  ...readyEnv,
   SIGILLUM_PRIMARY_REFERENCE_PROVIDER: 'r2',
-  YOUTUBE_CLIENT_ID: '',
-  YOUTUBE_CLIENT_SECRET: '',
-  YOUTUBE_REFRESH_TOKEN: '',
-  YOUTUBE_CHANNEL_ID: '',
-  YOUTUBE_COMPLIANCE_APPROVED: 'false',
-  YOUTUBE_UNLISTED_UPLOAD_CONFIRMED: 'false',
   R2_ENDPOINT: 'https://account-id.eu.r2.cloudflarestorage.com',
   R2_BUCKET: 'sigillum-hcv-references-eu',
   R2_ACCESS_KEY_ID: 'r2-access-key',
@@ -83,11 +60,20 @@ const r2ReadyEnv = {
   R2_REFERENCE_MASTER_KEYS_JSON: JSON.stringify({
     'r2-primary-2026-10': r2MasterKey,
   }),
+  SIGILLUM_DERIVATION_KEY_ID: 'sigillum_derivation_prod_v1',
+  SIGILLUM_DERIVATION_PRIVATE_KEY_PEM: derivationPrivatePem,
+  SIGILLUM_DERIVATION_PUBLIC_KEYS_JSON: JSON.stringify({
+    sigillum_derivation_prod_v1: derivationPublicPem,
+  }),
 };
-const r2Ready = assertProductionConfig(r2ReadyEnv);
+const ready = assertProductionConfig(readyEnv);
+expect(ready.live === true && ready.ready === true, 'complete LIVE configuration must be accepted');
+
+const r2ReadyEnv = readyEnv;
+const r2Ready = ready;
 expect(
   r2Ready.live === true && r2Ready.ready === true,
-  'R2 LIVE configuration must not depend on YouTube credentials or approval',
+  'R2 LIVE configuration must be accepted',
 );
 
 const r2WrongJurisdiction = {
@@ -131,11 +117,14 @@ expect(validateProductionConfig(invalidSender).ready === false, 'reserved sender
 const invalidSupport = { ...readyEnv, SUPPORT_EMAIL: 'not-an-email' };
 expect(validateProductionConfig(invalidSupport).ready === false, 'invalid support email must not be accepted for LIVE');
 
-const youtubeAuditOff = { ...readyEnv, YOUTUBE_COMPLIANCE_APPROVED: 'false' };
-expect(validateProductionConfig(youtubeAuditOff).ready === false, 'LIVE must reject an unapproved YouTube compliance state');
-
-const unlistedUnconfirmed = { ...readyEnv, YOUTUBE_UNLISTED_UPLOAD_CONFIRMED: 'false' };
-expect(validateProductionConfig(unlistedUnconfirmed).ready === false, 'LIVE must reject an unconfirmed unlisted upload path');
+const youtubePrimary = {
+  ...readyEnv,
+  SIGILLUM_PRIMARY_REFERENCE_PROVIDER: 'youtube',
+};
+expect(
+  validateProductionConfig(youtubePrimary).ready === false,
+  'LIVE must reject YouTube as the primary reference provider',
+);
 
 const missingDerivationKey = { ...readyEnv, SIGILLUM_DERIVATION_PRIVATE_KEY_PEM: '' };
 expect(validateProductionConfig(missingDerivationKey).ready === false, 'LIVE must reject missing derivation signing material');
@@ -196,8 +185,7 @@ console.log(JSON.stringify({
   resendDevRejectedForLive: true,
   reservedSenderRejectedForLive: true,
   invalidSupportRejectedForLive: true,
-  youtubeComplianceRequiredForLive: true,
-  youtubeUnlistedConfirmationRequiredForLive: true,
+  youtubePrimaryRejectedForLive: true,
   derivationSigningRequiredForLive: true,
   derivationKeyPinMustMatch: true,
   derivationRsa2048Required: true,
