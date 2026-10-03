@@ -3,8 +3,8 @@ const crypto = require('crypto');
 const BASE = process.env.SMOKE_BASE_URL || 'http://127.0.0.1:8080';
 const CODE = process.env.TEST_FIXED_CODE || '123456';
 const email = `sigillum-ci-${Date.now()}@example.com`;
-const password = 'SIGILLUM-Test-Password-2026';
-const nextPassword = 'SIGILLUM-Test-Password-2026-NEW';
+const password = `SigillumCi-${crypto.randomBytes(18).toString('hex')}!Aa1`;
+const nextPassword = `SigillumCi-${crypto.randomBytes(18).toString('hex')}!Bb2`;
 
 function b64urlToBuffer(value) {
   return Buffer.from(value, 'base64url');
@@ -112,8 +112,8 @@ async function main() {
   if (account.preferredLanguage !== 'es') throw new Error(`preferred language not persisted: ${account.preferredLanguage}`);
   if (account.contractLanguage !== 'es') throw new Error(`contract language not persisted: ${account.contractLanguage}`);
   if (account.acceptanceMethod !== 'clickwrap') throw new Error(`acceptance method not persisted: ${account.acceptanceMethod}`);
-  if (account.termsVersion !== '2026-09-25') throw new Error(`unexpected Terms revision: ${account.termsVersion}`);
-  if (account.privacyVersion !== '2026-09-25') throw new Error(`unexpected Privacy revision: ${account.privacyVersion}`);
+  if (account.termsVersion !== '2026-10-04') throw new Error(`unexpected Terms revision: ${account.termsVersion}`);
+  if (account.privacyVersion !== '2026-10-04') throw new Error(`unexpected Privacy revision: ${account.privacyVersion}`);
   assertSha256(account.termsDocumentSha256, 'Terms document hash');
   assertSha256(account.privacyDocumentSha256, 'Privacy document hash');
 
