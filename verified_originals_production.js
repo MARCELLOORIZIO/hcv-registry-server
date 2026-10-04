@@ -297,6 +297,40 @@ function referenceVisualHexDistanceV3(left, right) {
   return distance;
 }
 
+function referenceVisualAlignmentDistanceV3(expected, current) {
+  let left;
+  let right;
+  try {
+    left = Buffer.from(String(expected?.localFeatures || ''), 'base64');
+    right = Buffer.from(String(current?.localFeatures || ''), 'base64');
+  } catch (_) {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  const expectedLength =
+    REFERENCE_VISUAL_GRID_COLUMNS *
+    REFERENCE_VISUAL_GRID_ROWS *
+    REFERENCE_VISUAL_FEATURE_BYTES_PER_TILE;
+  if (left.length !== right.length || left.length !== expectedLength) {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  // Temporal alignment uses structural channels only. RGB channels remain
+  // active in the forensic frame comparison for colour/brightness tampering.
+  let total = 0;
+  let samples = 0;
+  const tileCount =
+    REFERENCE_VISUAL_GRID_COLUMNS * REFERENCE_VISUAL_GRID_ROWS;
+  for (let tile = 0; tile < tileCount; tile += 1) {
+    const offset = tile * REFERENCE_VISUAL_FEATURE_BYTES_PER_TILE;
+    for (let feature = 0; feature < 3; feature += 1) {
+      total += Math.abs(left[offset + feature] - right[offset + feature]);
+      samples += 1;
+    }
+  }
+  return samples === 0 ? Number.POSITIVE_INFINITY : total / samples;
+}
+
 function compareReferenceVisualFrameV3(expected, current) {
   const globalDistance = referenceVisualHexDistanceV3(
     expected?.globalHash,
@@ -475,6 +509,7 @@ function compareReferenceVisualFingerprintsV3(expected, current) {
   let aligned = 0;
   let modified = 0;
   let inconclusive = 0;
+  let previousMatchedIndex = -1;
 
   for (let e = 0; e < expectedFrames.length; e += 1) {
     const center = expectedFrames.length <= 1 || currentFrames.length <= 1
@@ -482,29 +517,52 @@ function compareReferenceVisualFingerprintsV3(expected, current) {
       : Math.round(
           e * (currentFrames.length - 1) / (expectedFrames.length - 1),
         );
-    const low = Math.max(0, center - 4);
+    const low = Math.max(
+      previousMatchedIndex + 1,
+      Math.max(0, center - 4),
+    );
     const high = Math.min(currentFrames.length - 1, center + 4);
     let bestIndex = -1;
-    let bestDistance = 9999;
+    let bestHamming = 9999;
+    let bestLocalDistance = Number.POSITIVE_INFINITY;
+    let bestTemporalDistance = 9999;
 
     for (let i = low; i <= high; i += 1) {
       if (used.has(i)) continue;
-      const distance = referenceVisualHexDistanceV3(
+      const hamming = referenceVisualHexDistanceV3(
         expectedFrames[e].globalHash,
         currentFrames[i].globalHash,
       );
-      if (distance < bestDistance) {
-        bestDistance = distance;
+      if (hamming > 18) continue;
+
+      const localDistance = referenceVisualAlignmentDistanceV3(
+        expectedFrames[e],
+        currentFrames[i],
+      );
+      if (!Number.isFinite(localDistance)) continue;
+
+      const temporalDistance = Math.abs(i - center);
+      const better =
+        localDistance < bestLocalDistance - 0.0001 ||
+        (Math.abs(localDistance - bestLocalDistance) <= 0.0001 &&
+          (hamming < bestHamming ||
+            (hamming === bestHamming &&
+              temporalDistance < bestTemporalDistance)));
+      if (better) {
+        bestLocalDistance = localDistance;
+        bestHamming = hamming;
+        bestTemporalDistance = temporalDistance;
         bestIndex = i;
       }
     }
 
-    if (bestIndex < 0 || bestDistance > 18) {
+    if (bestIndex < 0) {
       inconclusive += 1;
       continue;
     }
 
     used.add(bestIndex);
+    previousMatchedIndex = bestIndex;
     const residual = compareReferenceVisualFrameV3(
       expectedFrames[e],
       currentFrames[bestIndex],
