@@ -26,38 +26,6 @@ function baseFrame(seed = 0) {
   return frame;
 }
 
-function movingFrame(step) {
-  const frame = Buffer.alloc(WIDTH * HEIGHT * 3);
-  for (let y = 0; y < HEIGHT; y += 1) {
-    for (let x = 0; x < WIDTH; x += 1) {
-      const offset = (y * WIDTH + x) * 3;
-      frame[offset] = 68;
-      frame[offset + 1] = 136;
-      frame[offset + 2] = 204;
-    }
-  }
-
-  const x0 = 40 + step * 2;
-  for (let y = 34; y < 38; y += 1) {
-    for (let x = x0; x < x0 + 5; x += 1) {
-      const offset = (y * WIDTH + x) * 3;
-      frame[offset] = 20;
-      frame[offset + 1] = 20;
-      frame[offset + 2] = 20;
-    }
-  }
-  return frame;
-}
-
-function recompressedLike(frame) {
-  const result = Buffer.from(frame);
-  for (let i = 0; i < result.length; i += 1) {
-    const noise = ((i * 31 + 11) % 3) - 1;
-    result[i] = Math.max(0, Math.min(255, result[i] + noise));
-  }
-  return result;
-}
-
 const fingerprint = referenceVisualFingerprintV3FromRaw(baseFrame(), 'photo');
 assert.strictEqual(validReferenceVisualFingerprintV3(fingerprint), true);
 assert.strictEqual(fingerprint.frameCount, 1);
@@ -85,31 +53,49 @@ assert.strictEqual(validReferenceVisualFingerprintV3(videoFingerprint), true);
 assert.strictEqual(videoFingerprint.frameCount, 3);
 assert.strictEqual(videoFingerprint.mediaType, 'video');
 
-const shiftedExpectedFrames = Array.from(
-  { length: 8 },
-  (_, index) => movingFrame(index),
+function manualFrame(featureValue, globalHash) {
+  return {
+    globalHash,
+    localFeatures: Buffer.alloc(16 * 9 * 6, featureValue).toString('base64'),
+  };
+}
+
+function manualVideoFingerprint(frames) {
+  return {
+    type: 'SIGILLUM_REFERENCE_VISUAL_FINGERPRINT',
+    version: 3,
+    algorithm: 'SIGILLUM_LOCAL_RGB_GRID_V3',
+    mediaType: 'video',
+    width: 128,
+    height: 72,
+    gridColumns: 16,
+    gridRows: 9,
+    featureBytesPerTile: 6,
+    samplingFps: 2,
+    maxFrames: 120,
+    frameCount: frames.length,
+    frames,
+  };
+}
+
+const misleadingExpected = manualVideoFingerprint([
+  manualFrame(20, 'ffffffffffffffff'),
+  manualFrame(80, '0000000000000000'),
+  manualFrame(140, '0000000000000000'),
+]);
+const misleadingCurrent = manualVideoFingerprint([
+  manualFrame(20, 'ffffffffffffffff'),
+  manualFrame(80, '0000000000000001'),
+  manualFrame(140, '0000000000000000'),
+]);
+const misleadingComparison = compareReferenceVisualFingerprintsV3(
+  misleadingExpected,
+  misleadingCurrent,
 );
-const shiftedCurrentFrames = [
-  recompressedLike(shiftedExpectedFrames[0]),
-  recompressedLike(shiftedExpectedFrames[0]),
-  ...shiftedExpectedFrames.slice(1, 7).map(recompressedLike),
-];
-const shiftedExpected = referenceVisualFingerprintV3FromRaw(
-  Buffer.concat(shiftedExpectedFrames),
-  'video',
-);
-const shiftedCurrent = referenceVisualFingerprintV3FromRaw(
-  Buffer.concat(shiftedCurrentFrames),
-  'video',
-);
-const shiftedComparison = compareReferenceVisualFingerprintsV3(
-  shiftedExpected,
-  shiftedCurrent,
-);
-assert.strictEqual(shiftedComparison.verdict, 'conforming');
-assert.strictEqual(shiftedComparison.modifiedFrames, 0);
-assert.strictEqual(shiftedComparison.alignedFrames, 7);
-assert.strictEqual(shiftedComparison.inconclusiveFrames, 1);
+assert.strictEqual(misleadingComparison.verdict, 'conforming');
+assert.strictEqual(misleadingComparison.alignedFrames, 3);
+assert.strictEqual(misleadingComparison.modifiedFrames, 0);
+assert.strictEqual(misleadingComparison.inconclusiveFrames, 0);
 
 const malformed = { ...fingerprint, frames: [] };
 assert.strictEqual(validReferenceVisualFingerprintV3(malformed), false);
