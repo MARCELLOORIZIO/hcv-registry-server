@@ -523,36 +523,60 @@ function compareReferenceVisualFingerprintsV3(expected, current) {
     );
     const high = Math.min(currentFrames.length - 1, center + 4);
     let bestIndex = -1;
-    let bestHamming = 9999;
-    let bestLocalDistance = Number.POSITIVE_INFINITY;
-    let bestTemporalDistance = 9999;
 
-    for (let i = low; i <= high; i += 1) {
-      if (used.has(i)) continue;
-      const hamming = referenceVisualHexDistanceV3(
+    // Never evade a comparable expected-time frame by jumping to a cleaner
+    // neighbour. This preserves local tamper evidence while fixing the old
+    // earliest-globalHash tie behaviour that caused Messenger false positives.
+    if (center >= low && center <= high && !used.has(center)) {
+      const centerHamming = referenceVisualHexDistanceV3(
         expectedFrames[e].globalHash,
-        currentFrames[i].globalHash,
+        currentFrames[center].globalHash,
       );
-      if (hamming > 18) continue;
+      if (centerHamming <= 18) {
+        const centerResidual = compareReferenceVisualFrameV3(
+          expectedFrames[e],
+          currentFrames[center],
+        );
+        if (centerResidual.comparable) {
+          bestIndex = center;
+        }
+      }
+    }
 
-      const localDistance = referenceVisualAlignmentDistanceV3(
-        expectedFrames[e],
-        currentFrames[i],
-      );
-      if (!Number.isFinite(localDistance)) continue;
+    // Bounded drift recovery is allowed only when the expected temporal
+    // position is not comparable.
+    if (bestIndex < 0) {
+      let bestHamming = 9999;
+      let bestLocalDistance = Number.POSITIVE_INFINITY;
+      let bestTemporalDistance = 9999;
 
-      const temporalDistance = Math.abs(i - center);
-      const better =
-        localDistance < bestLocalDistance - 0.0001 ||
-        (Math.abs(localDistance - bestLocalDistance) <= 0.0001 &&
-          (hamming < bestHamming ||
-            (hamming === bestHamming &&
-              temporalDistance < bestTemporalDistance)));
-      if (better) {
-        bestLocalDistance = localDistance;
-        bestHamming = hamming;
-        bestTemporalDistance = temporalDistance;
-        bestIndex = i;
+      for (let i = low; i <= high; i += 1) {
+        if (used.has(i)) continue;
+        const hamming = referenceVisualHexDistanceV3(
+          expectedFrames[e].globalHash,
+          currentFrames[i].globalHash,
+        );
+        if (hamming > 18) continue;
+
+        const localDistance = referenceVisualAlignmentDistanceV3(
+          expectedFrames[e],
+          currentFrames[i],
+        );
+        if (!Number.isFinite(localDistance)) continue;
+
+        const temporalDistance = Math.abs(i - center);
+        const better =
+          localDistance < bestLocalDistance - 0.0001 ||
+          (Math.abs(localDistance - bestLocalDistance) <= 0.0001 &&
+            (hamming < bestHamming ||
+              (hamming === bestHamming &&
+                temporalDistance < bestTemporalDistance)));
+        if (better) {
+          bestLocalDistance = localDistance;
+          bestHamming = hamming;
+          bestTemporalDistance = temporalDistance;
+          bestIndex = i;
+        }
       }
     }
 
