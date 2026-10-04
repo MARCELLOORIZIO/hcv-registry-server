@@ -108,7 +108,8 @@ const shiftedComparison = compareReferenceVisualFingerprintsV3(
 );
 assert.strictEqual(shiftedComparison.verdict, 'conforming');
 assert.strictEqual(shiftedComparison.modifiedFrames, 0);
-assert(shiftedComparison.alignedFrames >= 6);
+assert.strictEqual(shiftedComparison.alignedFrames, 7);
+assert.strictEqual(shiftedComparison.inconclusiveFrames, 1);
 
 const malformed = { ...fingerprint, frames: [] };
 assert.strictEqual(validReferenceVisualFingerprintV3(malformed), false);
