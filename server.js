@@ -1,3 +1,6 @@
+require('./registry_http_guard');
+require('./registry_public_verify_guard');
+
 const http = require('http');
 const path = require('path');
 const Database = require('better-sqlite3');
