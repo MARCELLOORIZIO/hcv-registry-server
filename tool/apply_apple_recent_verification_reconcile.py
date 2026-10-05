@@ -21,18 +21,19 @@ replacement = r'''    const recentVerifiedMs = row.last_verified_at
       Date.now() >= recentVerifiedMs &&
       Date.now() - recentVerifiedMs < 15 * 60 * 1000
     );
-    if (recentAppleVerification && ['active', 'grace'].includes(row.status)) {
+    const recentStatus = appStoreBilling.effectiveStoredSubscriptionStatus(row);
+    if (recentAppleVerification && ['active', 'grace'].includes(recentStatus)) {
       await securityEvent(session.account_id, 'APPLE_SUBSCRIPTION_RECONCILED', {
         productId: row.product_id || '',
         originalTransactionIdHash: hash(row.original_transaction_id || ''),
         environment: row.environment || '',
-        status: row.status,
+        status: recentStatus,
         source: 'recent_apple_verification',
       });
       return sendJson(res, 200, {
         ok: true,
         verified: true,
-        status: row.status,
+        status: recentStatus,
         productId: row.product_id || '',
         expiresAt: row.expires_at || null,
         environment: row.environment || '',
@@ -56,7 +57,8 @@ if "source: 'recent_apple_verification'" not in source:
 
 for required in [
     "Date.now() - recentVerifiedMs < 15 * 60 * 1000",
-    "['active', 'grace'].includes(row.status)",
+    "appStoreBilling.effectiveStoredSubscriptionStatus(row)",
+    "['active', 'grace'].includes(recentStatus)",
     "source: 'recent_apple_verification'",
     "verified: true",
 ]:
