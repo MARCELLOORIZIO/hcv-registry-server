@@ -30,7 +30,8 @@ new = r'''  if (req.method === 'GET' && url.pathname === '/api/billing/status') 
       lastVerifiedMs &&
       Number.isFinite(lastVerifiedMs) &&
       Date.now() >= lastVerifiedMs &&
-      Date.now() - lastVerifiedMs < 15 * 60 * 1000
+      Date.now() - lastVerifiedMs < 15 * 60 * 1000 &&
+      ['active', 'grace'].includes(account.subscriptionStatus)
     );
     return sendJson(res, 200, {
       ok: true,
@@ -55,6 +56,7 @@ for required in [
     'const subscription = await refreshAppleSubscriptionForAccount(session.account_id);',
     'lastVerifiedAt,',
     'verificationFresh,',
+    "['active', 'grace'].includes(account.subscriptionStatus)",
     "verificationSource: verificationFresh ? 'apple_server_fresh' : 'apple_server_stale'",
 ]:
     if required not in source:
