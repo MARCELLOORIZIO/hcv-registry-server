@@ -45,7 +45,7 @@ if "apple_subscription_owners_account_idx" not in source:
     source = source.replace(ownership_anchor, ownership_anchor + ownership_schema, 1)
 
 old_access = "identity?.status === 'verified' && (!SUBSCRIPTIONS_ENFORCED || subscription?.status === 'active')"
-new_access = "identity?.status === 'verified' && (!SUBSCRIPTIONS_ENFORCED || ['active', 'grace'].includes(subscription?.status))"
+new_access = "identity?.status === 'verified' && (!SUBSCRIPTIONS_ENFORCED || ['active', 'grace'].includes(appStoreBilling.effectiveStoredSubscriptionStatus(subscription)))"
 if old_access in source:
     source = source.replace(old_access, new_access, 1)
 
@@ -67,6 +67,13 @@ if "let subscription = (await pool.query('SELECT * FROM subscriptions WHERE acco
     if subscription_lookup not in source:
         raise RuntimeError('account subscription lookup anchor missing')
     source = source.replace(subscription_lookup, subscription_lookup_v2, 1)
+
+subscription_status_anchor = "subscriptionStatus: subscription?.status || (SUBSCRIPTIONS_ENFORCED ? 'inactive' : 'development_allowed'),"
+subscription_status_effective = "subscriptionStatus: subscription ? appStoreBilling.effectiveStoredSubscriptionStatus(subscription) : (SUBSCRIPTIONS_ENFORCED ? 'inactive' : 'development_allowed'),"
+if subscription_status_anchor in source:
+    source = source.replace(subscription_status_anchor, subscription_status_effective, 1)
+elif subscription_status_effective not in source:
+    raise RuntimeError('subscription effective-status anchor missing')
 
 helper_anchor = "function safeHcvId(value) {"
 helpers = r'''async function resolveAppleSubscriptionOwner(accountId, originalTransactionId) {
@@ -190,7 +197,10 @@ async function refreshAppleSubscriptionForAccount(accountId) {
 
   if (!appStoreBilling.configured()) return row;
   const lastVerified = row.last_verified_at ? new Date(row.last_verified_at).getTime() : 0;
-  if (Date.now() - lastVerified < 15 * 60 * 1000) return row;
+  if (
+    Date.now() - lastVerified < 15 * 60 * 1000 &&
+    ['active', 'grace'].includes(appStoreBilling.effectiveStoredSubscriptionStatus(row))
+  ) return row;
   try {
     const refreshed = await appStoreBilling.refreshSubscription(row.original_transaction_id, row.product_id);
     await saveAppleSubscription(accountId, refreshed);
@@ -306,6 +316,7 @@ required_markers = [
     "apple_subscription_owners",
     "APPLE_SUBSCRIPTION_ALREADY_LINKED",
     "resolveAppleSubscriptionOwner",
+    "effectiveStoredSubscriptionStatus",
 ]
 if any(marker not in source for marker in required_markers):
     raise RuntimeError('Apple billing integration incomplete')
