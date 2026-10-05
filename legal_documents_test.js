@@ -59,6 +59,14 @@ for (const lang of SUPPORTED_LANGUAGES) {
   }[lang];
   for (const label of translatedLabels) assert.ok(home.includes(label));
 
+  const productClaims = {
+    it: ['Tu crei. SIGILLUM protegge l’origine.', 'iOS 16'],
+    en: ['You create. SIGILLUM protects the origin.', 'iOS 16'],
+    es: ['Tú creas. SIGILLUM protege el origen.', 'iOS 16'],
+    ru: ['Вы создаёте. SIGILLUM защищает источник.', 'iOS 16'],
+  }[lang];
+  for (const claim of productClaims) assert.ok(home.includes(claim));
+
   for (const path of ['/terms', '/privacy', '/support', '/delete-data']) {
     const html = legalPage(path, lang, versions);
     assert.ok(html.includes(`<html lang="${lang}">`));
