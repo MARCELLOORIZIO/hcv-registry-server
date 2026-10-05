@@ -155,6 +155,16 @@ function normalizedStatus(status) {
   }
 }
 
+function effectiveStoredSubscriptionStatus(row, nowMs = Date.now()) {
+  const status = String(row?.status || 'inactive').trim().toLowerCase();
+  if (status === 'grace') return 'grace';
+  if (status !== 'active') return status || 'inactive';
+
+  const rawExpiry = row?.expires_at ?? row?.expiresAt ?? null;
+  const expiresMs = rawExpiry ? new Date(rawExpiry).getTime() : 0;
+  return Number.isFinite(expiresMs) && expiresMs > nowMs ? 'active' : 'expired';
+}
+
 function assertProduct(productId, expectedProductId) {
   if (!ALLOWED_PRODUCTS.has(productId)) throw Object.assign(new Error('APPLE_PRODUCT_NOT_ALLOWED'), { statusCode: 422 });
   if (expectedProductId && productId !== expectedProductId) {
@@ -291,5 +301,6 @@ module.exports = {
   verifyPurchase,
   refreshSubscription,
   verifyNotification,
+  effectiveStoredSubscriptionStatus,
   allowedProducts: ALLOWED_PRODUCTS,
 };
