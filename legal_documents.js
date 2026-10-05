@@ -132,19 +132,19 @@ function homeDocument(lang) {
   const copy = {
     it: [
       'SIGILLUM — Human Chain Verifier',
-      'SIGILLUM è un sistema per creare, firmare, registrare e verificare evidenze tecniche di provenienza e integrità per foto, video e testi. I contenuti Creator sono associati a HCV-ID, certificati firmati e Registry online. Quando un Creator condivide una foto o un video, SIGILLUM registra prima un riferimento tecnico ufficiale cifrato nella propria infrastruttura privata, per consentire successive verifiche tecniche e, agli abbonati, il confronto visivo o audio all’interno dell’app.',
+      'Tu crei. SIGILLUM protegge l’origine. Foto e video nascono dalla Camera SIGILLUM; i testi vengono scritti e certificati nell’app. SIGILLUM collega contenuto, Creator, dispositivo, HCV-ID e certificato firmato. Prima che una foto o un video venga rilasciato all’esterno, registra un riferimento originale cifrato nella propria infrastruttura privata, così le copie successive possono essere verificate automaticamente o confrontate visivamente o tramite audio nell’app. Compatibilità attuale: iPhone, iOS 16 o successivo; tecnicamente da iPhone 8, 8 Plus e X in avanti.',
     ],
     en: [
       'SIGILLUM — Human Chain Verifier',
-      'SIGILLUM is a system for creating, signing, registering and verifying technical evidence of provenance and integrity for photos, videos and text. Creator content is associated with an HCV-ID, signed certificates and an online Registry. When a Creator shares a photo or video, SIGILLUM first registers an encrypted official technical reference in its private infrastructure to support later technical verification and, for subscribers, visual or audio comparison inside the app.',
+      'You create. SIGILLUM protects the origin. Photos and videos originate in the SIGILLUM Camera; text is written and certified in the app. SIGILLUM links content, Creator, device, HCV-ID and a signed certificate. Before a photo or video is released outside the app, it registers an encrypted original reference in private infrastructure so later copies can be checked automatically or compared visually or by audio inside the app. Current compatibility: iPhone, iOS 16 or later; technically iPhone 8, 8 Plus and X or later.',
     ],
     es: [
       'SIGILLUM — Human Chain Verifier',
-      'SIGILLUM es un sistema para crear, firmar, registrar y verificar evidencias técnicas de procedencia e integridad de fotografías, vídeos y textos. El contenido Creator se vincula a un HCV-ID, certificados firmados y un Registry en línea. Cuando un Creator comparte una foto o un vídeo, SIGILLUM registra primero una referencia técnica oficial cifrada en su infraestructura privada para permitir posteriores verificaciones técnicas y, para suscriptores, la comparación visual o de audio dentro de la app.',
+      'Tú creas. SIGILLUM protege el origen. Las fotos y los vídeos nacen en la Cámara SIGILLUM; los textos se escriben y certifican en la app. SIGILLUM vincula contenido, Creator, dispositivo, HCV-ID y certificado firmado. Antes de liberar una foto o un vídeo al exterior, registra una referencia original cifrada en su infraestructura privada para que las copias posteriores puedan verificarse automáticamente o compararse visualmente o por audio dentro de la app. Compatibilidad actual: iPhone, iOS 16 o posterior; técnicamente desde iPhone 8, 8 Plus y X en adelante.',
     ],
     ru: [
       'SIGILLUM — Human Chain Verifier',
-      'SIGILLUM — система для создания, подписания, регистрации и проверки технических свидетельств происхождения и целостности фотографий, видео и текста. Контент Creator связывается с HCV-ID, подписанными сертификатами и онлайн Registry. Когда Creator делится фотографией или видео, SIGILLUM сначала регистрирует зашифрованный официальный технический эталон в своей закрытой инфраструктуре, чтобы обеспечить последующую техническую проверку и, для подписчиков, визуальное или аудиосравнение внутри приложения.',
+      'Вы создаёте. SIGILLUM защищает источник. Фото и видео создаются Камерой SIGILLUM; текст пишется и сертифицируется в приложении. SIGILLUM связывает контент, Creator, устройство, HCV-ID и подписанный сертификат. До выдачи фото или видео за пределы приложения регистрируется зашифрованный оригинальный эталон в закрытой инфраструктуре, чтобы последующие копии можно было проверить автоматически или сравнить визуально либо по аудио внутри приложения. Текущая совместимость: iPhone, iOS 16 или новее; технически iPhone 8, 8 Plus и X или новее.',
     ],
   }[lang];
   return {
