@@ -37,6 +37,9 @@ const {
   initPrimaryReferenceReadAuthSchema,
   issueReadAuthorization,
 } = require('./primary_reference_read_auth');
+const {
+  comparePhotoDetailFiles,
+} = require('./photo_detail_compare');
 
 const execFileAsync = promisify(execFile);
 
@@ -900,6 +903,36 @@ function createVerifiedOriginalsProduction({
   const fail = (code, status = 400, message) => {
     throw publicError(code, status, message);
   };
+
+  const publicPhotoVerifyRate = new Map();
+  function enforcePublicPhotoVerifyRate(req) {
+    const now = Date.now();
+    const windowMs = 60_000;
+    const maxRequests = 12;
+    const forwarded = String(req.headers['x-forwarded-for'] || '')
+      .split(',')[0]
+      .trim();
+    const remote = forwarded || String(req.socket?.remoteAddress || 'unknown');
+    const userAgent = String(req.headers['user-agent'] || '');
+    const key = hashString(remote + '|' + userAgent);
+    const existing = publicPhotoVerifyRate.get(key);
+    const state = !existing || now - existing.startedAt >= windowMs
+      ? { startedAt: now, count: 0 }
+      : existing;
+    state.count += 1;
+    publicPhotoVerifyRate.set(key, state);
+
+    if (publicPhotoVerifyRate.size > 5000) {
+      for (const [candidateKey, candidate] of publicPhotoVerifyRate.entries()) {
+        if (now - candidate.startedAt >= windowMs) {
+          publicPhotoVerifyRate.delete(candidateKey);
+        }
+      }
+    }
+    if (state.count > maxRequests) {
+      fail('PHOTO_VERIFICATION_RATE_LIMITED', 429);
+    }
+  }
 
   const primaryReferenceProviderName =
     primaryReferenceProviderOverride?.name ||
@@ -1854,6 +1887,115 @@ function createVerifiedOriginalsProduction({
           : [],
       totalMs: Date.now() - startedAt,
     };
+  }
+
+  async function verifyPhotoCopy(req, hcvId) {
+    enforcePublicPhotoVerifyRate(req);
+
+    if (primaryReferenceProviderName !== 'r2') {
+      fail('REFERENCE_PROVIDER_UNAVAILABLE', 503);
+    }
+    const reference = await activeR2Reference(hcvId);
+    if (!reference || !reference.providerReceipt) {
+      fail('REFERENCE_NOT_AVAILABLE', 404);
+    }
+    const receipt = reference.providerReceipt;
+    if (receipt.mediaType !== 'photo' ||
+        reference.referenceRole !== ORIGINAL_REFERENCE_ROLE) {
+      fail('REFERENCE_MEDIA_TYPE_UNSUPPORTED', 415);
+    }
+
+    const requestMediaType = String(req.headers['content-type'] || '')
+      .split(';')[0]
+      .trim()
+      .toLowerCase();
+    if (requestMediaType !== 'image/jpeg' &&
+        requestMediaType !== 'image/png') {
+      fail('VERIFICATION_MEDIA_TYPE_UNSUPPORTED', 415);
+    }
+
+    const contentLength = Number(req.headers['content-length']);
+    const configuredMax = Number(
+      process.env.SIGILLUM_VERIFICATION_PHOTO_MAX_BYTES || 25 * 1024 * 1024,
+    );
+    const maxBytes = Number.isSafeInteger(configuredMax) && configuredMax > 0
+      ? Math.min(configuredMax, 50 * 1024 * 1024)
+      : 25 * 1024 * 1024;
+    if (!Number.isSafeInteger(contentLength) ||
+        contentLength <= 0 ||
+        contentLength > maxBytes) {
+      fail('VERIFICATION_CONTENT_LENGTH_INVALID', 411);
+    }
+
+    const tempRoot = String(
+      process.env.SIGILLUM_VERIFIED_ORIGINALS_TMP ||
+        path.join(os.tmpdir(), 'sigillum-verified-originals'),
+    );
+    await fs.promises.mkdir(tempRoot, { recursive: true, mode: 0o700 });
+    const tempDir = await fs.promises.mkdtemp(
+      path.join(tempRoot, 'photo-verify-'),
+    );
+    const candidatePath = path.join(
+      tempDir,
+      requestMediaType === 'image/png' ? 'candidate.png' : 'candidate.jpg',
+    );
+    const referencePath = path.join(tempDir, 'reference.bin');
+
+    try {
+      const candidate = await streamToFile(
+        req,
+        candidatePath,
+        contentLength,
+      );
+
+      try {
+        await requireR2ReferenceProvider().materializeReference({
+          receipt,
+          destinationPath: referencePath,
+          binding: {
+            hcvId,
+            referenceRole: receipt.referenceRole,
+            referenceSha256: receipt.referenceSha256,
+            originalContentSha256: receipt.originalContentSha256,
+            hcvpackSha256: receipt.hcvpackSha256,
+            derivationManifestSha256: receipt.derivationManifestSha256,
+            objectId: receipt.objectId,
+            mediaType: receipt.mediaType,
+          },
+        });
+      } catch (error) {
+        fail('REFERENCE_PROVIDER_UNAVAILABLE', 503);
+      }
+
+      let comparison;
+      try {
+        comparison = await comparePhotoDetailFiles({
+          ffmpegPath,
+          expectedPath: referencePath,
+          currentPath: candidatePath,
+          workDir: tempDir,
+        });
+      } catch (error) {
+        fail('PHOTO_COMPARISON_TECHNICAL_ERROR', 500);
+      }
+
+      return {
+        hcvId,
+        comparisonMode: 'SERVER_SIDE_R2_PHOTO_DETAIL_BUILD148',
+        verdict: comparison.verdict,
+        candidateSha256: candidate.sha256,
+        metrics: {
+          meanLumaDifference: comparison.meanLumaDifference,
+          meanRgbDifference: comparison.meanRgbDifference,
+          maxTileMeanDifference: comparison.maxTileMeanDifference,
+          maxTileHighDifferenceRatio:
+            comparison.maxTileHighDifferenceRatio,
+          localizedTamperTiles: comparison.localizedTamperTiles,
+        },
+      };
+    } finally {
+      await fs.promises.rm(tempDir, { recursive: true, force: true });
+    }
   }
 
   async function createR2ReadAuthorization(req, hcvId) {
@@ -4567,6 +4709,7 @@ function createVerifiedOriginalsProduction({
     const view = /^\/api\/verified-originals\/(HCV-[A-F0-9]{16})\/view$/.exec(url.pathname);
     const list = /^\/api\/verified-originals\/(HCV-[A-F0-9]{16})\/publications$/.exec(url.pathname);
     const verifyReference = /^\/api\/verified-originals\/(HCV-[A-F0-9]{16})\/verification-reference$/.exec(url.pathname);
+    const verifyPhotoCopy = /^\/api\/verified-originals\/(HCV-[A-F0-9]{16})\/verify-photo-copy$/.exec(url.pathname);
     const readAuthorization = /^\/api\/verified-originals\/(HCV-[A-F0-9]{16})\/read-authorization$/.exec(url.pathname);
     const readReference = /^\/api\/verified-originals\/reference-read\/([A-Za-z0-9_-]{40,256})$/.exec(url.pathname);
     const consentStatusMatch = /^\/api\/verified-originals\/consents\/(HCV-[A-F0-9]{16})$/.exec(url.pathname);
@@ -4581,6 +4724,12 @@ function createVerifiedOriginalsProduction({
     }
     if (req.method === 'GET' && verifyReference) {
       sendJson(res, 200, await verificationReference(verifyReference[1]));
+      return true;
+    }
+    if (req.method === 'POST' && verifyPhotoCopy) {
+      res.setHeader('cache-control', 'no-store, max-age=0');
+      res.setHeader('pragma', 'no-cache');
+      sendJson(res, 200, await verifyPhotoCopy(req, verifyPhotoCopy[1]));
       return true;
     }
     if (req.method === 'POST' && readAuthorization) {
