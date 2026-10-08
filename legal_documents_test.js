@@ -8,7 +8,7 @@ const {
   emailCopy,
 } = require('./legal_documents');
 
-const versions = { termsVersion: '2026-10-04', privacyVersion: '2026-10-04' };
+const versions = { termsVersion: '2026-10-04', privacyVersion: '2026-10-08' };
 
 assert.deepStrictEqual(SUPPORTED_LANGUAGES, ['it', 'en', 'es', 'ru']);
 assert.strictEqual(normalizeLanguage('es-ES'), 'es');
@@ -26,7 +26,7 @@ for (const lang of SUPPORTED_LANGUAGES) {
   assert.ok(terms.body.toLowerCase().includes('hcvpack'));
   assert.ok(!terms.body.includes('YouTube'));
   assert.ok(privacy.title.length > 5);
-  assert.ok(privacy.body.includes('2026-10-04'));
+  assert.ok(privacy.body.includes('2026-10-08'));
   assert.ok(privacy.body.includes('Cloudflare R2'));
   assert.ok(privacy.body.includes('Stripe'));
   assert.ok(
@@ -35,7 +35,8 @@ for (const lang of SUPPORTED_LANGUAGES) {
     privacy.body.includes('encargado del tratamiento') ||
     privacy.body.includes('обработчик данных'),
   );
-  assert.ok(privacy.body.includes('YouTube'));
+  assert.ok(!privacy.body.includes('YouTube'));
+  assert.ok(!privacy.body.includes('Google/YouTube'));
   assert.ok(
     terms.body.includes('14-bis') ||
     terms.body.includes('14-бис'),
