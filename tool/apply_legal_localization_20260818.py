@@ -26,7 +26,7 @@ if "require('./legal_documents')" not in source:
     )
 
 source = source.replace("process.env.TERMS_VERSION || '2026-08-11'", "process.env.TERMS_VERSION || '2026-10-04'")
-source = source.replace("process.env.PRIVACY_VERSION || '2026-08-11'", "process.env.PRIVACY_VERSION || '2026-10-04'")
+source = source.replace("process.env.PRIVACY_VERSION || '2026-08-11'", "process.env.PRIVACY_VERSION || '2026-10-08'")
 
 # Add acceptance evidence columns to new schemas.
 create_columns_old = """      terms_version TEXT NOT NULL DEFAULT '',
