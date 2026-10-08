@@ -1983,15 +1983,6 @@ function createVerifiedOriginalsProduction({
         hcvId,
         comparisonMode: 'SERVER_SIDE_R2_PHOTO_DETAIL_BUILD148',
         verdict: comparison.verdict,
-        candidateSha256: candidate.sha256,
-        metrics: {
-          meanLumaDifference: comparison.meanLumaDifference,
-          meanRgbDifference: comparison.meanRgbDifference,
-          maxTileMeanDifference: comparison.maxTileMeanDifference,
-          maxTileHighDifferenceRatio:
-            comparison.maxTileHighDifferenceRatio,
-          localizedTamperTiles: comparison.localizedTamperTiles,
-        },
       };
     } finally {
       await fs.promises.rm(tempDir, { recursive: true, force: true });
