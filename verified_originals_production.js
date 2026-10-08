@@ -4700,7 +4700,7 @@ function createVerifiedOriginalsProduction({
     const view = /^\/api\/verified-originals\/(HCV-[A-F0-9]{16})\/view$/.exec(url.pathname);
     const list = /^\/api\/verified-originals\/(HCV-[A-F0-9]{16})\/publications$/.exec(url.pathname);
     const verifyReference = /^\/api\/verified-originals\/(HCV-[A-F0-9]{16})\/verification-reference$/.exec(url.pathname);
-    const verifyPhotoCopy = /^\/api\/verified-originals\/(HCV-[A-F0-9]{16})\/verify-photo-copy$/.exec(url.pathname);
+    const verifyPhotoCopyRoute = /^\/api\/verified-originals\/(HCV-[A-F0-9]{16})\/verify-photo-copy$/.exec(url.pathname);
     const readAuthorization = /^\/api\/verified-originals\/(HCV-[A-F0-9]{16})\/read-authorization$/.exec(url.pathname);
     const readReference = /^\/api\/verified-originals\/reference-read\/([A-Za-z0-9_-]{40,256})$/.exec(url.pathname);
     const consentStatusMatch = /^\/api\/verified-originals\/consents\/(HCV-[A-F0-9]{16})$/.exec(url.pathname);
@@ -4717,10 +4717,14 @@ function createVerifiedOriginalsProduction({
       sendJson(res, 200, await verificationReference(verifyReference[1]));
       return true;
     }
-    if (req.method === 'POST' && verifyPhotoCopy) {
+    if (req.method === 'POST' && verifyPhotoCopyRoute) {
       res.setHeader('cache-control', 'no-store, max-age=0');
       res.setHeader('pragma', 'no-cache');
-      sendJson(res, 200, await verifyPhotoCopy(req, verifyPhotoCopy[1]));
+      sendJson(
+        res,
+        200,
+        await verifyPhotoCopy(req, verifyPhotoCopyRoute[1]),
+      );
       return true;
     }
     if (req.method === 'POST' && readAuthorization) {
