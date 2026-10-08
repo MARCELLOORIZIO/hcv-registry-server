@@ -17,6 +17,8 @@ assert(verify.includes('activeR2Reference(hcvId)'));
 assert(verify.includes('materializeReference({'));
 assert(verify.includes('comparePhotoDetailFiles({'));
 assert(verify.includes("comparisonMode: 'SERVER_SIDE_R2_PHOTO_DETAIL_BUILD148'"));
+assert(!verify.includes('candidateSha256: candidate.sha256'));
+assert(!verify.includes('metrics: {'));
 assert(verify.includes("fail('REFERENCE_PROVIDER_UNAVAILABLE', 503)"));
 assert(verify.includes('enforcePublicPhotoVerifyRate(req)'));
 assert(source.includes("fail('PHOTO_VERIFICATION_RATE_LIMITED', 429)"));
