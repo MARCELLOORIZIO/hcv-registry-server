@@ -105,7 +105,11 @@ jobs:
           curl -fsS 'http://127.0.0.1:8080/' | grep -q 'private infrastructure'
           curl -fsS 'http://127.0.0.1:8080/privacy?lang=en' | grep -q 'Cloudflare R2'
           curl -fsS 'http://127.0.0.1:8080/privacy?lang=en' | grep -q 'SIGILLUM Privacy Policy'
-          curl -fsS 'http://127.0.0.1:8080/privacy?lang=en' | grep -q 'Google/YouTube data and OAuth'
+          if curl -fsS 'http://127.0.0.1:8080/privacy?lang=en' | grep -q 'Google/YouTube'; then
+            echo "Privacy unexpectedly advertises retired Google/YouTube processing"
+            exit 1
+          fi
+          grep -q '"privacyVersion":"2026-10-08"' health.json
           curl -fsS 'http://127.0.0.1:8080/terms?lang=en' | grep -q 'SIGILLUM Terms of Service'
           curl -fsS 'http://127.0.0.1:8080/privacy?lang=es' | grep -q 'Política de Privacidad de SIGILLUM'
           curl -fsS 'http://127.0.0.1:8080/terms?lang=es' | grep -q 'Términos de Servicio de SIGILLUM'
