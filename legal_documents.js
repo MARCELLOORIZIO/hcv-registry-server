@@ -66,12 +66,12 @@ function termsDocument(lang, version) {
 
 function privacyDocument(lang, version) {
   const commonProviders = lang === 'it'
-    ? list(['Apple per distribuzione e acquisti in-app', 'Stripe per verifica dell’identità', 'Render e database collegato per infrastruttura e Registry', 'Cloudflare R2 in giurisdizione UE per conservare cifrati i riferimenti tecnici ufficiali; Google/YouTube può essere usato solo per distribuzioni pubbliche/social opzionali o funzioni amministrative quando abilitate', 'Resend e fornitori email per codici e comunicazioni transazionali'])
+    ? list(['Apple per distribuzione e acquisti in-app', 'Stripe per verifica dell’identità', 'Render e database collegato per infrastruttura e Registry', 'Cloudflare R2 in giurisdizione UE per conservare cifrati i riferimenti tecnici ufficiali', 'Resend e fornitori email per codici e comunicazioni transazionali'])
     : lang === 'es'
-      ? list(['Apple para distribución y compras in-app', 'Stripe para verificación de identidad', 'Render y la base de datos asociada para infraestructura y Registry', 'Cloudflare R2 en jurisdicción UE para conservar cifradas las referencias técnicas oficiales; Google/YouTube puede utilizarse solo para distribuciones públicas/sociales opcionales o funciones administrativas cuando estén habilitadas', 'Resend y proveedores de email para códigos y comunicaciones transaccionales'])
+      ? list(['Apple para distribución y compras in-app', 'Stripe para verificación de identidad', 'Render y la base de datos asociada para infraestructura y Registry', 'Cloudflare R2 en jurisdicción UE para conservar cifradas las referencias técnicas oficiales', 'Resend y proveedores de email para códigos y comunicaciones transaccionales'])
       : lang === 'ru'
-        ? list(['Apple — распространение приложения и покупки', 'Stripe — проверка личности', 'Render и связанная база данных — инфраструктура и Registry', 'Cloudflare R2 в юрисдикции ЕС — зашифрованное хранение официальных технических эталонов; Google/YouTube может использоваться только для необязательного публичного/социального распространения или административных функций, когда они включены', 'Resend и поставщики электронной почты — коды и транзакционные сообщения'])
-        : list(['Apple for app distribution and in-app purchases', 'Stripe for identity verification', 'Render and the associated database for infrastructure and Registry', 'Cloudflare R2 in EU jurisdiction to store official technical references in encrypted form; Google/YouTube may be used only for optional public/social distribution or administrative functions when enabled', 'Resend and email providers for codes and transactional messages']);
+        ? list(['Apple — распространение приложения и покупки', 'Stripe — проверка личности', 'Render и связанная база данных — инфраструктура и Registry', 'Cloudflare R2 в юрисдикции ЕС — зашифрованное хранение официальных технических эталонов', 'Resend и поставщики электронной почты — коды и транзакционные сообщения'])
+        : list(['Apple for app distribution and in-app purchases', 'Stripe for identity verification', 'Render and the associated database for infrastructure and Registry', 'Cloudflare R2 in EU jurisdiction to store official technical references in encrypted form', 'Resend and email providers for codes and transactional messages']);
 
   if (lang === 'it') return {
     title: 'Informativa Privacy SIGILLUM',
@@ -103,28 +103,6 @@ function supportDocument(lang) {
   if (lang === 'es') return { title: 'Soporte de SIGILLUM', body: `${section('Asistencia', 'Para problemas de acceso, email, suscripción, identidad, certificación HCV, HCVPACK, Registry o eliminación de cuenta, contacta con marcelloorizio@legalmail.it.')}${section('Solicitudes de privacidad', 'Para ejercer derechos sobre datos personales utiliza el mismo correo e indica que se trata de una solicitud de privacidad.')}${section('Información útil', 'No envíes contraseñas, códigos OTP, copias de documentos ni claves privadas por email. Para incidencias técnicas indica versión de la app, modelo del dispositivo y descripción del problema, evitando datos innecesarios.')}` };
   if (lang === 'ru') return { title: 'Поддержка SIGILLUM', body: `${section('Помощь', 'По вопросам входа, email, подписки, проверки личности, HCV-сертификации, HCVPACK, Registry или удаления аккаунта обращайтесь: marcelloorizio@legalmail.it.')}${section('Запросы о персональных данных', 'Для реализации прав в отношении персональных данных используйте тот же адрес и укажите, что это privacy-запрос.')}${section('Полезная информация', 'Не отправляйте по email пароли, OTP-коды, копии документов или закрытые ключи. Для технической проблемы укажите версию приложения, модель устройства и описание, не добавляя лишних персональных данных.')}` };
   return { title: 'SIGILLUM Support', body: `${section('Support', 'For issues with access, email verification, subscriptions, identity verification, HCV certification, HCVPACK, Registry or account deletion, contact marcelloorizio@legalmail.it.')}${section('Privacy requests', 'To exercise personal-data rights, use the same address and state that the message is a privacy request.')}${section('Useful information', 'Do not send passwords, OTP codes, identity-document copies or private keys by email. For technical reports, include the app version, device model and a description of the issue while avoiding unnecessary personal data.')}` };
-}
-
-function googleDataDisclosure(lang) {
-  const copy = {
-    it: [
-      '14. Dati Google/YouTube e OAuth',
-      'Il riferimento tecnico primario SIGILLUM non richiede YouTube. Quando sono abilitate funzioni opzionali di distribuzione pubblica/sociale o amministrazione del canale SIGILLUM, SIGILLUM può utilizzare OAuth 2.0 e YouTube Data API. Il backend conserva in modo riservato il token necessario e usa le autorizzazioni solo per le operazioni YouTube esplicitamente abilitate. SIGILLUM non usa i dati Google per pubblicità, profilazione o vendita e non condivide i token OAuth con gli utenti. L’accesso può essere revocato dal proprietario dell’account Google dalle impostazioni di sicurezza Google.',
-    ],
-    en: [
-      '14. Google/YouTube data and OAuth',
-      'SIGILLUM’s primary technical reference does not require YouTube. When optional public/social distribution or SIGILLUM channel-administration functions are enabled, SIGILLUM may use OAuth 2.0 and the YouTube Data API. The backend securely retains the required token and uses the granted permissions only for the explicitly enabled YouTube operations. SIGILLUM does not use Google data for advertising, profiling or sale and does not share OAuth tokens with users. Access can be revoked by the Google Account owner from Google security settings.',
-    ],
-    es: [
-      '14. Datos de Google/YouTube y OAuth',
-      'La referencia técnica primaria de SIGILLUM no requiere YouTube. Cuando se habilitan funciones opcionales de distribución pública/social o de administración del canal SIGILLUM, SIGILLUM puede utilizar OAuth 2.0 y YouTube Data API. El backend conserva de forma segura el token necesario y utiliza los permisos solo para las operaciones de YouTube expresamente habilitadas. SIGILLUM no utiliza datos de Google para publicidad, perfilado o venta y no comparte tokens OAuth con los usuarios. El propietario de la cuenta de Google puede revocar el acceso desde la configuración de seguridad de Google.',
-    ],
-    ru: [
-      '14. Данные Google/YouTube и OAuth',
-      'Основной технический эталон SIGILLUM не требует YouTube. Когда включены необязательные функции публичного/социального распространения или администрирования канала SIGILLUM, SIGILLUM может использовать OAuth 2.0 и YouTube Data API. Сервер безопасно хранит необходимый токен и использует разрешения только для явно включённых операций YouTube. SIGILLUM не использует данные Google для рекламы, профилирования или продажи и не передает OAuth-токены пользователям. Владелец аккаунта Google может отозвать доступ в настройках безопасности Google.',
-    ],
-  }[lang];
-  return section(copy[0], copy[1]);
 }
 
 function homeDocument(lang) {
@@ -160,8 +138,7 @@ function legalDocument(type, language, versions = {}) {
   const lang = normalizeLanguage(language);
   if (type === 'terms') return termsDocument(lang, versions.termsVersion || '2026-10-04');
   if (type === 'privacy') {
-    const doc = privacyDocument(lang, versions.privacyVersion || '2026-10-04');
-    return { ...doc, body: doc.body + googleDataDisclosure(lang) };
+    return privacyDocument(lang, versions.privacyVersion || '2026-10-08');
   }
   if (type === 'delete-data') return deletionDocument(lang);
   if (type === 'support') return supportDocument(lang);
