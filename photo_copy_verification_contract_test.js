@@ -29,10 +29,12 @@ assert(!verify.includes('issueReadAuthorization'));
 
 assert(
   source.includes(
-    "const verifyPhotoCopy = /^\\/api\\/verified-originals\\/(HCV-[A-F0-9]{16})\\/verify-photo-copy$/.exec(url.pathname);",
+    "const verifyPhotoCopyRoute = /^\\/api\\/verified-originals\\/(HCV-[A-F0-9]{16})\\/verify-photo-copy$/.exec(url.pathname);",
   ),
 );
-assert(source.includes("if (req.method === 'POST' && verifyPhotoCopy)"));
+assert(source.includes("if (req.method === 'POST' && verifyPhotoCopyRoute)"));
+assert(source.includes('await verifyPhotoCopy(req, verifyPhotoCopyRoute[1])'));
+assert(!source.includes('await verifyPhotoCopy(req, verifyPhotoCopy[1])'));
 assert(source.includes("res.setHeader('cache-control', 'no-store, max-age=0')"));
 
 console.log('photo_copy_verification_contract_test: PASS');
