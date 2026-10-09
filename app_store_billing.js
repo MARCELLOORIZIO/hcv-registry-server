@@ -204,6 +204,26 @@ function transactionIdFromInput(transactionId, receiptData) {
   }
 }
 
+// Operational diagnostics contain no transaction IDs, receipts, tokens or error text.
+function logAppleVerificationFailure(operation, environment, error) {
+  const apiError = Number(error?.apiError);
+  const httpStatus = Number(error?.httpStatusCode ?? error?.statusCode);
+  const verificationStatus = Number(error?.status);
+  const details = {
+    operation,
+    environment: environmentName(environment),
+    category: Number.isInteger(apiError) && apiError > 0 ? 'APPLE_API'
+      : Number.isInteger(verificationStatus) && verificationStatus >= 0
+        ? 'SIGNED_DATA' : 'OTHER',
+    ...(Number.isInteger(apiError) && apiError > 0 ? { apiError } : {}),
+    ...(Number.isInteger(httpStatus) && httpStatus >= 100 && httpStatus < 600
+      ? { httpStatus } : {}),
+    ...(Number.isInteger(verificationStatus) && verificationStatus >= 0
+      ? { verificationStatus } : {}),
+  };
+  console.warn('APPLE_BILLING_DIAGNOSTIC', JSON.stringify(details));
+}
+
 async function verifyPurchase({ transactionId, receiptData, expectedProductId }) {
   if (TEST_MODE) {
     const productId = expectedProductId || [...ALLOWED_PRODUCTS][0];
@@ -229,6 +249,7 @@ async function verifyPurchase({ transactionId, receiptData, expectedProductId })
       assertProduct(String(decoded.productId || ''), expectedProductId);
       return normalizeDecoded(decoded, environment);
     } catch (error) {
+      logAppleVerificationFailure('verify_purchase', environment, error);
       lastError = error;
     }
   }
@@ -263,6 +284,7 @@ async function refreshSubscription(anyTransactionId, expectedProductId = '') {
       candidates.sort((a, b) => Date.parse(b.expiresAt || 0) - Date.parse(a.expiresAt || 0));
       return candidates[0];
     } catch (error) {
+      logAppleVerificationFailure('refresh_subscription', environment, error);
       lastError = error;
     }
   }
