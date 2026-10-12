@@ -19,11 +19,24 @@ async function api(path,method='GET',body,token='') {
 function link(path,text){const a=document.createElement('a');a.href=path;a.textContent=text;return a;}
 if(mode==='new'){
   $('create').hidden=false;
-  $('request').onclick=async()=>{try{
+  const createRequest=async()=>{try{
+    $('request').disabled=true;
     const hcvIds=$('ids').value.split(/\s+/).filter(Boolean);
     const result=await api('/api/verified-originals/audit/requests','POST',{hcvIds});
     location.assign(result.browserPath);
-  }catch(e){status(e.message,true);}};
+  }catch(e){$('request').disabled=false;status(e.message,true);}};
+  $('request').onclick=createRequest;
+  // A one-time browser-local launch hint: the fragment is not sent to the
+  // backend in HTTP requests. It only creates a PENDING grant, never approval.
+  const match=/^#start=(HCV-[A-F0-9]{16}(?:,HCV-[A-F0-9]{16}){0,24})$/.exec(location.hash);
+  if(match){
+    const ids=match[1].split(',');
+    if(new Set(ids).size===ids.length){
+      $('ids').value=ids.join('\n');
+      history.replaceState(null,'',location.pathname);
+      void createRequest();
+    }
+  }
 }
 if(mode==='browser'){
   $('browser').hidden=false;
