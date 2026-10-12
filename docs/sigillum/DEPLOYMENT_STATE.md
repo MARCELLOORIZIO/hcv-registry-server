@@ -12,3 +12,9 @@ No production deployment, merge, migration application or remote MCP activation 
 ## PR51 follow-up
 
 Published implementation d3da54d9f5e5819f00c307926a2b7dadd322ec95; all four associated CI suites passed. Experimental in-process factory integration and request/approval boundary implemented. No remote MCP endpoint activated, no migration applied in production, no production deploy or merge.
+
+## Optional connector activation configuration (not applied)
+
+SIGILLUM_CONNECTOR_ENABLED defaults off. Explicit enabled startup requires SIGILLUM_CONNECTOR_OAUTH_CLIENTS_JSON with exact predefined public client and callback from OpenAI management; SIGILLUM_CONNECTOR_TLS_MODE=NATIVE_TLS or RENDER_EDGE; existing SIGILLUM_DELEGATED_AUDIT_ENABLED=true and canonical HTTPS SIGILLUM_DELEGATED_AUDIT_ORIGIN. RENDER_EDGE additionally requires platform RENDER, RENDER_EXTERNAL_HOSTNAME and RENDER_SERVICE_ID to match the reviewed deployment, with forwarded HTTPS traffic accepted only under that explicit platform trust policy. No environment variables were changed.
+
+Remote endpoint when explicitly activated: /connector/mcp. Resource discovery: /.well-known/oauth-protected-resource/connector/mcp. Authorization-server discovery: /.well-known/oauth-authorization-server. OAuth routes: /connector/oauth/authorize, /consent, /token, /revoke. OAuth migration is separate and not applied while disabled. Exact public OpenAI callback has not been observed in a signed-in management page yet.

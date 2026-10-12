@@ -9,6 +9,9 @@ const {createVerifiedOriginalsProduction,referenceVisualFingerprintV3FromRaw}=re
 const {createPrimaryReferenceManifest}=require('./primary_reference_manifest');
 const {createR2ReferenceProvider,encryptReferenceFile}=require('./primary_reference_provider');
 const {createMcpPrincipalVerifier}=require('./sigillum_mcp_auth');
+const {connectorTlsFixture}=require('./tool/connector_tls_fixture');
+const {Client}=require('@modelcontextprotocol/sdk/client/index.js');
+const {StreamableHTTPClientTransport}=require('@modelcontextprotocol/sdk/client/streamableHttp.js');
 const hash=x=>crypto.createHash('sha256').update(x).digest('hex');
 const ID='HCV-0000000000000051',DEVICE='a'.repeat(64),OWNER='synthetic-owner';
 const PRINCIPAL='synthetic-connector',TOKEN='t'.repeat(48);
@@ -18,6 +21,16 @@ test('Registry factory returns exact decrypted synthetic photo; rechecks rights 
  const previousKeys=process.env.SIGILLUM_DERIVATION_PUBLIC_KEYS_JSON;
  const previousAudit=process.env.SIGILLUM_DELEGATED_AUDIT_ENABLED;
  const previousOrigin=process.env.SIGILLUM_DELEGATED_AUDIT_ORIGIN;
+ let remoteHost,featureRef;
+ const tls=await connectorTlsFixture(async(req,res)=>{
+  try{
+   const url=new URL(req.url,tls.origin);
+   if(remoteHost&&await remoteHost.handle(req,res,url))return;
+   if(featureRef&&await featureRef.handle(req,res,url))return;
+   res.writeHead(404);res.end();
+  }catch(_){if(res.headersSent)res.destroy();else{res.writeHead(400);res.end();}}
+ });
+ const remoteClient=new Client({name:'synthetic-registry-e2e',version:'1'});
  let decrypts=0,subscription='active',duringMaterialize=null,clock=Date.now();
  try{
   await pool.query(`CREATE TABLE accounts(id TEXT PRIMARY KEY);
@@ -42,7 +55,7 @@ test('Registry factory returns exact decrypted synthetic photo; rechecks rights 
   const keys=crypto.generateKeyPairSync('rsa',{modulusLength:2048});
   process.env.SIGILLUM_DERIVATION_PUBLIC_KEYS_JSON=JSON.stringify({'synthetic-key':keys.publicKey.export({format:'pem',type:'spki'})});
   process.env.SIGILLUM_DELEGATED_AUDIT_ENABLED='true';
-  process.env.SIGILLUM_DELEGATED_AUDIT_ORIGIN='https://synthetic.invalid';
+  process.env.SIGILLUM_DELEGATED_AUDIT_ORIGIN=tls.origin;
   const manifest=createPrimaryReferenceManifest({hcvId:ID,originalContentSha256:sha,byteLength:bytes.length,
    mediaType:'photo',referenceVisualFingerprint:referenceVisualFingerprintV3FromRaw(Buffer.alloc(128*72*3,80),'photo'),
    certificateRaw:raw,keyId:'synthetic-key',privateKeyPem:keys.privateKey.export({format:'pem',type:'pkcs8'})}).manifest;
@@ -73,9 +86,12 @@ test('Registry factory returns exact decrypted synthetic photo; rechecks rights 
    accountEnvelope:async(account,device)=>{assert.equal(account,OWNER);assert.equal(device,DEVICE);return {subscriptionStatus:subscription,emailVerified:true};},
    requireCreatorAccess:async()=>{},verifyCertificateRaw:value=>JSON.parse(value),
    provenanceEnvelopeFromRow:()=>({status:'SIGILLUM_REGISTRY_VERIFIED',integrityValid:true,identityVerified:true,contentSha256:sha}),
-   sendJson:(res,status,body)=>{ownerResponse={status,body};},sendHtml:()=>{},readJson:async req=>req.body,publicError:(code)=>Object.assign(Error(code),{code}),
+   sendJson:(res,status,body)=>{ownerResponse={status,body};if(res.writeHead){res.writeHead(status,{'Content-Type':'application/json'});res.end(JSON.stringify(body));}},
+   sendHtml:()=>{},readJson:async req=>{if(req.body)return req.body;let text='';for await(const b of req){text+=b;if(text.length>4096)throw Error('BODY_TOO_LARGE');}return JSON.parse(text);},
+   publicError:(code)=>Object.assign(Error(code),{code}),
    primaryReferenceProviderOverride:wrappedProvider,ffmpegPath:'/unused-synthetic-fixture'});
   await feature.initSchema();
+  featureRef=feature;
   await pool.query(fs.readFileSync(path.join(__dirname,'migrations/20261012_sigillum_connector_principal.sql'),'utf8'));
   await pool.query(`INSERT INTO verified_originals_consents(record_id,hcv_id,account_id,creator_id,session_device_fingerprint,
    consent_version,publication_consent,monetization_consent,rights_confirmed,state)
@@ -108,7 +124,7 @@ test('Registry factory returns exact decrypted synthetic photo; rechecks rights 
    const requestData=await request();
    assert.equal(requestData.state,'PENDING');
    const before=decrypts;assert.equal((await call(requestData.requestId)).result.isError,true);assert.equal(decrypts,before);
-   const req={method:'POST',headers:{origin:'https://synthetic.invalid',authorization:'Bearer synthetic-owner-session'},
+   const req={method:'POST',headers:{origin:tls.origin,authorization:'Bearer synthetic-owner-session'},
     body:{confirm:true,hcvIds:requestData.hcvIds,scopeDigest:requestData.scopeDigest}};
    await feature.handle(req,{setHeader(){}},new URL(requestData.approvalUrl.replace('/audit/approve/','/api/verified-originals/audit/requests/')+'/approve'));
    assert.equal(ownerResponse.status,200);assert.equal(ownerResponse.body.state,'APPROVED');
@@ -132,10 +148,39 @@ test('Registry factory returns exact decrypted synthetic photo; rechecks rights 
   const events=(await pool.query('SELECT event_type FROM verified_originals_delegated_audit_events')).rows;
   assert.equal(events.filter(e=>e.event_type==='READ_COMPLETED').length,1);
   assert.equal(events.filter(e=>e.event_type==='READ_FAILED').length,4);
+  // Full HTTPS + OAuth + official MCP client + production factory read path.
+  clock=Date.now();duringMaterialize=null;
+  const clientId='synthetic-openai',redirect='https://chatgpt.com/connector_platform_oauth_redirect';
+  remoteHost=feature.createConnectorRemoteHost({issuer:tls.origin,resource:tls.origin+'/connector/mcp',
+   clients:[{clientId,redirectUris:[redirect]}],now:()=>new Date(clock),isTrustedTransport:req=>req.socket.encrypted===true});
+  await remoteHost.initSchema();
+  const verifier='v'.repeat(64),params=new URLSearchParams({client_id:clientId,redirect_uri:redirect,response_type:'code',resource:remoteHost.oauth.resource,
+   scope:remoteHost.oauth.scope,state:'real-protocol-synthetic-data',code_challenge_method:'S256',code_challenge:crypto.createHash('sha256').update(verifier).digest('base64url')});
+  let response=await tls.fetch(tls.origin+'/connector/oauth/authorize?'+params);assert.equal(response.status,200);
+  const html=await response.text(),cookie=response.headers.get('set-cookie').split(';')[0],flowId=/const flowId="([a-f0-9]{32})"/.exec(html)[1];
+  response=await tls.fetch(tls.origin+'/connector/oauth/consent',{method:'POST',headers:{'Content-Type':'application/json',Origin:tls.origin,
+   Cookie:cookie,Authorization:'Bearer synthetic-owner-session'},body:JSON.stringify({flowId,confirm:true})});assert.equal(response.status,200);
+  const callback=new URL((await response.json()).redirectUrl);
+  response=await tls.fetch(tls.origin+'/connector/oauth/token',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},
+   body:new URLSearchParams({grant_type:'authorization_code',client_id:clientId,redirect_uri:redirect,resource:remoteHost.oauth.resource,
+    code:callback.searchParams.get('code'),code_verifier:verifier})});assert.equal(response.status,200);
+  const issued=await response.json();
+  await remoteClient.connect(new StreamableHTTPClientTransport(new URL(remoteHost.oauth.resource),{fetch:tls.fetch,
+   requestInit:{headers:{Authorization:'Bearer '+issued.access_token}}}));
+  const requested=await remoteClient.callTool({name:'sigillum_request_original_audit',arguments:{hcvIds:[ID]}});assert.equal(requested.isError,false);
+  const pending=JSON.parse(requested.content[0].text);
+  const read=()=>remoteClient.callTool({name:'sigillum_read_approved_original',arguments:{grantId:pending.requestId,hcvId:ID}});
+  assert.equal((await read()).isError,true);assert.equal(decrypts,3);
+  response=await tls.fetch(tls.origin+'/api/verified-originals/audit/requests/'+pending.requestId+'/approve',{method:'POST',
+   headers:{'Content-Type':'application/json',Origin:tls.origin,Authorization:'Bearer synthetic-owner-session'},
+   body:JSON.stringify({confirm:true,hcvIds:pending.hcvIds,scopeDigest:pending.scopeDigest})});assert.equal(response.status,200);
+  const received=await read();assert.equal(received.isError,false,JSON.stringify(received));
+  assert.deepEqual(Buffer.from(received.content[0].data,'base64'),bytes);assert.equal(decrypts,4);
+  assert.equal((await read()).isError,true);assert.equal(decrypts,4);
  }finally{
   if(previousKeys===undefined)delete process.env.SIGILLUM_DERIVATION_PUBLIC_KEYS_JSON;else process.env.SIGILLUM_DERIVATION_PUBLIC_KEYS_JSON=previousKeys;
   if(previousAudit===undefined)delete process.env.SIGILLUM_DELEGATED_AUDIT_ENABLED;else process.env.SIGILLUM_DELEGATED_AUDIT_ENABLED=previousAudit;
   if(previousOrigin===undefined)delete process.env.SIGILLUM_DELEGATED_AUDIT_ORIGIN;else process.env.SIGILLUM_DELEGATED_AUDIT_ORIGIN=previousOrigin;
-  await pool.end();await fs.promises.rm(tmp,{recursive:true,force:true});
+  await remoteClient.close();await tls.close();await pool.end();await fs.promises.rm(tmp,{recursive:true,force:true});
  }
 });

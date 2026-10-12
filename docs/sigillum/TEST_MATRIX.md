@@ -17,3 +17,9 @@ Results for this follow-up: 57 connector tests passed (54 boundary/unit plus 3 S
 ## GitHub CI verified for d3da54d9
 
 All four runs passed: Connector Boundary 38285197808; Verified Originals production PostgreSQL 38285197814; R2 audit security 38285197825; Registry account check 38285197987. PostgreSQL 16 production/audit and patched runtime regressions therefore passed remotely. The new connector factory integration uses PGlite and synthetic encrypted S3 in its dedicated test; live original receipt/rendering and real OAuth remain untested.
+
+## OAuth/remote follow-up local acceptance
+
+77 combined tests passed: 68 connector/SQL/OAuth/SDK/runtime tests plus 9 existing audit regressions. Actual ephemeral localhost TLS certificate is verified by a per-test CA-aware client; global TLS validation is never disabled. Official MCP Client tests protocol initialization, tools metadata, PENDING denial, exact image bytes after explicit approval, hostile Origin/Host denial, large-body and duplicate-form rejection, and credential rejection. A subsequent changed HTTPS test also verifies no image is returned when credential eligibility changes during a read.
+
+Full Registry factory TLS test performs real OAuth consent/token exchange, MCP request, existing owner-approval handler and existing AES-GCM/SHA256 materialization against synthetic encrypted objects. Certificate/account identity verification is a controlled fixture, not live login or KYC. No actual OpenAI account connection, Render forwarded header, real protected photograph or iPhone tested here.

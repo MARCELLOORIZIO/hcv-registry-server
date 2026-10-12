@@ -45,6 +45,8 @@ function createSigillumMcpDispatcher({resolvePrincipal,requestAudit,...adapters}
   if(message.params?.name!==TOOL)return {jsonrpc:'2.0',id,error:{code:-32602,message:'Unknown tool'}};
   try{
    const args=message.params.arguments||{};
+   if(!args||typeof args!=='object'||Array.isArray(args)||
+      Object.keys(args).some(k=>!['grantId','hcvId'].includes(k)))throw Error('AUDIT_INPUT_INVALID');
    const result=await bridge.readOriginal({connectorPrincipal:principal,grantId:args.grantId,hcvId:args.hcvId});
    // MCP image items support PNG/JPEG. Video needs a separately negotiated,
    // authenticated resource transport, not inline text/base64.

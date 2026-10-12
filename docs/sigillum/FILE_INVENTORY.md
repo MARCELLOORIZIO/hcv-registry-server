@@ -1,6 +1,6 @@
 # Tracked file inventory and static edges
 
-Generated from actual git tracked paths including staged follow-up additions. An entry is not a claim that the file was fully reviewed. Static edges omit dynamic loading and build-time rewrites.
+Generated from actual tracked paths, including staged additions. Entries do not imply a completed manual review. Edges omit dynamic loading and build-time rewrites.
 
 ## hcv-registry-server
 
@@ -73,6 +73,7 @@ legacy_public_claims_test.js
 legal_documents.js
 legal_documents_test.js
 load_test.js
+migrations/20261012_sigillum_connector_oauth.sql
 migrations/20261012_sigillum_connector_principal.sql
 migrations/20261012_sigillum_mcp_credentials.sql
 package-lock.json
@@ -113,9 +114,16 @@ sigillum_connector_bridge.js
 sigillum_connector_bridge_test.js
 sigillum_connector_grant_adapter.js
 sigillum_connector_grant_adapter_test.js
+sigillum_connector_oauth.js
+sigillum_connector_oauth_test.js
+sigillum_connector_oauth_ui.js
 sigillum_connector_production_test.js
 sigillum_connector_r2_capture.js
 sigillum_connector_r2_capture_test.js
+sigillum_connector_remote.js
+sigillum_connector_remote_test.js
+sigillum_connector_runtime.js
+sigillum_connector_runtime_test.js
 sigillum_mcp_auth.js
 sigillum_mcp_auth_test.js
 sigillum_mcp_credentials.js
@@ -126,6 +134,7 @@ sigillum_mcp_http.js
 sigillum_mcp_http_test.js
 sigillum_mcp_service.js
 sigillum_mcp_service_test.js
+sigillum_owner_web_auth.js
 subtitle_derivation_contract_test.js
 telegram_reference_acceptance_test.js
 tool/apply_account_email_reuse.py
@@ -147,9 +156,11 @@ tool/apply_production_live_guard.py
 tool/apply_production_runtime_safety.py
 tool/apply_profile_language_sync.py
 tool/apply_registry_provenance_v2.py
+tool/apply_sigillum_connector_runtime.py
 tool/apply_verified_originals_production.py
 tool/audit_fixture_store.js
 tool/audit_test_database.js
+tool/connector_tls_fixture.js
 tool/delegated_audit_browser_fixture.js
 tool/delegated_audit_fixture_images.json
 tool/delegated_audit_fixture_smoke.js
@@ -194,6 +205,7 @@ consumer_theme_account_reuse_test.js -> fs, assert
 creator_identity_isolation_test.js -> node:assert/strict, node:fs
 delegated_reference_audit.js -> node:crypto, ./delegated_reference_audit_ui
 delegated_reference_audit_test.js -> node:assert/strict, node:test, node:http, node:crypto, pg, ./delegated_reference_audit, ./primary_reference_read_auth, ./delegated_reference_audit_ui, ./tool/audit_test_database
+delegated_reference_audit_ui.js -> ./sigillum_owner_web_auth
 device_enrollment_approval_runtime_test.js -> fs
 device_revocation_runtime_test.js -> fs
 hcv_signature_canonical_test.js -> assert, crypto, ./hcv_signature_canonical
@@ -235,9 +247,15 @@ sigillum_connector_audit_request_test.js -> node:test, node:assert/strict, node:
 sigillum_connector_bridge_test.js -> node:test, node:assert/strict, ./sigillum_connector_bridge
 sigillum_connector_grant_adapter.js -> node:crypto
 sigillum_connector_grant_adapter_test.js -> node:test, node:assert/strict, node:crypto, ./sigillum_connector_grant_adapter
-sigillum_connector_production_test.js -> node:test, node:assert/strict, node:crypto, node:fs, node:os, node:path, node:stream, ./tool/audit_test_database, ./verified_originals_production, ./primary_reference_manifest, ./primary_reference_provider, ./sigillum_mcp_auth, ./tool/delegated_audit_fixture_images.json
+sigillum_connector_oauth.js -> node:crypto, node:fs, node:path
+sigillum_connector_oauth_test.js -> node:test, node:assert/strict, node:crypto, ./tool/audit_test_database, ./sigillum_connector_oauth
+sigillum_connector_oauth_ui.js -> ./sigillum_owner_web_auth
+sigillum_connector_production_test.js -> node:test, node:assert/strict, node:crypto, node:fs, node:os, node:path, node:stream, ./tool/audit_test_database, ./verified_originals_production, ./primary_reference_manifest, ./primary_reference_provider, ./sigillum_mcp_auth, ./tool/connector_tls_fixture, @modelcontextprotocol/sdk/client/index.js, @modelcontextprotocol/sdk/client/streamableHttp.js, ./tool/delegated_audit_fixture_images.json
 sigillum_connector_r2_capture.js -> node:stream
 sigillum_connector_r2_capture_test.js -> node:test, node:assert/strict, ./sigillum_connector_r2_capture
+sigillum_connector_remote.js -> node:crypto, ./sigillum_connector_oauth_ui, @modelcontextprotocol/sdk/server/index.js, @modelcontextprotocol/sdk/server/streamableHttp.js, @modelcontextprotocol/sdk/types.js
+sigillum_connector_remote_test.js -> node:test, node:assert/strict, node:crypto, ./tool/audit_test_database, ./tool/connector_tls_fixture, ./sigillum_connector_oauth, ./sigillum_connector_remote, ./sigillum_mcp_dispatcher, @modelcontextprotocol/sdk/client/index.js, @modelcontextprotocol/sdk/client/streamableHttp.js, ./tool/delegated_audit_fixture_images.json
+sigillum_connector_runtime_test.js -> node:test, node:assert/strict, node:fs, node:os, node:path, node:child_process, ./sigillum_connector_runtime
 sigillum_mcp_auth.js -> node:crypto
 sigillum_mcp_auth_test.js -> node:test, node:assert/strict, node:crypto, ./sigillum_mcp_auth
 sigillum_mcp_credentials.js -> node:crypto
@@ -256,8 +274,10 @@ tool/apply_hcv_signature_canonical_fix.py -> crypto, ./hcv_signature_canonical
 tool/apply_legal_localization_20260818.py -> ./legal_documents, pg
 tool/apply_production_live_guard.py -> pg, ./production_config, ./legal_documents
 tool/apply_registry_provenance_v2.py -> ./certificate_account_binding, ./registry_provenance_v2
+tool/apply_sigillum_connector_runtime.py -> ./verified_originals_production, ./sigillum_connector_runtime
 tool/apply_verified_originals_production.py -> ./registry_provenance_v2, ./verified_originals_production
 tool/audit_test_database.js -> @electric-sql/pglite
+tool/connector_tls_fixture.js -> node:fs, node:os, node:path, node:https, node:child_process, undici, node:tls
 tool/delegated_audit_browser_fixture.js -> node:http, node:crypto, node:fs, node:os, node:path, node:stream, node:stream/promises, ./audit_fixture_store, ../delegated_reference_audit, ../primary_reference_read_auth, ../primary_reference_provider, ../delegated_reference_audit_ui, ./delegated_audit_fixture_images.json
 tool/delegated_audit_fixture_smoke.js -> node:assert/strict, node:crypto, ./delegated_audit_fixture_images.json, node:child_process, node:path
 tool/ensure_device_enrollment_schema.js -> pg
@@ -268,7 +288,7 @@ tool/r2_reference_acceptance_sdk.js -> crypto, fs, os, path, stream/promises, @a
 tool/telegram_reference_acceptance.js -> crypto, fs, os, path, child_process, stream/promises, stream, ffmpeg-static
 tool/youtube_oauth_provision.js -> crypto, fs, http, child_process
 tool/youtube_scope_demo.js -> fs, os, path, readline, child_process, ffmpeg-static, ./youtube_oauth_provision
-verified_originals_production.js -> crypto, fs, os, path, util, child_process, stream/promises, ./primary_reference_provider, ./primary_reference_lifecycle, ./primary_reference_manifest, ./primary_reference_read_auth, ./photo_detail_compare, ./audit_reference_scope, ./delegated_reference_audit, ffmpeg-static, ./sigillum_mcp_service, ./sigillum_connector_audit_request
+verified_originals_production.js -> crypto, fs, os, path, util, child_process, stream/promises, ./primary_reference_provider, ./primary_reference_lifecycle, ./primary_reference_manifest, ./primary_reference_read_auth, ./photo_detail_compare, ./audit_reference_scope, ./delegated_reference_audit, ffmpeg-static, ./sigillum_connector_oauth, ./sigillum_connector_remote, ./sigillum_mcp_service, ./sigillum_connector_audit_request
 verified_originals_production_contract_test.js -> node:assert/strict, node:fs, ./verified_originals_production
 verified_originals_production_test.js -> node:assert/strict, node:crypto, node:fs, node:http, node:os, node:path, node:child_process, pg, ffmpeg-static, ./verified_originals_production
 verified_originals_r2_production_test.js -> node:assert/strict, node:crypto, node:fs, node:http, node:os, node:path, node:child_process, pg, ffmpeg-static, ./verified_originals_production, ./primary_reference_provider

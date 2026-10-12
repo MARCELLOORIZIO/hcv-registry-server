@@ -1,4 +1,5 @@
 'use strict';
+const {ownerDeviceLoginHelpers}=require('./sigillum_owner_web_auth');
 function auditPage({mode,requestId,nonce}) {
   const html = `<!doctype html><html lang="it"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SIGILLUM · Audit privato</title><style nonce="${nonce}">body{font:17px/1.5 system-ui;background:#f2f7fb;color:#201040;margin:0}main{max-width:760px;margin:32px auto;padding:24px;background:white;border-radius:18px}input,textarea,button{font:inherit;padding:12px;margin:8px 0;box-sizing:border-box}input:not([type=checkbox]),textarea{width:100%}button{background:#201040;color:white;border:0;border-radius:8px;cursor:pointer}button:disabled{opacity:.5}label{display:block}img{display:block;max-width:100%;height:auto;margin:18px 0}code{overflow-wrap:anywhere}#status{white-space:pre-wrap}.error{color:#a00000}</style></head><body><main><h1>Audit privato SIGILLUM</h1><p>Lettura dei soli originali approvati. Nessuna modifica ai file. La delega scade dopo cinque minuti e ogni fotografia può essere letta una sola volta.</p><section id="create" hidden><label>HCV-ID, uno per riga<textarea id="ids" rows="3">HCV-D8FF76496D424CA5\nHCV-255DEE0995364F99</textarea></label><button id="request">Richiedi audit</button></section><section id="browser" hidden><p id="approval"></p><p id="fingerprint"></p><button id="refresh">Verifica approvazione</button><div id="photos"></div></section><section id="owner" hidden><p>Accedi al tuo account SIGILLUM per controllare e approvare la richiesta. La tua sessione non viene trasferita al browser di audit.</p><form id="login"><label>Email<input name="email" type="email" autocomplete="username" required></label><label>Password<input name="password" type="password" autocomplete="current-password" required></label><button type="submit">Accedi</button></form><div id="scope"></div><label id="consentLabel" hidden><input id="consent" type="checkbox"> Autorizzo questo browser a leggere esclusivamente gli HCV-ID elencati, per cinque minuti, per l’analisi dei display nelle fotografie.</label><button id="approve" hidden>Autorizza audit</button><button id="revoke" hidden>Revoca audit</button></section><p id="status" role="status"></p></main><script nonce="${nonce}">const mode=${JSON.stringify(mode)}, requestId=${JSON.stringify(requestId)};
 `;
@@ -61,20 +62,7 @@ if(mode==='browser'){
     status('Originali ricevuti. La lettura è stata registrata.');
   }catch(e){status(e.message,true);}};
 }
-// The owner's RSA key remains non-extractable in IndexedDB, as required by
-// the existing device enrollment flow. Password and Bearer session are never stored.
-async function deviceKey(){
-  const db=await new Promise((resolve,reject)=>{const r=indexedDB.open('sigillum-audit-owner-device',1);
-    r.onupgradeneeded=()=>r.result.createObjectStore('keys');r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);});
-  try{
-    const existing=await new Promise((resolve,reject)=>{const r=db.transaction('keys').objectStore('keys').get('rsa');r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);});
-    if(existing)return existing;
-    const key=await crypto.subtle.generateKey({name:'RSASSA-PKCS1-v1_5',modulusLength:2048,publicExponent:new Uint8Array([1,0,1]),hash:'SHA-256'},false,['sign','verify']);
-    await new Promise((resolve,reject)=>{const tx=db.transaction('keys','readwrite');tx.objectStore('keys').put(key,'rsa');tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);});return key;
-  }finally{db.close();}
-}
-const b64=bytes=>btoa(String.fromCharCode(...new Uint8Array(bytes)));
-const regularB64=value=>{let s=value.replace(/-/g,'+').replace(/_/g,'/');return s+'='.repeat((4-s.length%4)%4);};
+${ownerDeviceLoginHelpers}
 if(mode==='approve'){
   $('owner').hidden=false;
   $('login').onsubmit=async e=>{e.preventDefault();try{

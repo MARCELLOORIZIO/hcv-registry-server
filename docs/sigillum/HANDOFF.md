@@ -1,23 +1,43 @@
-# Resume checkpoint — 2026-10-12
+# SIGILLUM resume checkpoint — 2026-10-12
 
-Read ARCHITECTURE, DEPLOYMENT_STATE, OPEN_ISSUES and TEST_MATRIX in this directory first. Inventory is generated from actual tracked paths; static edges are navigational, not a complete runtime graph.
+## Current implementation
 
-Both repositories cloned and relevant production/bootstrap/connector/photo entry points inspected. Full-file audit remains incomplete. PR51 dispatcher now verifies principal before every valid method and exposes only allowlisted error codes. No production activation or original read performed.
+PR51 branch: feature/sigillum-chatgpt-connector-contract-20261012. Starting parent for OAuth/HTTPS follow-up: 0fe8df466ad4175498d14497a4c0dd4be375b9a6. Production remains separate; no merge/deploy/config changes performed.
 
-Next: complete actual production-factory eligibility/reader integration design, inspect existing owner authentication and device-consent routes, verify current ChatGPT OAuth/MCP registration requirements using official documentation, then implement disabled experimental integration with real PostgreSQL regression coverage. Do not claim user-facing completion until real originals render.
+Implemented: principal-bound PENDING original-audit requests; explicit existing owner approval; factory-private R2 reader reuse; before/after-decrypt grant/device/owner/entitlement/consent checks; one-time reservation; audit failure logging; internal error redaction; authenticated MCP metadata methods.
 
-Rollback: revert the isolated dispatcher hardening commit on experimental branch; no production or schema rollback needed. Avoid reverting pre-existing PR51 modules.
+Added: predefined-public-client OAuth authorization-code + S256 PKCE; browser-bound explicit connection consent; account/device-bound opaque hashed credentials; issuer/resource/scope/expiry/revocation validation; code replay invalidates its issued token; persistent SQL rate limits. Access token TTL 30 minutes, authorization code 60 seconds, consent flow five minutes. No refresh/offline_access grant is advertised or implemented. Connection consent never approves originals.
 
-## Follow-up
+Remote HTTP: official @modelcontextprotocol/sdk 1.32.1 stateless Streamable HTTP, JSON responses, exact Host and Origin policy, 16 KiB request bound, body deadline, OAuth 401 discovery challenge, tool OAuth metadata and accurate read/request annotations. Credentials are rechecked before delivering slow tool results; rejected delivery has no image and returns reauthorization metadata.
 
-Use createConnectorService from the real verified-originals factory when building the remote host. Do not expose raw R2 reader functions or introduce new decryption logic. Request tool creates an immutable principal-bound PENDING grant; existing owner approval must still occur. Current implementation has NO OAuth code/token endpoint and NO HTTPS remote MCP route. The local synthetic integration test requires NODE_PATH pointing to installed @electric-sql/pglite, which CI installs separately.
+Startup: optional Python materializer wired after existing verified-originals installer in prestart/precheck. SIGILLUM_CONNECTOR_ENABLED is OFF by default. Enabled mode requires explicit client callback allowlist and TLS policy. Schema is applied only on explicitly enabled startup. Original media/decryption and account login protocols are unchanged; browser login reuses the existing IndexedDB device key through a shared helper.
 
-Rollback must revert the complete isolated follow-up changes, including factory method, request tool, owner UI disclosure, adapter rechecks and workflow/test additions. No production migration or endpoint activation was performed.
+## Verification and limits
 
-Official authentication design source read 2026-10-12: https://developers.openai.com/plugins/build/auth — supported OAuth authorization-code + S256 PKCE, protected resource metadata, resource audience, predefined OAuth clients/CIMD/DCR, issuer response validation. Existing administrative bearer issuance does not constitute that OAuth flow.
+Local combined connector + existing audit tests: 77 passed with no skips; subsequent changed HTTPS boundary test also passed. Existing provider encryption/decrypt/binding regression passed. Actual local TLS and official MCP Client passed complete OAuth -> PENDING audit -> existing owner approval handler -> Registry factory -> RSA reference manifest -> existing AES-GCM/SHA256 reader -> exact synthetic PNG bytes -> replay denial. Synthetic account authentication/certificate/provenance adapters and encrypted in-memory S3 objects are used; SQL uses PGlite. This is NOT real ChatGPT installation, real R2, iPhone or production original acceptance.
 
-## Published code and remote CI acceptance
+Previous code d3da54d9 had all four CI suites green (Connector Boundary 38285197808; production PostgreSQL 38285197814; audit security 38285197825; Registry account 38285197987). New follow-up must pass its own CI before rollout.
 
-Code commit: d3da54d9f5e5819f00c307926a2b7dadd322ec95 on PR51. GitHub Actions completed successfully for Connector Boundary (38285197808), Verified Originals production PostgreSQL (38285197814), Read-only R2 delegated audit security (38285197825) and Registry account check (38285197987). Jobs included production prestart patching, the existing full safety suite, existing PostgreSQL end-to-end, patched server startup, route locator protection, PostgreSQL audit regression, existing decrypt and synthetic browser transport. These are CI environments, not a production rollout.
+Plugin Management did not find SIGILLUM. Read-only Cloud Browser inspection of https://chatgpt.com/plugins showed the signed-out page; no sign-in, app registration or permissions were submitted. Tools cannot silently install this private custom connection. Exact OpenAI management-page client ID/redirect must be verified before setting the live allowlist.
 
-Next concrete implementation: OAuth authorization-code + S256 PKCE, protected resource and authorization-server metadata, opaque per-account/client credentials with scope/audience/expiry/revocation, exact client redirect allowlist from the OpenAI connection management page, then authenticated remote MCP HTTP transport. No shared admin bearer or browser cookie may act as the MCP credential. The separate original-audit approval remains mandatory even after OAuth login. Do not turn a previous expired browser audit into a connector grant.
+## Next actions
+
+1. Inspect new commit CI and fix failures; no production rollout on synthetic-only results.
+2. Validate trusted Render edge policy and actual forwarded-proto behavior in an isolated non-production environment. Runtime RENDER_EDGE mode is explicit operator trust in Render TLS termination/private network, NOT proof supplied by arbitrary headers. Never enable it outside the verified Render service.
+3. Register the private MCP connection through the real signed-in OpenAI management UI, verify exact predefined OAuth client/redirect, then configure the reviewed allowlist.
+4. Obtain required owner approval for merge/deploy/activation. Previous browser original grants expired and must not be rebound or renewed silently.
+5. Execute real OAuth, separate real owner original approval, actual R2 byte receipt and image rendering before declaring completion. Then investigate the two photo cases and app defects.
+
+## Rollback
+
+Disable SIGILLUM_CONNECTOR_ENABLED and return to previous approved deploy. New optional tables/nullable principal column are backward-compatible; do not drop historical audit events. Code rollback reverts the entire isolated OAuth/runtime follow-up including package lock, shared browser helper, materializer and tests. No existing certificate/media changes occurred.
+
+## Sources read
+
+https://developers.openai.com/plugins/build/auth
+https://developers.openai.com/plugins/build/mcp-server
+https://render.com/docs/web-services
+https://render.com/docs/tls
+https://render.com/docs/environment-variables
+
+Full app review remains incomplete. FILE_INVENTORY is actual tracked paths/static imports, not proof every file has been manually reviewed. Build157 vs experiment pubspec149 requires artifact reconciliation. Never alter display thresholds to force desired results.
