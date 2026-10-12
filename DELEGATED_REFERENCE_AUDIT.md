@@ -107,3 +107,36 @@ credentials are in the DOM or image URLs. Do not treat successful HTTP calls as
 proof of browser rendering. Do not enable production based only on synthetic
 acceptance; real owner authorization and an appropriate isolated real-data
 acceptance environment remain required.
+
+## Acceptance evidence — 2026-10-12
+
+Implementation commit: `dcf50cd2c90a6e21296cd2f34b4dc4b98cc232e8`.
+
+- All four GitHub Actions runs on that commit succeeded: delegated audit security
+  on push and PR, Registry account check, Verified Originals production PostgreSQL.
+- Cloud Browser opened the separate free Render fixture, created the two-ID
+  request and observed PENDING before consent. After explicit synthetic-owner
+  approval, it received and rendered both PNGs as browser-local blobs.
+- Both DOM images reported `complete=true`, `loaded=true`, natural width 600 and
+  natural height 360. Screenshot: `evidence/delegated-audit-cloud-browser.jpg`.
+- Exact decrypted synthetic byte counts/SHA-256:
+  - HCV-D8FF76496D424CA5: 4700 bytes,
+    `362339f935f31d65bc576f89f3c425de727ec9794c218fadd7a2e33c1b50c482`.
+  - HCV-255DEE0995364F99: 5836 bytes,
+    `d55297572af79acd29aa89dc494aeb873a71d7c85ae28a574cbe9266522440ff`.
+- HTTP tests also verify concurrent token redemption admits exactly one stream,
+  expiry of an approved grant, device revocation, forbidden cross-browser reads,
+  unchanged certificate owners, no credential or read-token values in app audit
+  events, and unchanged encrypted fixture objects during retrieval.
+
+**Real originals: NOT TESTED.** No real owner session was obtained, no real R2
+original was downloaded, and no scene/display classification is asserted. The
+fixture deliberately refuses production credentials. It cannot be converted to
+a real-data service by supplying production credentials.
+
+**Production: UNCHANGED.** Its last deployed commit remains
+`9b40eb83cbd355372de0a705ed1201066d215f5c`; PR #49 is still a draft. Native real-data
+acceptance requires the reviewed backend feature to be deployed/activated on an
+authorized SIGILLUM environment and then the owner's explicit iPhone consent.
+The current public production page does not yet contain the new audit controls.
+This is a deployment/activation prerequisite, not a manual-download prerequisite.
