@@ -1,0 +1,21 @@
+name: SIGILLUM Connector Boundary
+on:
+  push:
+    branches: [feature/sigillum-chatgpt-connector-contract-20261012]
+  pull_request:
+    paths:
+      - sigillum_connector_bridge.js
+      - sigillum_connector_bridge_test.js
+      - .github/workflows/sigillum-connector-boundary.yml
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --check sigillum_connector_bridge.js
+      - run: node --test sigillum_connector_bridge_test.js
