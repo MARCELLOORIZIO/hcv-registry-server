@@ -24,7 +24,7 @@ function harness(opts={}){
  };
  const client={query,release(){}};
  const pool={connect:async()=>client,query};
- const adapter=createConnectorGrantAdapter({pool,loadOriginal:async()=>{loaded++;return {bytes:new Uint8Array([255,216,255]),contentType:'image/jpeg'};}});
+ const adapter=createConnectorGrantAdapter({pool,checkReferenceEligible:async()=>!opts.ineligible,loadOriginal:async()=>{loaded++;return {bytes:new Uint8Array([255,216,255]),contentType:'image/jpeg'};}});
  return {adapter,reads,events,get loaded(){return loaded;}};
 }
 test('valid principal and owner scope consume once',async()=>{
@@ -34,7 +34,7 @@ test('valid principal and owner scope consume once',async()=>{
  assert.equal(m.loaded,1);
  await assert.rejects(m.adapter.readApprovedReference({grantId:'0'.repeat(32),hcvId:id,connectorPrincipal:'mcp-principal'}),{code:'AUDIT_NOT_AUTHORIZED'});
 });
-for(const [label,opts] of [['revoked',{revoked:true}],['wrong owner',{wrongOwner:true}],['expired',{row:{expires_at:new Date(0).toISOString()}}],['not approved',{row:{state:'PENDING'}}],['wrong principal',{row:{connector_principal_hash:'different'}}]]){
+for(const [label,opts] of [['revoked',{revoked:true}],['wrong owner',{wrongOwner:true}],['reference or subscription ineligible',{ineligible:true}],['expired',{row:{expires_at:new Date(0).toISOString()}}],['not approved',{row:{state:'PENDING'}}],['wrong principal',{row:{connector_principal_hash:'different'}}]]){
  test('no decryption '+label,async()=>{const m=harness(opts);
  await assert.rejects(m.adapter.readApprovedReference({grantId:'0'.repeat(32),hcvId:id,connectorPrincipal:'mcp-principal'}),{code:'AUDIT_NOT_AUTHORIZED'});
  assert.equal(m.loaded,0);});
