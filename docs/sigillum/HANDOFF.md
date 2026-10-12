@@ -16,13 +16,13 @@ Startup: optional Python materializer wired after existing verified-originals in
 
 Local combined connector + existing audit tests: 77 passed with no skips; subsequent changed HTTPS boundary test also passed. Existing provider encryption/decrypt/binding regression passed. Actual local TLS and official MCP Client passed complete OAuth -> PENDING audit -> existing owner approval handler -> Registry factory -> RSA reference manifest -> existing AES-GCM/SHA256 reader -> exact synthetic PNG bytes -> replay denial. Synthetic account authentication/certificate/provenance adapters and encrypted in-memory S3 objects are used; SQL uses PGlite. This is NOT real ChatGPT installation, real R2, iPhone or production original acceptance.
 
-Previous code d3da54d9 had all four CI suites green (Connector Boundary 38285197808; production PostgreSQL 38285197814; audit security 38285197825; Registry account 38285197987). New follow-up must pass its own CI before rollout.
+Previous code d3da54d9 had all four CI suites green (Connector Boundary 38285197808; production PostgreSQL 38285197814; audit security 38285197825; Registry account 38285197987). OAuth/HTTPS code commit 32e7d7da364aa273d9269840d7f6351f67fbd42c passed all four CI suites: Connector Boundary 38290028752; Verified Originals production PostgreSQL 38290029109; R2 delegated audit security 38290028744; Registry account check 38290028913. Job steps specifically ran OAuth, actual HTTPS and official MCP Client tests. These are CI acceptance results, not a production deployment.
 
 Plugin Management did not find SIGILLUM. Read-only Cloud Browser inspection of https://chatgpt.com/plugins showed the signed-out page; no sign-in, app registration or permissions were submitted. Tools cannot silently install this private custom connection. Exact OpenAI management-page client ID/redirect must be verified before setting the live allowlist.
 
 ## Next actions
 
-1. Inspect new commit CI and fix failures; no production rollout on synthetic-only results.
+1. New code CI is green. Review explicit deployment/activation permission and isolated edge acceptance; synthetic results do not prove production original delivery.
 2. Validate trusted Render edge policy and actual forwarded-proto behavior in an isolated non-production environment. Runtime RENDER_EDGE mode is explicit operator trust in Render TLS termination/private network, NOT proof supplied by arbitrary headers. Never enable it outside the verified Render service.
 3. Register the private MCP connection through the real signed-in OpenAI management UI, verify exact predefined OAuth client/redirect, then configure the reviewed allowlist.
 4. Obtain required owner approval for merge/deploy/activation. Previous browser original grants expired and must not be rebound or renewed silently.
