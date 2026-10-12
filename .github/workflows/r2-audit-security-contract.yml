@@ -15,6 +15,6 @@ jobs:
         with:
           node-version: '22'
       - name: Run audit permission regression tests
-        run: node --test audit_reference_scope_test.js
+        run: node --test audit_reference_scope_test.js audit_reference_route_contract_test.js
       - name: Syntax checks
-        run: node --check audit_reference_scope.js && node --check audit_reference_scope_test.js
+        run: node --check audit_reference_scope.js && node --check audit_reference_scope_test.js && node --check audit_reference_route_contract_test.js && node --check verified_originals_production.js
