@@ -41,6 +41,7 @@ const {
   comparePhotoDetailFiles,
 } = require('./photo_detail_compare');
 
+const { normalizeAuditScope, assertAuditReferenceEligible } = require('./audit_reference_scope');
 const execFileAsync = promisify(execFile);
 
 const HCV_ID = /^HCV-[A-F0-9]{16}$/;
@@ -2028,6 +2029,34 @@ function createVerifiedOriginalsProduction({
       expiresAt: authorization.expiresAt,
       expiresInSeconds: authorization.expiresInSeconds,
     };
+  }
+
+  async function createScopedAuditReadAuthorization(req, hcvId) {
+    const session = await authenticate(req);
+    const account = await accountEnvelope(session.account_id,session.device_key_fingerprint);
+    if (account.subscriptionStatus !== 'active') fail('SUBSCRIPTION_REQUIRED',402);
+    const owner=(await pool.query('SELECT account_id FROM certificates WHERE hcv_id=$1',[hcvId])).rows[0];
+    const reference=await activeR2Reference(hcvId);
+    if (!owner || !reference) fail('REFERENCE_NOT_AVAILABLE',404);
+    const scope=normalizeAuditScope({
+      hcvIds:[hcvId],purpose:'PHOTO_DISPLAY_CONFLICT',
+      approvedBy:session.account_id,
+      expiresAt:new Date(Date.now()+60000).toISOString(),
+    });
+    assertAuditReferenceEligible(scope,{
+      hcvId,ownerAccountId:owner.account_id,
+      requestingAccountId:session.account_id,state:'COMMITTED',provider:'r2',
+    });
+    const authorization=await createR2ReadAuthorization(req,hcvId);
+    await audit({
+      hcvId,eventType:'REFERENCE_AUDIT_READ_AUTHORIZED',
+      actorType:'CREATOR',
+      actorSubjectHash:crypto.createHash('sha256').update(session.account_id).digest('hex'),
+      metadata:{auditPurpose:scope.purpose,source:'ACCOUNT_SCOPED_READ_ONLY_AUDIT',
+        expiresAt:authorization.expiresAt,tokenNotLogged:true},
+    });
+    return {...authorization,audit:'ACCOUNT_SCOPED_READ_ONLY',
+      auditScopeExpiresAt:scope.expiresAt};
   }
 
   async function streamAuthorizedR2Reference(req, res, token) {
@@ -4702,6 +4731,7 @@ function createVerifiedOriginalsProduction({
     const verifyReference = /^\/api\/verified-originals\/(HCV-[A-F0-9]{16})\/verification-reference$/.exec(url.pathname);
     const verifyPhotoCopyRoute = /^\/api\/verified-originals\/(HCV-[A-F0-9]{16})\/verify-photo-copy$/.exec(url.pathname);
     const readAuthorization = /^\/api\/verified-originals\/(HCV-[A-F0-9]{16})\/read-authorization$/.exec(url.pathname);
+    const auditReadAuthorization = /^\/api\/verified-originals\/(HCV-[A-F0-9]{16})\/audit-read-authorization$/.exec(url.pathname);
     const readReference = /^\/api\/verified-originals\/reference-read\/([A-Za-z0-9_-]{40,256})$/.exec(url.pathname);
     const consentStatusMatch = /^\/api\/verified-originals\/consents\/(HCV-[A-F0-9]{16})$/.exec(url.pathname);
     const withdraw = /^\/api\/verified-originals\/consents\/(HCV-[A-F0-9]{16})\/withdraw$/.exec(url.pathname);
@@ -4725,6 +4755,11 @@ function createVerifiedOriginalsProduction({
         200,
         await verifyPhotoCopy(req, verifyPhotoCopyRoute[1]),
       );
+      return true;
+    }
+    if (req.method === 'POST' && auditReadAuthorization) {
+      res.setHeader('cache-control','private, no-store, max-age=0');
+      sendJson(res,201,await createScopedAuditReadAuthorization(req,auditReadAuthorization[1]));
       return true;
     }
     if (req.method === 'POST' && readAuthorization) {
