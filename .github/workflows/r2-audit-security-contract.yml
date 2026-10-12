@@ -1,20 +1,49 @@
-name: Read-only R2 audit security contract
+name: Read-only R2 delegated audit security
 on:
   push:
     branches:
       - experiment/secure-r2-audit-20261012
+  pull_request:
+    paths:
+      - '*audit*'
+      - 'verified_originals_production.js'
+      - 'tool/audit_test_database.js'
+      - 'tool/delegated_audit*'
+      - '.github/workflows/r2-audit-security-contract.yml'
   workflow_dispatch:
 permissions:
   contents: read
 jobs:
   audit-scope:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: sigillum
+          POSTGRES_PASSWORD: sigillum
+          POSTGRES_DB: sigillum_audit_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U sigillum"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://sigillum:sigillum@127.0.0.1:5432/sigillum_audit_test
+      NODE_ENV: test
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
-      - name: Run audit permission regression tests
-        run: node --test audit_reference_scope_test.js audit_reference_route_contract_test.js
+          node-version: '20'
+          cache: npm
+      - name: Install dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Run permissions and delegated HTTP/PostgreSQL regression tests
+        run: node --test audit_reference_scope_test.js audit_reference_route_contract_test.js delegated_reference_audit_test.js
+      - name: Verify existing R2 encryption and decryption
+        run: node primary_reference_provider_test.js
       - name: Syntax checks
-        run: node --check audit_reference_scope.js && node --check audit_reference_scope_test.js && node --check audit_reference_route_contract_test.js && node --check verified_originals_production.js
+        run: node --check delegated_reference_audit.js && node --check delegated_reference_audit_ui.js && node --check tool/delegated_audit_browser_fixture.js && node --check verified_originals_production.js

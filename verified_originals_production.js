@@ -42,6 +42,8 @@ const {
 } = require('./photo_detail_compare');
 
 const { normalizeAuditScope, assertAuditReferenceEligible } = require('./audit_reference_scope');
+const { createDelegatedReferenceAudit } = require('./delegated_reference_audit');
+
 const execFileAsync = promisify(execFile);
 
 const HCV_ID = /^HCV-[A-F0-9]{16}$/;
@@ -1034,6 +1036,25 @@ function createVerifiedOriginalsProduction({
     );
   }
 
+  const delegatedAudit = createDelegatedReferenceAudit({
+    pool, authenticate, accountEnvelope, readJson, sendJson, sendHtml,
+    enabled: process.env.SIGILLUM_DELEGATED_AUDIT_ENABLED === 'true',
+    origin: String(process.env.SIGILLUM_DELEGATED_AUDIT_ORIGIN || ''),
+    activeReference: activeR2Reference,
+    issueRead: (client, reference, hcvId, accountId, ttlSeconds) =>
+      issueReadAuthorization(client, {jobId: reference.lifecycleJobId,
+        hcvId, accountId, ttlSeconds}),
+    streamRead: async (req, res, token, accountId, expectedHcvId) => {
+      const authorization = await consumeReadAuthorization(pool, {token, accountId});
+      if (authorization.hcvId !== expectedHcvId) fail('AUDIT_OUT_OF_SCOPE', 403);
+      const reference = await activeR2Reference(authorization.hcvId);
+      if (!reference || reference.lifecycleJobId !== authorization.jobId || !reference.providerReceipt) {
+        fail('REFERENCE_NOT_AVAILABLE', 404);
+      }
+      await streamR2Reference(res, reference, authorization.hcvId);
+    },
+  });
+
   async function initSchema() {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS verified_originals_consents (
@@ -1131,6 +1152,7 @@ function createVerifiedOriginalsProduction({
     await initPrimaryReferenceLifecycleSchema(pool);
     await initPrimaryReferenceReadAuthSchema(pool);
     startTakedownWorker();
+    await delegatedAudit.initSchema();
   }
 
   async function certificateRow(hcvId) {
@@ -2083,6 +2105,10 @@ function createVerifiedOriginalsProduction({
       fail('REFERENCE_NOT_AVAILABLE', 404);
     }
 
+    await streamR2Reference(res, reference, authorization.hcvId);
+  }
+
+  async function streamR2Reference(res, reference, hcvId) {
     const receipt = reference.providerReceipt;
     const tempRoot = String(
       process.env.SIGILLUM_VERIFIED_ORIGINALS_TMP ||
@@ -2100,7 +2126,7 @@ function createVerifiedOriginalsProduction({
         receipt,
         destinationPath,
         binding: {
-          hcvId: authorization.hcvId,
+          hcvId: hcvId,
           referenceRole: receipt.referenceRole,
           referenceSha256: receipt.referenceSha256,
           originalContentSha256: receipt.originalContentSha256,
@@ -4725,6 +4751,7 @@ function createVerifiedOriginalsProduction({
   }
 
   async function handle(req, res, url) {
+    if (await delegatedAudit.handle(req, res, url)) return true;
     const publicLookup = /^\/api\/verified-originals\/(HCV-[A-F0-9]{16})$/.exec(url.pathname);
     const view = /^\/api\/verified-originals\/(HCV-[A-F0-9]{16})\/view$/.exec(url.pathname);
     const list = /^\/api\/verified-originals\/(HCV-[A-F0-9]{16})\/publications$/.exec(url.pathname);
