@@ -45,5 +45,7 @@ jobs:
         run: node --test audit_reference_scope_test.js audit_reference_route_contract_test.js delegated_reference_audit_test.js
       - name: Verify existing R2 encryption and decryption
         run: node primary_reference_provider_test.js
+      - name: Synthetic browser transport and exact existing decrypt
+        run: env -u DATABASE_URL node tool/delegated_audit_fixture_smoke.js --spawn
       - name: Syntax checks
         run: node --check delegated_reference_audit.js && node --check delegated_reference_audit_ui.js && node --check tool/delegated_audit_browser_fixture.js && node --check verified_originals_production.js

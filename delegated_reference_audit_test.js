@@ -106,6 +106,18 @@ test('delegated audit HTTP and PostgreSQL permissions',async t=>{
     const expiry=await call(root,{method:'POST',body:{hcvIds:[B]},cookie});
     await pool.query("UPDATE verified_originals_delegated_audits SET expires_at=NOW()-INTERVAL '1 second' WHERE request_id=$1",[expiry.data.requestId]);
     assert.equal((await call(root+'/'+expiry.data.requestId,{cookie})).status,403);
+    const race=await call(root,{method:'POST',body:{hcvIds:[A]},cookie});
+    const rPath=root+'/'+race.data.requestId;
+    assert.equal((await call(rPath+'/approve',{method:'POST',who:'owner',body:{confirm:true,hcvIds:[A],scopeDigest:race.data.scopeDigest}})).status,200);
+    const rAuth=await call(rPath+'/'+A+'/read-authorization',{method:'POST',cookie,body:{}});
+    const concurrent=await Promise.all([call(rAuth.data.readPath,{cookie}),call(rAuth.data.readPath,{cookie})]);
+    assert.deepEqual(concurrent.map(r=>r.status).sort(),[200,403]);
+    const approvedExpiry=await call(root,{method:'POST',body:{hcvIds:[B]},cookie});
+    const ePath=root+'/'+approvedExpiry.data.requestId;
+    assert.equal((await call(ePath+'/approve',{method:'POST',who:'owner',body:{confirm:true,hcvIds:[B],scopeDigest:approvedExpiry.data.scopeDigest}})).status,200);
+    const eAuth=await call(ePath+'/'+B+'/read-authorization',{method:'POST',cookie,body:{}});
+    await pool.query("UPDATE verified_originals_delegated_audits SET expires_at=NOW()-INTERVAL '1 second' WHERE request_id=$1",[approvedExpiry.data.requestId]);
+    assert.equal((await call(eAuth.data.readPath,{cookie})).status,403);
     const devices=await call(root,{method:'POST',body:{hcvIds:[B]},cookie});
     const dPath=root+'/'+devices.data.requestId;
     const dConsent={confirm:true,hcvIds:[B],scopeDigest:devices.data.scopeDigest};

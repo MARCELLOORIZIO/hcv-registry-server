@@ -73,7 +73,7 @@ current production app/site. No manual original-file download is required.
 ## Isolated acceptance environment
 
 `tool/delegated_audit_browser_fixture.js` is explicitly synthetic. It refuses to
-start with DATABASE_URL or production R2 credentials, uses an in-memory test DB,
+start with DATABASE_URL or production R2 credentials, uses a lightweight synthetic fixture store (not a database driver),
 generates temporary encryption keys and serves two labeled test PNGs encrypted
 with the actual existing `encryptReferenceFile` function. Retrieval uses the real
 R2 provider `materializeReference` implementation with an in-memory GetObject
@@ -87,6 +87,7 @@ Run locally:
 npm ci --ignore-scripts
 node --test audit_reference_scope_test.js audit_reference_route_contract_test.js delegated_reference_audit_test.js
 node primary_reference_provider_test.js
+node tool/delegated_audit_fixture_smoke.js --spawn
 SIGILLUM_AUDIT_FIXTURE_ONLY=true node tool/delegated_audit_browser_fixture.js
 ```
 

@@ -7,7 +7,7 @@ if(process.env.SIGILLUM_AUDIT_FIXTURE_ONLY!=='true' || process.env.DATABASE_URL 
 const http=require('node:http'),crypto=require('node:crypto'),fs=require('node:fs'),os=require('node:os'),path=require('node:path');
 const {Readable}=require('node:stream');
 const {pipeline}=require('node:stream/promises');
-const {memoryPool}=require('./audit_test_database');
+const {fixturePool}=require('./audit_fixture_store');
 const {createDelegatedReferenceAudit}=require('../delegated_reference_audit');
 const {issueReadAuthorization,consumeReadAuthorization,initPrimaryReferenceReadAuthSchema}=require('../primary_reference_read_auth');
 const {createR2ReferenceProvider,encryptReferenceFile}=require('../primary_reference_provider');
@@ -17,7 +17,7 @@ const hash=bytes=>crypto.createHash('sha256').update(bytes).digest('hex');
 const readJson=async(req,max=4096)=>{let value='';for await(const b of req){value+=b;if(value.length>max)throw new Error('BODY_TOO_LARGE');}return JSON.parse(value||'{}');};
 const sendJson=(res,status,data)=>{res.writeHead(status,{'Content-Type':'application/json','Cache-Control':'private, no-store'});res.end(JSON.stringify(data));};
 async function main(){
- const pool=await memoryPool();
+ const pool=fixturePool();
  await pool.query(`CREATE TABLE accounts(id TEXT PRIMARY KEY);
  CREATE TABLE account_devices(account_id TEXT,device_key_fingerprint TEXT,revoked_at TIMESTAMPTZ);
  CREATE TABLE certificates(hcv_id TEXT PRIMARY KEY,account_id TEXT);
@@ -28,7 +28,7 @@ async function main(){
  const objects=new Map(),references=new Map(),masterKey=crypto.randomBytes(32);
  const tmp=await fs.promises.mkdtemp(path.join(os.tmpdir(),'sigillum-synthetic-audit-'));
  class GetObjectCommand{constructor(input){this.input=input;}}
- const provider=createR2ReferenceProvider({env:{R2_ENDPOINT:'https://synthetic.eu.r2.cloudflarestorage.com',R2_BUCKET:'synthetic',R2_ACCESS_KEY_ID:'not-a-real-key',R2_SECRET_ACCESS_KEY:'not-a-real-key',R2_REFERENCE_ACTIVE_KEY_ID:'fixture',R2_REFERENCE_MASTER_KEYS_JSON:JSON.stringify({fixture:masterKey.toString('base64')})},aws:{GetObjectCommand,client:{send:async command=>{
+ const provider=createR2ReferenceProvider({env:{R2_ENDPOINT:'https://synthetic.eu.r2.cloudflarestorage.com',R2_BUCKET:'synthetic',R2_ACCESS_KEY_ID:'not-a-real-key',R2_SECRET_ACCESS_KEY:'not-a-real-key',R2_REFERENCE_ACTIVE_KEY_ID:'fixture',R2_REFERENCE_MASTER_KEYS_JSON:JSON.stringify({fixture:masterKey.toString('base64')})},aws:{GetObjectCommand,S3Client:class {},HeadObjectCommand:class {},DeleteObjectCommand:class {},Upload:class {constructor(){throw new Error('FIXTURE_WRITES_FORBIDDEN');}},getSignedUrl:async()=>{throw new Error('FIXTURE_PUBLIC_URL_FORBIDDEN');},client:{send:async command=>{
   if(!(command instanceof GetObjectCommand))throw new Error('FIXTURE_FORBIDS_REMOTE_AND_WRITE_OPERATIONS');
   const bytes=objects.get(command.input.Key);if(!bytes)throw new Error('NOT_FOUND');return {Body:Readable.from(bytes)};
  }}}});
