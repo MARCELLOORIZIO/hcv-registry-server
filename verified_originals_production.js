@@ -2039,7 +2039,7 @@ function createVerifiedOriginalsProduction({
     const reference=await activeR2Reference(hcvId);
     if (!owner || !reference) fail('REFERENCE_NOT_AVAILABLE',404);
     const scope=normalizeAuditScope({
-      hcvIds:[hcvId],purpose:'PHOTO_DISPLAY_CONFLICT',
+      hcvIds:[hcvId],purpose:reference.providerReceipt?.mediaType === 'video' ? 'VIDEO_INITIAL_WINDOW' : 'PHOTO_DISPLAY_CONFLICT',
       approvedBy:session.account_id,
       expiresAt:new Date(Date.now()+60000).toISOString(),
     });
