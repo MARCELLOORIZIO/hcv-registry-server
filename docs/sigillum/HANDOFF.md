@@ -15,3 +15,9 @@ Use createConnectorService from the real verified-originals factory when buildin
 Rollback must revert the complete isolated follow-up changes, including factory method, request tool, owner UI disclosure, adapter rechecks and workflow/test additions. No production migration or endpoint activation was performed.
 
 Official authentication design source read 2026-10-12: https://developers.openai.com/plugins/build/auth — supported OAuth authorization-code + S256 PKCE, protected resource metadata, resource audience, predefined OAuth clients/CIMD/DCR, issuer response validation. Existing administrative bearer issuance does not constitute that OAuth flow.
+
+## Published code and remote CI acceptance
+
+Code commit: d3da54d9f5e5819f00c307926a2b7dadd322ec95 on PR51. GitHub Actions completed successfully for Connector Boundary (38285197808), Verified Originals production PostgreSQL (38285197814), Read-only R2 delegated audit security (38285197825) and Registry account check (38285197987). Jobs included production prestart patching, the existing full safety suite, existing PostgreSQL end-to-end, patched server startup, route locator protection, PostgreSQL audit regression, existing decrypt and synthetic browser transport. These are CI environments, not a production rollout.
+
+Next concrete implementation: OAuth authorization-code + S256 PKCE, protected resource and authorization-server metadata, opaque per-account/client credentials with scope/audience/expiry/revocation, exact client redirect allowlist from the OpenAI connection management page, then authenticated remote MCP HTTP transport. No shared admin bearer or browser cookie may act as the MCP credential. The separate original-audit approval remains mandatory even after OAuth login. Do not turn a previous expired browser audit into a connector grant.

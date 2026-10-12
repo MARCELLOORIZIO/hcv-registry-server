@@ -8,3 +8,7 @@ GitHub connector metadata and git clones agree:
 - App experiment pubspec.yaml says 1.0.0+149. Reported build157 cannot be established from that value; Codemagic and App Store Connect artifact records still need checking.
 
 No production deployment, merge, migration application or remote MCP activation performed in this checkpoint. Experimental connector changes only.
+
+## PR51 follow-up
+
+Published implementation d3da54d9f5e5819f00c307926a2b7dadd322ec95; all four associated CI suites passed. Experimental in-process factory integration and request/approval boundary implemented. No remote MCP endpoint activated, no migration applied in production, no production deploy or merge.

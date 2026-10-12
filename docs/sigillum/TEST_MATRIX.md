@@ -13,3 +13,7 @@ Added actual Registry factory test with PGlite SQL, actual RSA-signed primary re
 Dedicated request tests cover principal-only channel binding, pending state, undisclosed browser secret, audit event and ten-per-five-minute rate limit. CI now runs the factory and request SQL tests.
 
 Results for this follow-up: 57 connector tests passed (54 boundary/unit plus 3 SQL/factory/request tests). Nine existing audit scope/route/browser/one-link tests passed separately, plus primary_reference_provider_test exact decrypt/binding regression passed. One initial audit-suite launch failed because pg installation was still pending; after installation the affected suite passed with no skips. Git diff whitespace check passed. Real PostgreSQL CI remains a separate acceptance gate.
+
+## GitHub CI verified for d3da54d9
+
+All four runs passed: Connector Boundary 38285197808; Verified Originals production PostgreSQL 38285197814; R2 audit security 38285197825; Registry account check 38285197987. PostgreSQL 16 production/audit and patched runtime regressions therefore passed remotely. The new connector factory integration uses PGlite and synthetic encrypted S3 in its dedicated test; live original receipt/rendering and real OAuth remain untested.
