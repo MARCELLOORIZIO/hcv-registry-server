@@ -6,6 +6,8 @@ on:
     paths:
       - sigillum_connector_bridge.js
       - sigillum_connector_bridge_test.js
+      - sigillum_mcp_dispatcher.js
+      - sigillum_mcp_dispatcher_test.js
       - .github/workflows/sigillum-connector-boundary.yml
 permissions:
   contents: read
@@ -18,4 +20,5 @@ jobs:
         with:
           node-version: '22'
       - run: node --check sigillum_connector_bridge.js
-      - run: node --test sigillum_connector_bridge_test.js
+      - run: node --check sigillum_mcp_dispatcher.js
+      - run: node --test sigillum_connector_bridge_test.js sigillum_mcp_dispatcher_test.js
