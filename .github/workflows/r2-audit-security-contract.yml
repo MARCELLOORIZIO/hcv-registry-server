@@ -1,0 +1,20 @@
+name: Read-only R2 audit security contract
+on:
+  push:
+    branches:
+      - experiment/secure-r2-audit-20261012
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  audit-scope:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Run audit permission regression tests
+        run: node --test audit_reference_scope_test.js
+      - name: Syntax checks
+        run: node --check audit_reference_scope.js && node --check audit_reference_scope_test.js
