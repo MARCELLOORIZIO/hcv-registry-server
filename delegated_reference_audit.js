@@ -250,7 +250,9 @@ function createDelegatedReferenceAudit({ pool, authenticate, accountEnvelope,
         if (cert?.account_id !== session.account_id) throw failure('AUDIT_OWNER_MISMATCH');
       }
       return {requestId:row.request_id,hcvIds:row.hcv_ids,scopeDigest:row.scope_digest,
-        browserFingerprint:row.browser_hash.slice(0,12),state:row.state};
+        browserFingerprint:row.browser_hash.slice(0,12),state:row.state,
+        requesterType:row.connector_principal_hash?'CONNECTOR':'BROWSER',
+        connectorFingerprint:row.connector_principal_hash?.slice(0,12)||null};
     });
     res.setHeader('Cache-Control','private, no-store, max-age=0');
     sendJson(res,200,data); return true;

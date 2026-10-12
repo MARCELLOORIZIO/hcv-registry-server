@@ -4900,8 +4900,59 @@ function createVerifiedOriginalsProduction({
     return false;
   }
 
-  return {
+  const api = {
     initSchema,
+    createConnectorRemoteHost({issuer,resource,clients,isTrustedTransport,now} = {}) {
+      // Merely constructing the host does not install a production HTTP route.
+      // The existing explicit owner-approval endpoint must be enabled and share
+      // the same origin; OAuth cannot manufacture or substitute that approval.
+      if(process.env.SIGILLUM_DELEGATED_AUDIT_ENABLED!=='true'||
+         issuer!==String(process.env.SIGILLUM_DELEGATED_AUDIT_ORIGIN||''))
+        throw Error('CONNECTOR_OWNER_APPROVAL_HOST_REQUIRED');
+      const {createConnectorOAuth}=require('./sigillum_connector_oauth');
+      const {createConnectorRemoteHandler}=require('./sigillum_connector_remote');
+      const oauth=createConnectorOAuth({pool,issuer,resource,clients,now,
+        checkOwnerEligible:async({client,accountId,deviceFingerprint})=>{
+          const device=(await client.query(`SELECT 1 FROM account_devices
+            WHERE account_id=$1 AND device_key_fingerprint=$2 AND revoked_at IS NULL`,[accountId,deviceFingerprint])).rows[0];
+          if(!device)return false;
+          const account=await accountEnvelope(accountId,deviceFingerprint);
+          return account?.emailVerified===true;
+        },
+      });
+      const host=createConnectorRemoteHandler({oauth,authenticateOwner:authenticate,isTrustedTransport,
+        createDispatch:args=>api.createConnectorService({...args,now})});
+      return {handle:host,oauth,initSchema:async()=>{
+        await pool.query(await fs.promises.readFile(path.join(__dirname,'migrations/20261012_sigillum_connector_principal.sql'),'utf8'));
+        await oauth.initSchema();
+      }};
+    },
+    // In-process composition only. No route, credential issuance or schema
+    // activation is implied; production does not call this method yet.
+    createConnectorService({resolvePrincipal,now} = {}) {
+      const {createSigillumMcpService}=require('./sigillum_mcp_service');
+      const {createConnectorAuditRequest}=require('./sigillum_connector_audit_request');
+      return createSigillumMcpService({
+        pool,resolvePrincipal,now,activeR2Reference,streamR2Reference,
+        requestAudit:createConnectorAuditRequest({pool,now,
+          origin:String(process.env.SIGILLUM_DELEGATED_AUDIT_ORIGIN||'')}),
+        checkReferenceEligible:async({client,hcvId,ownerAccountId,ownerDeviceFingerprint})=>{
+          if(primaryReferenceProviderName!=='r2')return false;
+          const owner=(await client.query('SELECT account_id FROM certificates WHERE hcv_id=$1',[hcvId])).rows[0];
+          if(owner?.account_id!==ownerAccountId)return false;
+          const account=await accountEnvelope(ownerAccountId,ownerDeviceFingerprint);
+          if(account?.subscriptionStatus!=='active'||account?.emailVerified!==true)return false;
+          const consent=(await client.query(`SELECT 1 FROM verified_originals_consents
+            WHERE hcv_id=$1 AND account_id=$2 AND state='ACTIVE'
+              AND publication_consent=TRUE AND rights_confirmed=TRUE`,[hcvId,ownerAccountId])).rows[0];
+          if(!consent)return false;
+          // activeR2Reference verifies certificate/provenance, committed job,
+          // active publication consent, private receipt and signed manifest.
+          const reference=await activeR2Reference(hcvId);
+          return Boolean(reference?.providerReceipt?.mediaType==='photo');
+        },
+      });
+    },
     handle,
     publicAvailability,
     verificationReference,
@@ -4913,6 +4964,7 @@ function createVerifiedOriginalsProduction({
     verifySubtitleDerivationManifest: args =>
       verifySubtitleDerivationManifest({ ...args, verifyCertificateRaw }),
   };
+  return api;
 }
 
 module.exports = {
