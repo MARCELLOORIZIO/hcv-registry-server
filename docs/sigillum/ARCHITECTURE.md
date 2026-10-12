@@ -1,0 +1,13 @@
+# Verified architecture checkpoint — 2026-10-12
+
+Scope: entry points and connector boundary inspected directly; not a completed review of every file.
+
+Registry: Render Frankfurt starts `npm start`; package.json executes the ordered Python prestart patchers before `node production_server.js`. `server.js` is a legacy alternative. `tool/apply_verified_originals_production.py` injects the production factory, request hook and schema initialization. Reading only unpatched production_server.js is insufficient.
+
+`verified_originals_production.js` creates delegated_reference_audit with account authentication and accountEnvelope, and holds activeR2Reference/streamR2Reference inside its factory. The browser audit consumes a read authorization, rechecks lifecycle job identity and streams through the existing R2 materializeReference path. These functions are not standalone module exports. Connecting MCP requires a deliberate factory-level integration, not invented public exports.
+
+PR51: HTTP loopback -> dispatcher -> connector bridge -> PostgreSQL grant adapter -> injected eligibility checker -> R2 capture adapter -> injected existing streamer -> MCP image. Credential store and principal verifier are separate modules. No production import of the MCP HTTP host exists. Grants require principal hash, approved state, exact scope, unrevoked device, certificate owner and injected current eligibility; reservation commits before decryption.
+
+App: lib/main.dart purges materialized plaintext in HCVSecureMediaVault before runApp. User entry goes through CommercialGate; lab entry uses HomePage. Camera photo claims include framing evidence, visual diagnostic and semantic diagnostic. Semantic inference checks the asset checksum, bakes orientation, uses average RGB resize to 160x160 and float32 NCHW input; native source-JPEG parity remains explicitly unverified.
+
+Codemagic validates committed source, pins TFLite iOS runtime, installs pods, checks TensorFlowLiteSwift 2.17.0, and builds IPA. Automatic TestFlight triggers name release branches, not the photo experiment. Identity, subscriptions and full verification call graphs require further inspection.

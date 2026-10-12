@@ -1,6 +1,7 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict');
 const {createSigillumMcpDispatcher,TOOL}=require('./sigillum_mcp_dispatcher');
+const {createMcpPrincipalVerifier}=require('./sigillum_mcp_auth');
 const ID='HCV-D8FF76496D424CA5',grantId='0123456789abcdef0123456789abcdef',principal='auditor-1';
 function setup(grantOverrides={},principalValue=principal,mediaOverride=null){
  let reads=0;
@@ -33,4 +34,29 @@ test('reject inline media greater than eight MiB',async()=>{
  const s=setup({},principal,{bytes:b,contentType:'image/png'});
  const result=await s.call();assert.equal(result.result.isError,true);
  assert.match(result.result.content[0].text,/SIGNATURE_INVALID/);
+});
+
+for(const [label,claim] of [['unknown',null],['expired',{principal:'auditor-1',expiresAtMs:99}],['revoked',{principal:'auditor-1',expiresAtMs:500,revoked:true}]]){
+ test('authenticate all MCP methods: '+label,async()=>{
+  let accesses=0;
+  const dispatch=createSigillumMcpDispatcher({
+   resolvePrincipal:createMcpPrincipalVerifier({now:()=>100,lookupTokenHash:async()=>claim}),
+   getAuthorizedGrant:async()=>{accesses++;throw Error('unexpected read');},
+   recordEvent:async()=>{accesses++;},readApprovedReference:async()=>{accesses++;}
+  });
+  for(const method of ['initialize','tools/list','tools/call','notifications/initialized']){
+   const reply=await dispatch({jsonrpc:'2.0',id:1,method},{authorization:'Bearer '+'x'.repeat(48)});
+   assert.equal(reply.error.message,'MCP_AUTH_REJECTED');
+  }
+  assert.equal(accesses,0);
+ });
+}
+test('never return internal storage error details to MCP client',async()=>{
+ const dispatch=createSigillumMcpDispatcher({resolvePrincipal:async()=>principal,
+  getAuthorizedGrant:async()=>{throw Error('private database connection detail');},
+  recordEvent:async()=>{},readApprovedReference:async()=>{}
+ });
+ const reply=await dispatch({jsonrpc:'2.0',id:1,method:'tools/call',params:{name:TOOL,arguments:{grantId,hcvId:ID}}},{});
+ assert.equal(reply.result.content[0].text,'AUDIT_FAILED');
+ assert.equal(JSON.stringify(reply).includes('private database'),false);
 });
