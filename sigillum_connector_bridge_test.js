@@ -33,3 +33,12 @@ for(const [title,overrides] of [
 test('refuse input without exact HCV ID and principal',async()=>{
  const b=build();await assert.rejects(b.bridge.readOriginal({...request,hcvId:'HCV-FOO'}),{code:'AUDIT_INPUT_INVALID'});
 });
+test('record failed retrieval without completion and never return bytes',async()=>{
+ const events=[];
+ const b=createSigillumConnectorBridge({now:()=>now,
+  getAuthorizedGrant:async()=>({state:'APPROVED',connectorPrincipal:principal,hcvIds:[id],expiresAtMs:now+300000}),
+  recordEvent:async e=>events.push(e.type),readApprovedReference:async()=>{throw Error('synthetic reader failure');}
+ });
+ await assert.rejects(b.readOriginal(request),/synthetic reader failure/);
+ assert.deepEqual(events,['READ_REQUESTED','READ_FAILED']);
+});

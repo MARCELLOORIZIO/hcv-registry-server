@@ -1,6 +1,6 @@
 # Tracked file inventory and static edges
 
-Generated from local clones at inspected refs. An entry is not a claim that the file was fully reviewed. Static import/require edges omit dynamic loading and build-time rewrites.
+Generated from actual git tracked paths including staged follow-up additions. An entry is not a claim that the file was fully reviewed. Static edges omit dynamic loading and build-time rewrites.
 
 ## hcv-registry-server
 
@@ -56,6 +56,13 @@ delegated_reference_audit_test.js
 delegated_reference_audit_ui.js
 device_enrollment_approval_runtime_test.js
 device_revocation_runtime_test.js
+docs/sigillum/ARCHITECTURE.md
+docs/sigillum/DEPLOYMENT_STATE.md
+docs/sigillum/FILE_INVENTORY.md
+docs/sigillum/HANDOFF.md
+docs/sigillum/OPEN_ISSUES.md
+docs/sigillum/TEST_MATRIX.md
+docs/sigillum/VERIFICATION_PIPELINE.md
 evidence/delegated-audit-cloud-browser.jpg
 flutter
 hcv_signature_canonical.js
@@ -100,10 +107,13 @@ registry_provenance_v2_runtime_test.js
 registry_provenance_v2_test.js
 render.production.yaml
 server.js
+sigillum_connector_audit_request.js
+sigillum_connector_audit_request_test.js
 sigillum_connector_bridge.js
 sigillum_connector_bridge_test.js
 sigillum_connector_grant_adapter.js
 sigillum_connector_grant_adapter_test.js
+sigillum_connector_production_test.js
 sigillum_connector_r2_capture.js
 sigillum_connector_r2_capture_test.js
 sigillum_mcp_auth.js
@@ -220,9 +230,12 @@ registry_provenance_v2.js -> crypto
 registry_provenance_v2_runtime_test.js -> assert, fs, ./registry_provenance_v2
 registry_provenance_v2_test.js -> assert, ./registry_provenance_v2
 server.js -> http, path, better-sqlite3, ./auth_api
+sigillum_connector_audit_request.js -> node:crypto, ./delegated_reference_audit
+sigillum_connector_audit_request_test.js -> node:test, node:assert/strict, node:crypto, ./tool/audit_test_database, ./delegated_reference_audit, ./sigillum_connector_audit_request, ./sigillum_mcp_dispatcher
 sigillum_connector_bridge_test.js -> node:test, node:assert/strict, ./sigillum_connector_bridge
 sigillum_connector_grant_adapter.js -> node:crypto
 sigillum_connector_grant_adapter_test.js -> node:test, node:assert/strict, node:crypto, ./sigillum_connector_grant_adapter
+sigillum_connector_production_test.js -> node:test, node:assert/strict, node:crypto, node:fs, node:os, node:path, node:stream, ./tool/audit_test_database, ./verified_originals_production, ./primary_reference_manifest, ./primary_reference_provider, ./sigillum_mcp_auth, ./tool/delegated_audit_fixture_images.json
 sigillum_connector_r2_capture.js -> node:stream
 sigillum_connector_r2_capture_test.js -> node:test, node:assert/strict, ./sigillum_connector_r2_capture
 sigillum_mcp_auth.js -> node:crypto
@@ -255,7 +268,7 @@ tool/r2_reference_acceptance_sdk.js -> crypto, fs, os, path, stream/promises, @a
 tool/telegram_reference_acceptance.js -> crypto, fs, os, path, child_process, stream/promises, stream, ffmpeg-static
 tool/youtube_oauth_provision.js -> crypto, fs, http, child_process
 tool/youtube_scope_demo.js -> fs, os, path, readline, child_process, ffmpeg-static, ./youtube_oauth_provision
-verified_originals_production.js -> crypto, fs, os, path, util, child_process, stream/promises, ./primary_reference_provider, ./primary_reference_lifecycle, ./primary_reference_manifest, ./primary_reference_read_auth, ./photo_detail_compare, ./audit_reference_scope, ./delegated_reference_audit, ffmpeg-static
+verified_originals_production.js -> crypto, fs, os, path, util, child_process, stream/promises, ./primary_reference_provider, ./primary_reference_lifecycle, ./primary_reference_manifest, ./primary_reference_read_auth, ./photo_detail_compare, ./audit_reference_scope, ./delegated_reference_audit, ffmpeg-static, ./sigillum_mcp_service, ./sigillum_connector_audit_request
 verified_originals_production_contract_test.js -> node:assert/strict, node:fs, ./verified_originals_production
 verified_originals_production_test.js -> node:assert/strict, node:crypto, node:fs, node:http, node:os, node:path, node:child_process, pg, ffmpeg-static, ./verified_originals_production
 verified_originals_r2_production_test.js -> node:assert/strict, node:crypto, node:fs, node:http, node:os, node:path, node:child_process, pg, ffmpeg-static, ./verified_originals_production, ./primary_reference_provider

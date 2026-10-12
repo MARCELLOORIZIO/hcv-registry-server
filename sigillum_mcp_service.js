@@ -8,7 +8,7 @@ const {captureVerifiedR2Image}=require('./sigillum_connector_r2_capture');
 // Reuses activeR2Reference and streamR2Reference unchanged. This module
 // deliberately does not expose an unauthenticated HTTP endpoint.
 function createSigillumMcpService({pool,resolvePrincipal,activeR2Reference,
- streamR2Reference,checkReferenceEligible,now}){
+ streamR2Reference,checkReferenceEligible,requestAudit,now=()=>new Date()}){
  if(typeof resolvePrincipal!=='function'||typeof activeR2Reference!=='function'||
     typeof streamR2Reference!=='function'||typeof checkReferenceEligible!=='function')
    throw new TypeError('CONNECTOR_HOST_DEPENDENCIES_REQUIRED');
@@ -24,6 +24,6 @@ function createSigillumMcpService({pool,resolvePrincipal,activeR2Reference,
      });
    },
  });
- return createSigillumMcpDispatcher({resolvePrincipal,...adapter});
+ return createSigillumMcpDispatcher({resolvePrincipal,...adapter,requestAudit,now:()=>now().getTime()});
 }
 module.exports={createSigillumMcpService};

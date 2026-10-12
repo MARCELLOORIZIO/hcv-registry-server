@@ -24,36 +24,54 @@ function createConnectorGrantAdapter({pool,loadOriginal,checkReferenceEligible,n
    await pool.query(`INSERT INTO verified_originals_delegated_audit_events
      (request_id,event_type,hcv_id,actor_hash) VALUES($1,$2,$3,$4)`,[grantId,type,hcvId,hash(connectorPrincipal)]);
  };
+ const validateGrant=async(client,{grantId,hcvId,connectorPrincipal})=>{
+   const result=await client.query(`SELECT * FROM verified_originals_delegated_audits
+     WHERE request_id=$1 FOR UPDATE`,[grantId]);
+   const row=result.rows[0];
+   const expiresAtMs=new Date(row?.expires_at).getTime();
+   if(!row||row.state!=='APPROVED'||row.connector_principal_hash!==hash(connectorPrincipal)||
+      !Number.isFinite(expiresAtMs)||expiresAtMs<=now().getTime()||
+      !Array.isArray(row.hcv_ids)||!row.hcv_ids.includes(hcvId))throw denied();
+   const device=await client.query(`SELECT 1 FROM account_devices
+     WHERE account_id=$1 AND device_key_fingerprint=$2 AND revoked_at IS NULL`,
+     [row.owner_account_id,row.owner_device_fingerprint]);
+   if(!device.rows.length)throw denied();
+   const cert=await client.query('SELECT account_id FROM certificates WHERE hcv_id=$1',[hcvId]);
+   if(cert.rows[0]?.account_id!==row.owner_account_id)throw denied();
+   if(!await checkReferenceEligible({client,hcvId,ownerAccountId:row.owner_account_id,
+      ownerDeviceFingerprint:row.owner_device_fingerprint}))throw denied();
+   return row;
+ };
  const readApprovedReference=async({grantId,hcvId,connectorPrincipal})=>{
    if(!HCV.test(hcvId))throw denied();
    const client=await pool.connect();
-   let ownerAccountId;
+   let ownerAccountId,ownerDeviceFingerprint;
    try{
      await client.query('BEGIN');
-     const result=await client.query(`SELECT * FROM verified_originals_delegated_audits
-       WHERE request_id=$1 FOR UPDATE`,[grantId]);
-     const row=result.rows[0];
-     if(!row||row.state!=='APPROVED'||row.connector_principal_hash!==hash(connectorPrincipal)||
-        new Date(row.expires_at)<=now()||!row.hcv_ids.includes(hcvId))throw denied();
-     const device=await client.query(`SELECT 1 FROM account_devices
-       WHERE account_id=$1 AND device_key_fingerprint=$2 AND revoked_at IS NULL`,
-       [row.owner_account_id,row.owner_device_fingerprint]);
-     if(!device.rows.length)throw denied();
-     const cert=await client.query('SELECT account_id FROM certificates WHERE hcv_id=$1',[hcvId]);
-     if(cert.rows[0]?.account_id!==row.owner_account_id)throw denied();
-     // Re-check current paid entitlement, publication consent and R2 COMMITTED
-     // reference while holding the grant lock. Approval alone is insufficient.
-     if(!await checkReferenceEligible({client,hcvId,ownerAccountId:row.owner_account_id}))throw denied();
+     const row=await validateGrant(client,{grantId,hcvId,connectorPrincipal});
      const reserved=await client.query(`INSERT INTO verified_originals_delegated_audit_reads
        (token_hash,request_id,hcv_id) VALUES($1,$2,$3)
        ON CONFLICT DO NOTHING RETURNING hcv_id`,[hash('connector:'+grantId+':'+hcvId),grantId,hcvId]);
      if(!reserved.rows.length)throw denied();
      ownerAccountId=row.owner_account_id;
+     ownerDeviceFingerprint=row.owner_device_fingerprint;
      await client.query('COMMIT');
    }catch(e){await client.query('ROLLBACK').catch(()=>{});throw e;}finally{client.release();}
    // loadOriginal reuses SIGILLUM's existing verified AES-GCM/SHA256 reader.
    // Reservation commits before decryption, guaranteeing single-use on failures.
-   return loadOriginal({hcvId,ownerAccountId});
+   const result=await loadOriginal({hcvId,ownerAccountId,ownerDeviceFingerprint});
+   // Decryption can outlast consent, entitlement or the grant itself. Recheck
+   // before releasing bytes; a failed/withdrawn read remains consumed.
+   const finalClient=await pool.connect();
+   try{
+     await finalClient.query('BEGIN');
+     const row=await validateGrant(finalClient,{grantId,hcvId,connectorPrincipal});
+     if(row.owner_account_id!==ownerAccountId||
+        row.owner_device_fingerprint!==ownerDeviceFingerprint)throw denied();
+     await finalClient.query('COMMIT');
+   }catch(e){await finalClient.query('ROLLBACK').catch(()=>{});throw e;}
+   finally{finalClient.release();}
+   return result;
  };
  return {getAuthorizedGrant,recordEvent,readApprovedReference};
 }

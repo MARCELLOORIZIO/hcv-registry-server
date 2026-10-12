@@ -24,9 +24,33 @@ function harness(opts={}){
  };
  const client={query,release(){}};
  const pool={connect:async()=>client,query};
- const adapter=createConnectorGrantAdapter({pool,checkReferenceEligible:async()=>!opts.ineligible,loadOriginal:async()=>{loaded++;return {bytes:new Uint8Array([255,216,255]),contentType:'image/jpeg'};}});
+ const adapter=createConnectorGrantAdapter({pool,now:opts.now,
+ checkReferenceEligible:async()=>!opts.ineligible,
+ loadOriginal:async()=>{loaded++;if(opts.duringLoad)opts.duringLoad({row,opts});
+ return {bytes:new Uint8Array([255,216,255]),contentType:'image/jpeg'};}});
  return {adapter,reads,events,get loaded(){return loaded;}};
 }
+
+for(const [label,duringLoad] of [
+ ['grant revocation',({row})=>{row.state='REVOKED';}],
+ ['grant expiry',({row})=>{row.expires_at=new Date(0).toISOString();}],
+ ['device revocation',({opts})=>{opts.revoked=true;}],
+ ['entitlement or reference withdrawal',({opts})=>{opts.ineligible=true;}],
+ ['owner rebinding',({row})=>{row.owner_account_id='other';}]
+]){
+ test('discard decrypted bytes after '+label,async()=>{
+  const m=harness({duringLoad});
+  await assert.rejects(m.adapter.readApprovedReference({grantId:'0'.repeat(32),hcvId:id,connectorPrincipal:'mcp-principal'}),{code:'AUDIT_NOT_AUTHORIZED'});
+  assert.equal(m.loaded,1);assert.equal(m.reads.has(id),true);
+  await assert.rejects(m.adapter.readApprovedReference({grantId:'0'.repeat(32),hcvId:id,connectorPrincipal:'mcp-principal'}));
+  assert.equal(m.loaded,1);
+ });
+}
+test('invalid expiry fails closed before decryption',async()=>{
+ const m=harness({row:{expires_at:'invalid'}});
+ await assert.rejects(m.adapter.readApprovedReference({grantId:'0'.repeat(32),hcvId:id,connectorPrincipal:'mcp-principal'}),{code:'AUDIT_NOT_AUTHORIZED'});
+ assert.equal(m.loaded,0);
+});
 test('valid principal and owner scope consume once',async()=>{
  const m=harness();const grant=await m.adapter.getAuthorizedGrant({connectorPrincipal:'mcp-principal',grantId:'0'.repeat(32)});
  assert.equal(grant.state,'APPROVED');assert.deepEqual(grant.hcvIds,[id]);

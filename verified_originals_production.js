@@ -4902,6 +4902,32 @@ function createVerifiedOriginalsProduction({
 
   return {
     initSchema,
+    // In-process composition only. No route, credential issuance or schema
+    // activation is implied; production does not call this method yet.
+    createConnectorService({resolvePrincipal,now} = {}) {
+      const {createSigillumMcpService}=require('./sigillum_mcp_service');
+      const {createConnectorAuditRequest}=require('./sigillum_connector_audit_request');
+      return createSigillumMcpService({
+        pool,resolvePrincipal,now,activeR2Reference,streamR2Reference,
+        requestAudit:createConnectorAuditRequest({pool,now,
+          origin:String(process.env.SIGILLUM_DELEGATED_AUDIT_ORIGIN||'')}),
+        checkReferenceEligible:async({client,hcvId,ownerAccountId,ownerDeviceFingerprint})=>{
+          if(primaryReferenceProviderName!=='r2')return false;
+          const owner=(await client.query('SELECT account_id FROM certificates WHERE hcv_id=$1',[hcvId])).rows[0];
+          if(owner?.account_id!==ownerAccountId)return false;
+          const account=await accountEnvelope(ownerAccountId,ownerDeviceFingerprint);
+          if(account?.subscriptionStatus!=='active'||account?.emailVerified!==true)return false;
+          const consent=(await client.query(`SELECT 1 FROM verified_originals_consents
+            WHERE hcv_id=$1 AND account_id=$2 AND state='ACTIVE'
+              AND publication_consent=TRUE AND rights_confirmed=TRUE`,[hcvId,ownerAccountId])).rows[0];
+          if(!consent)return false;
+          // activeR2Reference verifies certificate/provenance, committed job,
+          // active publication consent, private receipt and signed manifest.
+          const reference=await activeR2Reference(hcvId);
+          return Boolean(reference?.providerReceipt?.mediaType==='photo');
+        },
+      });
+    },
     handle,
     publicAvailability,
     verificationReference,

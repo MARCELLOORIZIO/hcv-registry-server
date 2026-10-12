@@ -4,6 +4,7 @@
 // a grant reader. No owner password, browser cookie or R2 secret is accepted.
 const {createSigillumConnectorBridge}=require('./sigillum_connector_bridge');
 const TOOL='sigillum_read_approved_original';
+const REQUEST_TOOL='sigillum_request_original_audit';
 const MAX_INLINE_IMAGE_BYTES=8*1024*1024;
 function validImageBytes(bytes,type){
  if(bytes.length===0||bytes.length>MAX_INLINE_IMAGE_BYTES)return false;
@@ -13,7 +14,7 @@ function validImageBytes(bytes,type){
  return false;
 }
 const definitions=[{name:TOOL,description:'Read one explicitly owner-approved SIGILLUM original from an unexpired, one-time, principal-bound audit grant.',inputSchema:{type:'object',additionalProperties:false,required:['grantId','hcvId'],properties:{grantId:{type:'string',pattern:'^[a-f0-9]{32}$'},hcvId:{type:'string',pattern:'^HCV-[A-F0-9]{16}$'}}}}];
-function createSigillumMcpDispatcher({resolvePrincipal,...adapters}){
+function createSigillumMcpDispatcher({resolvePrincipal,requestAudit,...adapters}){
  if(typeof resolvePrincipal!=='function')throw new TypeError('AUTHENTICATED_PRINCIPAL_REQUIRED');
  const bridge=createSigillumConnectorBridge(adapters);
  return async function dispatch(message,channel){
@@ -28,8 +29,19 @@ function createSigillumMcpDispatcher({resolvePrincipal,...adapters}){
   }
   if(message.method==='notifications/initialized')return null;
   if(message.method==='initialize')return {jsonrpc:'2.0',id,result:{protocolVersion:'2025-03-26',capabilities:{tools:{}},serverInfo:{name:'sigillum-read-only',version:'0.1.0'}}};
-  if(message.method==='tools/list')return {jsonrpc:'2.0',id,result:{tools:definitions}};
+  if(message.method==='tools/list')return {jsonrpc:'2.0',id,result:{tools:typeof requestAudit==='function'?
+   [...definitions,{name:REQUEST_TOOL,description:'Request explicit owner approval for a five-minute, single-use original audit. Does not read or approve any file.',
+    inputSchema:{type:'object',additionalProperties:false,required:['hcvIds'],properties:{hcvIds:{type:'array',minItems:1,maxItems:25,uniqueItems:true,
+     items:{type:'string',pattern:'^HCV-[A-F0-9]{16}$'}}}}}]:definitions}};
   if(message.method!=='tools/call')return {jsonrpc:'2.0',id,error:{code:-32601,message:'Method not found'}};
+  if(message.params?.name===REQUEST_TOOL&&typeof requestAudit==='function'){
+   try{
+    const args=message.params.arguments;
+    if(!args||Object.keys(args).some(k=>k!=='hcvIds'))throw Error('AUDIT_INPUT_INVALID');
+    const request=await requestAudit({connectorPrincipal:principal,hcvIds:args.hcvIds});
+    return {jsonrpc:'2.0',id,result:{content:[{type:'text',text:JSON.stringify(request)}],isError:false}};
+   }catch(_){return {jsonrpc:'2.0',id,result:{content:[{type:'text',text:'AUDIT_REQUEST_REJECTED'}],isError:true}};}
+  }
   if(message.params?.name!==TOOL)return {jsonrpc:'2.0',id,error:{code:-32602,message:'Unknown tool'}};
   try{
    const args=message.params.arguments||{};
@@ -49,4 +61,4 @@ function createSigillumMcpDispatcher({resolvePrincipal,...adapters}){
   }
  };
 }
-module.exports={createSigillumMcpDispatcher,TOOL};
+module.exports={createSigillumMcpDispatcher,TOOL,REQUEST_TOOL};

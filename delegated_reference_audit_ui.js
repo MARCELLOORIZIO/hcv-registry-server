@@ -89,7 +89,11 @@ if(mode==='approve'){
     const result=await api('/api/auth/login','POST',payload);payload.password='';form.elements.password.value='';
     ownerToken=result.token;
     approvedScope=await api(root+requestId+'/owner-scope','GET',undefined,ownerToken);
-    $('scope').textContent='Richiesta '+requestId.slice(0,12)+' · Browser '+approvedScope.browserFingerprint+' · HCV-ID: '+approvedScope.hcvIds.join(', ');
+    const connector=approvedScope.requesterType==='CONNECTOR';
+    $('scope').textContent='Richiesta '+requestId.slice(0,12)+' · '+(connector?'Connettore '+approvedScope.connectorFingerprint:'Browser '+approvedScope.browserFingerprint)+' · HCV-ID: '+approvedScope.hcvIds.join(', ');
+    if(connector){
+      $('consentLabel').lastChild.textContent=' Autorizzo il connettore identificato sopra a ricevere in ChatGPT esclusivamente gli originali degli HCV-ID elencati, per cinque minuti e una sola lettura per fotografia.';
+    }
     $('login').hidden=true;$('consentLabel').hidden=false;$('approve').hidden=false;
     status('Verifica gli HCV-ID, poi spunta l’autorizzazione e premi Autorizza audit.');
   }catch(error){e.target.elements.password.value='';status(error.message+'\nSe è richiesto un nuovo dispositivo, confermalo nell’email SIGILLUM, poi torna a questa pagina e premi nuovamente Accedi.',true);}};
@@ -97,7 +101,7 @@ if(mode==='approve'){
     if(!$('consent').checked)throw new Error('Spunta prima l’autorizzazione esplicita.');
     const result=await api(root+requestId+'/approve','POST',{confirm:true,hcvIds:approvedScope.hcvIds,scopeDigest:approvedScope.scopeDigest},ownerToken);
     $('approve').hidden=true;$('consentLabel').hidden=true;$('revoke').hidden=false;
-    status('Audit autorizzato fino a '+new Date(result.expiresAt).toLocaleTimeString()+'. Torna alla conversazione; il browser di audit può ora recuperare gli originali.');
+    status('Audit autorizzato fino a '+new Date(result.expiresAt).toLocaleTimeString()+'. Torna alla conversazione; '+(approvedScope.requesterType==='CONNECTOR'?'il connettore':'il browser di audit')+' può ora recuperare gli originali.');
   }catch(e){status(e.message,true);}};
   $('revoke').onclick=async()=>{try{
     await api(root+requestId+'/revoke','POST',{},ownerToken);status('Audit revocato.');$('revoke').hidden=true;ownerToken='';

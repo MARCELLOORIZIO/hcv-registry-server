@@ -11,3 +11,11 @@ PR51: HTTP loopback -> dispatcher -> connector bridge -> PostgreSQL grant adapte
 App: lib/main.dart purges materialized plaintext in HCVSecureMediaVault before runApp. User entry goes through CommercialGate; lab entry uses HomePage. Camera photo claims include framing evidence, visual diagnostic and semantic diagnostic. Semantic inference checks the asset checksum, bakes orientation, uses average RGB resize to 160x160 and float32 NCHW input; native source-JPEG parity remains explicitly unverified.
 
 Codemagic validates committed source, pins TFLite iOS runtime, installs pods, checks TensorFlowLiteSwift 2.17.0, and builds IPA. Automatic TestFlight triggers name release branches, not the photo experiment. Identity, subscriptions and full verification call graphs require further inspection.
+
+## In-process integration added in PR51 follow-up
+
+The real createVerifiedOriginalsProduction factory now exposes createConnectorService, which injects its own private activeR2Reference and streamR2Reference into MCP; no public HTTP route calls it. Current entitlement uses accountEnvelope with the approving device. Owner certificate and active publication consent/rights are checked in SQL; activeR2Reference reuses certificate/provenance, lifecycle, private receipt and manifest validation. Only photos are eligible for inline transport.
+
+Authenticated MCP can create a PENDING principal-bound audit request. Principal hash is immutable from creation, the browser hash has a random undisclosed preimage, and old browser grants are never rebound. Existing owner approval checks exact HCV scope and ownership. Owner UI explicitly distinguishes connector approval from browser approval. Requests have a SQL transaction advisory lock and ten-per-five-minute principal limit.
+
+The read adapter checks grant, device, owner and eligibility both before reservation and after decryption. Failed reads stay consumed and are logged READ_FAILED. This prevents returning bytes after revocation/expiry during materialization. Grant locking does not claim atomicity with independent subscription/publication transactions or the entire outgoing network transfer.

@@ -28,12 +28,17 @@ function createSigillumConnectorBridge({ getAuthorizedGrant, readApprovedReferen
     // Implementations must atomically consume the single-use grant before
     // decrypting. Fail closed if the audit event cannot be written.
     await recordEvent({ grantId, hcvId, connectorPrincipal, type: 'READ_REQUESTED' });
-    const result = await readApprovedReference({ grantId, hcvId, connectorPrincipal });
-    if (!result || !(result.bytes instanceof Uint8Array) ||
-        !['image/jpeg','image/png','video/mp4'].includes(result.contentType))
-      throw bridgeError('AUDIT_REFERENCE_INVALID');
-    await recordEvent({ grantId, hcvId, connectorPrincipal, type: 'READ_COMPLETED' });
-    return { bytes: result.bytes, contentType: result.contentType };
+    try {
+      const result = await readApprovedReference({ grantId, hcvId, connectorPrincipal });
+      if (!result || !(result.bytes instanceof Uint8Array) ||
+          !['image/jpeg','image/png','video/mp4'].includes(result.contentType))
+        throw bridgeError('AUDIT_REFERENCE_INVALID');
+      await recordEvent({ grantId, hcvId, connectorPrincipal, type: 'READ_COMPLETED' });
+      return { bytes: result.bytes, contentType: result.contentType };
+    } catch (error) {
+      await recordEvent({ grantId, hcvId, connectorPrincipal, type: 'READ_FAILED' });
+      throw error;
+    }
   }
   return { readOriginal };
 }
