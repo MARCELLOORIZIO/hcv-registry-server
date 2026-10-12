@@ -14,6 +14,8 @@ on:
       - sigillum_connector_r2_capture_test.js
       - sigillum_mcp_service.js
       - sigillum_mcp_service_test.js
+      - sigillum_mcp_auth.js
+      - sigillum_mcp_auth_test.js
       - .github/workflows/sigillum-connector-boundary.yml
 permissions:
   contents: read
@@ -30,4 +32,5 @@ jobs:
       - run: node --check sigillum_connector_grant_adapter.js
       - run: node --check sigillum_connector_r2_capture.js
       - run: node --check sigillum_mcp_service.js
-      - run: node --test sigillum_connector_bridge_test.js sigillum_mcp_dispatcher_test.js sigillum_connector_grant_adapter_test.js sigillum_connector_r2_capture_test.js sigillum_mcp_service_test.js
+      - run: node --check sigillum_mcp_auth.js
+      - run: node --test sigillum_connector_bridge_test.js sigillum_mcp_dispatcher_test.js sigillum_connector_grant_adapter_test.js sigillum_connector_r2_capture_test.js sigillum_mcp_service_test.js sigillum_mcp_auth_test.js
