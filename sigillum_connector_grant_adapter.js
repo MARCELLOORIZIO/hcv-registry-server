@@ -6,8 +6,8 @@ const denied=()=>Object.assign(new Error('AUDIT_NOT_AUTHORIZED'),{code:'AUDIT_NO
 // DB-backed connector grant adapter. The external connector principal must be
 // established by an independent, authenticated MCP transport; never derive it
 // from user-submitted input, an HCV ID or the Safari owner's session.
-function createConnectorGrantAdapter({pool,loadOriginal,now=()=>new Date()}){
- if(!pool?.connect||!pool?.query||typeof loadOriginal!=='function')throw new TypeError('CONNECTOR_DEPENDENCIES_REQUIRED');
+function createConnectorGrantAdapter({pool,loadOriginal,checkReferenceEligible,now=()=>new Date()}){
+ if(!pool?.connect||!pool?.query||typeof loadOriginal!=='function'||typeof checkReferenceEligible!=='function')throw new TypeError('CONNECTOR_DEPENDENCIES_REQUIRED');
  const getAuthorizedGrant=async({connectorPrincipal,grantId})=>{
    const result=await pool.query(`SELECT a.state,a.hcv_ids,a.expires_at,a.owner_account_id,
        a.owner_device_fingerprint,a.connector_principal_hash
@@ -41,6 +41,9 @@ function createConnectorGrantAdapter({pool,loadOriginal,now=()=>new Date()}){
      if(!device.rows.length)throw denied();
      const cert=await client.query('SELECT account_id FROM certificates WHERE hcv_id=$1',[hcvId]);
      if(cert.rows[0]?.account_id!==row.owner_account_id)throw denied();
+     // Re-check current paid entitlement, publication consent and R2 COMMITTED
+     // reference while holding the grant lock. Approval alone is insufficient.
+     if(!await checkReferenceEligible({client,hcvId,ownerAccountId:row.owner_account_id}))throw denied();
      const reserved=await client.query(`INSERT INTO verified_originals_delegated_audit_reads
        (token_hash,request_id,hcv_id) VALUES($1,$2,$3)
        ON CONFLICT DO NOTHING RETURNING hcv_id`,[hash('connector:'+grantId+':'+hcvId),grantId,hcvId]);
